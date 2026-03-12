@@ -1,0 +1,424 @@
+{
+  "name": "vscode-growifs",
+  "displayName": "growifs",
+  "publisher": "yyamamot",
+  "private": true,
+  "description": "VS Code extension bootstrap for GROWI virtual filesystem integration",
+  "categories": [
+    "Other"
+  ],
+  "version": "0.0.1",
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yyamamot/vscode-growifs.git"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "activationEvents": [
+    "onFileSystem:growi",
+    "onStartupFinished",
+    "onCommand:growi.configureBaseUrl",
+    "onCommand:growi.configureApiToken",
+    "onCommand:growi.openReadme",
+    "onCommand:growi.addPrefix",
+    "onCommand:growi.openPrefixRootPage",
+    "onCommand:growi.openDirectoryPage",
+    "onCommand:growi.explorerOpenPageItem",
+    "onCommand:growi.explorerRefreshCurrentPage",
+    "onCommand:growi.explorerShowBacklinks",
+    "onCommand:growi.explorerShowCurrentPageInfo",
+    "onCommand:growi.explorerShowRevisionHistoryDiff",
+    "onCommand:growi.explorerDownloadCurrentPageToLocalFile",
+    "onCommand:growi.explorerDownloadCurrentPageSetToLocalBundle",
+    "onCommand:growi.explorerCompareLocalWorkFileWithCurrentPage",
+    "onCommand:growi.explorerUploadExportedLocalFileToGrowi",
+    "onCommand:growi.explorerCompareLocalBundleWithGrowi",
+    "onCommand:growi.explorerUploadLocalBundleToGrowi",
+    "onCommand:growi.clearPrefixes",
+    "onCommand:growi.openPage",
+    "onCommand:growi.startEdit",
+    "onCommand:growi.endEdit",
+    "onCommand:growi.showCurrentPageActions",
+    "onCommand:growi.showLocalRoundTripActions",
+    "onCommand:growi.refreshCurrentPage",
+    "onCommand:growi.refreshListing",
+    "onCommand:growi.downloadCurrentPageToLocalFile",
+    "onCommand:growi.compareLocalWorkFileWithCurrentPage",
+    "onCommand:growi.uploadExportedLocalFileToGrowi",
+    "onCommand:growi.downloadCurrentPageSetToLocalBundle",
+    "onCommand:growi.compareLocalBundleWithGrowi",
+    "onCommand:growi.uploadLocalBundleToGrowi",
+    "onCommand:growi.showCurrentPageInfo",
+    "onCommand:growi.showBacklinks",
+    "onCommand:growi.showRevisionHistoryDiff"
+  ],
+  "contributes": {
+    "markdown.markdownItPlugins": true,
+    "commands": [
+      {
+        "command": "growi.configureBaseUrl",
+        "title": "GROWI: Configure Base URL"
+      },
+      {
+        "command": "growi.configureApiToken",
+        "title": "GROWI: Configure API Token"
+      },
+      {
+        "command": "growi.openReadme",
+        "title": "GROWI: Open README"
+      },
+      {
+        "command": "growi.addPrefix",
+        "title": "GROWI: Add Prefix",
+        "shortTitle": "Add Prefix"
+      },
+      {
+        "command": "growi.openPrefixRootPage",
+        "title": "GROWI: Open Prefix Root Page"
+      },
+      {
+        "command": "growi.openDirectoryPage",
+        "title": "GROWI: Open Directory Page"
+      },
+      {
+        "command": "growi.explorerOpenPageItem",
+        "title": "ページを開く"
+      },
+      {
+        "command": "growi.explorerRefreshCurrentPage",
+        "title": "ページを更新"
+      },
+      {
+        "command": "growi.explorerShowBacklinks",
+        "title": "被リンクを表示"
+      },
+      {
+        "command": "growi.explorerShowCurrentPageInfo",
+        "title": "ページ情報を表示"
+      },
+      {
+        "command": "growi.explorerShowRevisionHistoryDiff",
+        "title": "履歴差分を表示"
+      },
+      {
+        "command": "growi.explorerDownloadCurrentPageToLocalFile",
+        "title": "現在ページをローカルへダウンロード"
+      },
+      {
+        "command": "growi.explorerDownloadCurrentPageSetToLocalBundle",
+        "title": "配下ページをローカルへダウンロード"
+      },
+      {
+        "command": "growi.explorerCompareLocalWorkFileWithCurrentPage",
+        "title": "ローカルと現在ページを比較"
+      },
+      {
+        "command": "growi.explorerUploadExportedLocalFileToGrowi",
+        "title": "ローカルを現在ページへ反映"
+      },
+      {
+        "command": "growi.explorerCompareLocalBundleWithGrowi",
+        "title": "ローカルと配下ページを比較"
+      },
+      {
+        "command": "growi.explorerUploadLocalBundleToGrowi",
+        "title": "ローカルを配下ページへ反映"
+      },
+      {
+        "command": "growi.clearPrefixes",
+        "title": "GROWI: Clear Prefixes",
+        "shortTitle": "Clear Prefixes"
+      },
+      {
+        "command": "growi.openPage",
+        "title": "GROWI: Open Page",
+        "shortTitle": "Open Page"
+      },
+      {
+        "command": "growi.startEdit",
+        "title": "GROWI: Start Edit"
+      },
+      {
+        "command": "growi.endEdit",
+        "title": "GROWI: End Edit"
+      },
+      {
+        "command": "growi.showCurrentPageActions",
+        "title": "GROWI: Show Current Page Actions"
+      },
+      {
+        "command": "growi.showLocalRoundTripActions",
+        "title": "GROWI: Show Local Round Trip Actions"
+      },
+      {
+        "command": "growi.refreshCurrentPage",
+        "title": "GROWI: Refresh Current Page"
+      },
+      {
+        "command": "growi.refreshListing",
+        "title": "GROWI: Refresh Listing",
+        "shortTitle": "Refresh Listing"
+      },
+      {
+        "command": "growi.downloadCurrentPageToLocalFile",
+        "title": "GROWI: Download Current Page to Local Work File"
+      },
+      {
+        "command": "growi.compareLocalWorkFileWithCurrentPage",
+        "title": "GROWI: Compare Local Work File with Current Page"
+      },
+      {
+        "command": "growi.uploadExportedLocalFileToGrowi",
+        "title": "GROWI: Upload Local Work File to GROWI"
+      },
+      {
+        "command": "growi.downloadCurrentPageSetToLocalBundle",
+        "title": "GROWI: Download Current Page Set to Local Bundle"
+      },
+      {
+        "command": "growi.compareLocalBundleWithGrowi",
+        "title": "GROWI: Compare Local Bundle with GROWI"
+      },
+      {
+        "command": "growi.uploadLocalBundleToGrowi",
+        "title": "GROWI: Upload Local Bundle to GROWI"
+      },
+      {
+        "command": "growi.showCurrentPageInfo",
+        "title": "GROWI: Show Current Page Info"
+      },
+      {
+        "command": "growi.showBacklinks",
+        "title": "GROWI: Show Backlinks"
+      },
+      {
+        "command": "growi.showRevisionHistoryDiff",
+        "title": "GROWI: Show Revision History Diff"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "growi.explorer",
+          "name": "GROWI"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "growi.explorer",
+        "contents": "GROWI への接続を設定します。\n[Configure Base URL](command:growi.configureBaseUrl)",
+        "when": "config.growi.baseUrl == ''"
+      },
+      {
+        "view": "growi.explorer",
+        "contents": "最初のページ探索を始めます。\n[Open Page](command:growi.openPage)\n[Add Prefix](command:growi.addPrefix)\n接続先 URL と API token を設定してから利用してください。\n[Configure Base URL](command:growi.configureBaseUrl)\n[Configure API Token](command:growi.configureApiToken)\n[Open README](command:growi.openReadme)",
+        "when": "config.growi.baseUrl != ''"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "growi.openPage",
+          "when": "view == growi.explorer",
+          "group": "navigation"
+        },
+        {
+          "command": "growi.addPrefix",
+          "when": "view == growi.explorer",
+          "group": "navigation"
+        },
+        {
+          "command": "growi.refreshListing",
+          "when": "view == growi.explorer",
+          "group": "navigation"
+        },
+        {
+          "command": "growi.clearPrefixes",
+          "when": "view == growi.explorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "growi.openPrefixRootPage",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "inline"
+        },
+        {
+          "command": "growi.openPrefixRootPage",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "navigation@1"
+        },
+        {
+          "command": "growi.explorerOpenPageItem",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "navigation@3"
+        },
+        {
+          "command": "growi.openDirectoryPage",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "inline"
+        },
+        {
+          "command": "growi.openDirectoryPage",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "navigation@2"
+        },
+        {
+          "command": "growi.explorerRefreshCurrentPage",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "currentPage@1"
+        },
+        {
+          "command": "growi.explorerShowBacklinks",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "currentPage@2"
+        },
+        {
+          "command": "growi.explorerShowCurrentPageInfo",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "currentPage@3"
+        },
+        {
+          "command": "growi.explorerShowRevisionHistoryDiff",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "currentPage@4"
+        },
+        {
+          "command": "growi.explorerDownloadCurrentPageToLocalFile",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "currentPage@5"
+        },
+        {
+          "command": "growi.explorerDownloadCurrentPageSetToLocalBundle",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "currentPage@6"
+        },
+        {
+          "command": "growi.explorerRefreshCurrentPage",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "currentPage@1"
+        },
+        {
+          "command": "growi.explorerShowBacklinks",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "currentPage@2"
+        },
+        {
+          "command": "growi.explorerShowCurrentPageInfo",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "currentPage@3"
+        },
+        {
+          "command": "growi.explorerShowRevisionHistoryDiff",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "currentPage@4"
+        },
+        {
+          "command": "growi.explorerDownloadCurrentPageToLocalFile",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "currentPage@5"
+        },
+        {
+          "command": "growi.explorerDownloadCurrentPageSetToLocalBundle",
+          "when": "view == growi.explorer && viewItem == growi.directoryWithPage",
+          "group": "currentPage@6"
+        },
+        {
+          "command": "growi.explorerRefreshCurrentPage",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "currentPage@1"
+        },
+        {
+          "command": "growi.explorerShowBacklinks",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "currentPage@2"
+        },
+        {
+          "command": "growi.explorerShowCurrentPageInfo",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "currentPage@3"
+        },
+        {
+          "command": "growi.explorerShowRevisionHistoryDiff",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "currentPage@4"
+        },
+        {
+          "command": "growi.explorerDownloadCurrentPageToLocalFile",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "currentPage@5"
+        },
+        {
+          "command": "growi.explorerDownloadCurrentPageSetToLocalBundle",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "currentPage@6"
+        },
+        {
+          "command": "growi.explorerCompareLocalWorkFileWithCurrentPage",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "localOps@1"
+        },
+        {
+          "command": "growi.explorerUploadExportedLocalFileToGrowi",
+          "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "localOps@2"
+        },
+        {
+          "command": "growi.explorerCompareLocalBundleWithGrowi",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.directoryWithPage || viewItem == growi.prefixRoot)",
+          "group": "localOps@3"
+        },
+        {
+          "command": "growi.explorerUploadLocalBundleToGrowi",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.directoryWithPage || viewItem == growi.prefixRoot)",
+          "group": "localOps@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GROWI",
+      "properties": {
+        "growi.baseUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Base URL for the target GROWI instance."
+        }
+      }
+    }
+  },
+  "engines": {
+    "vscode": "^1.105.0",
+    "node": ">=22.0.0"
+  },
+  "main": "./dist/extension.js",
+  "scripts": {
+    "deps:check": "pnpm outdated && pnpm audit",
+    "deps:update": "pnpm update",
+    "deps:update:latest": "pnpm update --latest",
+    "deps:verify": "pnpm run build && pnpm run test:unit && pnpm run test:integration && pnpm run lint",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check package.json tsconfig.json biome.json README.md AGENTS.md src scripts test",
+    "format": "biome format --write package.json tsconfig.json biome.json README.md AGENTS.md src scripts test",
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.js --external:vscode",
+    "package:vsix": "node ./scripts/vsix.mjs package",
+    "install:vsix": "node ./scripts/vsix.mjs install",
+    "uninstall:vsix": "node ./scripts/vsix.mjs uninstall",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "node ./scripts/run-integration.mjs",
+    "test:integration:host": "pnpm run build && node ./test/integration/extension-host/launch.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "@types/node": "^25.4.0",
+    "@types/vscode": "^1.105.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="132" fill="#071226"/>
+  <rect x="34" y="34" width="444" height="444" rx="112" fill="url(#bg)"/>
+  <rect x="86" y="86" width="340" height="340" rx="84" fill="url(#panel)"/>
+
+  <path
+    d="M257 128C182.441 128 122 188.441 122 263C122 337.559 182.441 398 257 398H336C353.673 398 368 383.673 368 366C368 348.327 353.673 334 336 334H257C217.787 334 186 302.213 186 263C186 223.787 217.787 192 257 192H334V246H284C266.327 246 252 260.327 252 278C252 295.673 266.327 310 284 310H400V160C400 142.327 385.673 128 368 128H257Z"
+    fill="#F8FAFC"/>
+
+  <defs>
+    <linearGradient id="bg" x1="52" y1="46" x2="456" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#081120"/>
+      <stop offset="1" stop-color="#0F2A5F"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="112" y1="100" x2="392" y2="414" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A1630"/>
+      <stop offset="1" stop-color="#12224F"/>
+    </linearGradient>
+  </defs>
+</svg>

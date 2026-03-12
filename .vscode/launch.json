@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/vscode-growifs.code-workspace",
+        "--disable-restore-windows",
+        "--user-data-dir=${env:HOME}/.vscode-growifs/dev-user-data",
+        "--extensions-dir=${env:HOME}/.vscode-growifs/dev-extensions"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/*
+!.vscode/launch.json
+.idea/
+
+# Node.js / pnpm
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+out/
+coverage/
+.cache/
+*.vsix
+
+# Test artifacts
+.nyc_output/
+playwright-report/
+test-results/
+.vscode-test/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+.env.local
+.env.development.local
+
+# Worker runtime artifacts
+.ai/tmp/
