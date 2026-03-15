@@ -214,56 +214,60 @@ describe("project configuration", () => {
         (command) =>
           command.command === "growi.explorerDownloadCurrentPageToLocalFile",
       ),
+    ).toBeUndefined();
+    expect(
+      commands.find(
+        (command) =>
+          command.command === "growi.explorerCreateLocalMirrorForCurrentPage",
+      ),
     ).toEqual({
-      command: "growi.explorerDownloadCurrentPageToLocalFile",
-      title: "現在ページをローカルへダウンロード",
+      command: "growi.explorerCreateLocalMirrorForCurrentPage",
+      title: "ローカルミラーを同期",
     });
     expect(
       commands.find(
         (command) =>
-          command.command ===
-          "growi.explorerDownloadCurrentPageSetToLocalBundle",
+          command.command === "growi.explorerCreateLocalMirrorForCurrentPrefix",
       ),
     ).toEqual({
-      command: "growi.explorerDownloadCurrentPageSetToLocalBundle",
-      title: "配下ページをローカルへダウンロード",
+      command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
+      title: "配下をローカルミラーに同期",
     });
     expect(
       commands.find(
         (command) =>
-          command.command ===
-          "growi.explorerCompareLocalWorkFileWithCurrentPage",
+          command.command === "growi.explorerCompareLocalMirrorWithGrowi",
       ),
     ).toEqual({
-      command: "growi.explorerCompareLocalWorkFileWithCurrentPage",
-      title: "ローカルと現在ページを比較",
+      command: "growi.explorerCompareLocalMirrorWithGrowi",
+      title: "ローカルミラーを比較",
     });
     expect(
       commands.find(
         (command) =>
-          command.command === "growi.explorerUploadExportedLocalFileToGrowi",
+          command.command === "growi.explorerUploadLocalMirrorToGrowi",
       ),
     ).toEqual({
-      command: "growi.explorerUploadExportedLocalFileToGrowi",
-      title: "ローカルを現在ページへ反映",
+      command: "growi.explorerUploadLocalMirrorToGrowi",
+      title: "ローカルミラーを反映",
     });
     expect(
       commands.find(
         (command) =>
-          command.command === "growi.explorerCompareLocalBundleWithGrowi",
+          command.command === "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
       ),
     ).toEqual({
-      command: "growi.explorerCompareLocalBundleWithGrowi",
-      title: "ローカルと配下ページを比較",
+      command: "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+      title: "配下のローカルミラーを比較",
     });
     expect(
       commands.find(
         (command) =>
-          command.command === "growi.explorerUploadLocalBundleToGrowi",
+          command.command === "growi.explorerUploadLocalMirrorSubtreeToGrowi",
       ),
     ).toEqual({
-      command: "growi.explorerUploadLocalBundleToGrowi",
-      title: "ローカルを配下ページへ反映",
+      command: "growi.explorerUploadLocalMirrorSubtreeToGrowi",
+      title: "配下のローカルミラーを反映",
     });
     expect(
       commands.find(
@@ -275,11 +279,11 @@ describe("project configuration", () => {
     });
     expect(
       commands.find(
-        (command) => command.command === "growi.showLocalRoundTripActions",
+        (command) => command.command === "growi.showLocalMirrorActions",
       ),
     ).toEqual({
-      command: "growi.showLocalRoundTripActions",
-      title: "GROWI: Show Local Round Trip Actions",
+      command: "growi.showLocalMirrorActions",
+      title: "GROWI: Show Local Mirror Actions",
     });
     expect(
       commands.find(
@@ -314,27 +318,36 @@ describe("project configuration", () => {
     expect(
       commands.find(
         (command) =>
-          command.command === "growi.downloadCurrentPageSetToLocalBundle",
+          command.command === "growi.createLocalMirrorForCurrentPage",
       ),
     ).toEqual({
-      command: "growi.downloadCurrentPageSetToLocalBundle",
-      title: "GROWI: Download Current Page Set to Local Bundle",
+      command: "growi.createLocalMirrorForCurrentPage",
+      title: "GROWI: Sync Local Mirror for Current Page",
     });
     expect(
       commands.find(
-        (command) => command.command === "growi.compareLocalBundleWithGrowi",
+        (command) =>
+          command.command === "growi.createLocalMirrorForCurrentPrefix",
       ),
     ).toEqual({
-      command: "growi.compareLocalBundleWithGrowi",
-      title: "GROWI: Compare Local Bundle with GROWI",
+      command: "growi.createLocalMirrorForCurrentPrefix",
+      title: "GROWI: Sync Local Mirror for Current Prefix",
     });
     expect(
       commands.find(
-        (command) => command.command === "growi.uploadLocalBundleToGrowi",
+        (command) => command.command === "growi.compareLocalMirrorWithGrowi",
       ),
     ).toEqual({
-      command: "growi.uploadLocalBundleToGrowi",
-      title: "GROWI: Upload Local Bundle to GROWI",
+      command: "growi.compareLocalMirrorWithGrowi",
+      title: "GROWI: Compare Local Mirror with GROWI",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.uploadLocalMirrorToGrowi",
+      ),
+    ).toEqual({
+      command: "growi.uploadLocalMirrorToGrowi",
+      title: "GROWI: Upload Local Mirror to GROWI",
     });
 
     expect(viewTitleMenu).toEqual([
@@ -376,13 +389,8 @@ describe("project configuration", () => {
         group: "navigation@3",
       },
       {
-        command: "growi.openDirectoryPage",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
-        group: "inline",
-      },
-      {
-        command: "growi.openDirectoryPage",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        command: "growi.explorerOpenPageItem",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "navigation@2",
       },
       {
@@ -406,94 +414,64 @@ describe("project configuration", () => {
         group: "currentPage@4",
       },
       {
-        command: "growi.explorerDownloadCurrentPageToLocalFile",
+        command: "growi.explorerCreateLocalMirrorForCurrentPage",
         when: "view == growi.explorer && viewItem == growi.page",
         group: "currentPage@5",
       },
       {
-        command: "growi.explorerDownloadCurrentPageSetToLocalBundle",
+        command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
         when: "view == growi.explorer && viewItem == growi.page",
         group: "currentPage@6",
       },
       {
         command: "growi.explorerRefreshCurrentPage",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "currentPage@1",
       },
       {
         command: "growi.explorerShowBacklinks",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "currentPage@2",
       },
       {
         command: "growi.explorerShowCurrentPageInfo",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "currentPage@3",
       },
       {
         command: "growi.explorerShowRevisionHistoryDiff",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "currentPage@4",
       },
       {
-        command: "growi.explorerDownloadCurrentPageToLocalFile",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        command: "growi.explorerCreateLocalMirrorForCurrentPage",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "currentPage@5",
       },
       {
-        command: "growi.explorerDownloadCurrentPageSetToLocalBundle",
-        when: "view == growi.explorer && viewItem == growi.directoryWithPage",
+        command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
+        when: "view == growi.explorer && viewItem == growi.directoryPage",
         group: "currentPage@6",
       },
       {
-        command: "growi.explorerRefreshCurrentPage",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "currentPage@1",
+        command: "growi.explorerCompareLocalMirrorWithGrowi",
+        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.directoryPage)",
+        group: "localOpsCompare@1",
       },
       {
-        command: "growi.explorerShowBacklinks",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "currentPage@2",
+        command: "growi.explorerUploadLocalMirrorToGrowi",
+        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.directoryPage)",
+        group: "localOpsUpload@1",
       },
       {
-        command: "growi.explorerShowCurrentPageInfo",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "currentPage@3",
+        command: "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+        when: "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
+        group: "localOpsCompare@1",
       },
       {
-        command: "growi.explorerShowRevisionHistoryDiff",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "currentPage@4",
-      },
-      {
-        command: "growi.explorerDownloadCurrentPageToLocalFile",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "currentPage@5",
-      },
-      {
-        command: "growi.explorerDownloadCurrentPageSetToLocalBundle",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "currentPage@6",
-      },
-      {
-        command: "growi.explorerCompareLocalWorkFileWithCurrentPage",
-        when: "view == growi.explorer && viewItem == growi.page",
-        group: "localOps@1",
-      },
-      {
-        command: "growi.explorerUploadExportedLocalFileToGrowi",
-        when: "view == growi.explorer && viewItem == growi.page",
-        group: "localOps@2",
-      },
-      {
-        command: "growi.explorerCompareLocalBundleWithGrowi",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.directoryWithPage || viewItem == growi.prefixRoot)",
-        group: "localOps@3",
-      },
-      {
-        command: "growi.explorerUploadLocalBundleToGrowi",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.directoryWithPage || viewItem == growi.prefixRoot)",
-        group: "localOps@4",
+        command: "growi.explorerUploadLocalMirrorSubtreeToGrowi",
+        when: "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
+        group: "localOpsUpload@1",
       },
     ]);
 
@@ -578,25 +556,25 @@ describe("project configuration", () => {
       "onCommand:growi.explorerShowRevisionHistoryDiff",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.explorerDownloadCurrentPageToLocalFile",
+      "onCommand:growi.explorerCreateLocalMirrorForCurrentPage",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.explorerDownloadCurrentPageSetToLocalBundle",
+      "onCommand:growi.explorerCreateLocalMirrorForCurrentPrefix",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.explorerCompareLocalWorkFileWithCurrentPage",
+      "onCommand:growi.explorerCompareLocalMirrorWithGrowi",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.explorerUploadExportedLocalFileToGrowi",
+      "onCommand:growi.explorerUploadLocalMirrorToGrowi",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.explorerCompareLocalBundleWithGrowi",
+      "onCommand:growi.explorerCompareLocalMirrorSubtreeWithGrowi",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.explorerUploadLocalBundleToGrowi",
+      "onCommand:growi.explorerUploadLocalMirrorSubtreeToGrowi",
     );
     expect(packageJson.activationEvents).toContain(
-      "onCommand:growi.showLocalRoundTripActions",
+      "onCommand:growi.showLocalMirrorActions",
     );
     expect(packageJson.activationEvents).toContain(
       "onCommand:growi.showRevisionHistoryDiff",
@@ -610,13 +588,15 @@ describe("project configuration", () => {
     expect(readme).toContain("VS Code 拡張です");
     expect(readme).toContain("Desktop 版 VS Code 拡張として使う前提です");
     expect(readme).toContain("GROWI 6 系以下は非サポートです");
-    expect(readme).toContain("| 対象 GROWI | GROWI 7.x のみ |");
+    expect(readme).toContain("| 対象 GROWI | GROWI `7.x` |");
     expect(readme).toContain("http://localhost:3000/");
     expect(readme).toContain("GROWI の API token");
     expect(readme).toContain("VS Code の Secret Storage");
     expect(readme).toContain("Explorer 配下の `GROWI` view");
-    expect(readme).toContain("`growi-current.md`");
-    expect(readme).toContain("metadata comment を壊すと失敗します");
+    expect(readme).toContain(
+      ".growi-workspaces/<instanceKey>/<rootCanonicalPath>/",
+    );
+    expect(readme).toContain(".growi-mirror.json");
     expect(readme).toContain("http://localhost:3000/");
 
     expect(envExample).toContain("GROWI_BASE_URL=http://localhost:3000/");
@@ -637,7 +617,7 @@ describe("project configuration", () => {
   it("documents the recommended manual test flow", () => {
     const readme = readText("README.md");
 
-    expect(readme).toContain("## 基本操作");
+    expect(readme).toContain("## Commands / Main Workflows");
     expect(readme).toContain("`GROWI: Configure Base URL`");
     expect(readme).toContain("`GROWI: Configure API Token`");
     expect(readme).toContain("`GROWI: Add Prefix`");
@@ -646,17 +626,21 @@ describe("project configuration", () => {
     expect(readme).toContain("`GROWI: End Edit`");
     expect(readme).toContain("`GROWI: Refresh Current Page`");
     expect(readme).toContain("`GROWI: Refresh Listing`");
-    expect(readme).toContain(
-      "`GROWI: Download Current Page to Local Work File`",
-    );
-    expect(readme).toContain(
-      "`GROWI: Compare Local Work File with Current Page`",
-    );
-    expect(readme).toContain("`GROWI: Upload Local Work File to GROWI`");
+    expect(readme).toContain("`GROWI: Sync Local Mirror for Current Page`");
+    expect(readme).toContain("`GROWI: Sync Local Mirror for Current Prefix`");
+    expect(readme).toContain("`GROWI: Compare Local Mirror with GROWI`");
+    expect(readme).toContain("`GROWI: Upload Local Mirror to GROWI`");
     expect(readme).toContain("`GROWI: Show Current Page Info`");
     expect(readme).toContain("`GROWI: Show Backlinks`");
-    expect(readme).toContain("保存後に `End Edit` で通常状態へ戻る");
+    expect(readme).toContain("保存後は `GROWI: End Edit` で通常状態へ戻します");
     expect(readme).toContain("wiki 内リンク移動は");
+    expect(readme).toContain("<!-- screenshot: overview-explorer");
+    expect(readme).toContain("<!-- screenshot: explorer-prefix-root");
+    expect(readme).toContain("<!-- screenshot: workspace-mirror");
+    expect(readme).toContain("ローカルミラーを同期 / 比較 / 反映");
+    expect(readme).toContain(
+      "配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映",
+    );
   });
 
   it("tracks the recommended code-workspace entrypoint", () => {
@@ -675,19 +659,21 @@ describe("project configuration", () => {
     const readme = readText("README.md");
 
     expect(readme).toContain("GROWI 6 系以下は非サポートです");
-    expect(readme).toContain("| 対象 GROWI | GROWI 7.x のみ |");
+    expect(readme).toContain("| 対象 GROWI | GROWI `7.x` |");
     expect(readme).toContain("`GET /_api/v3/page`");
     expect(readme).toContain("`GET /_api/v3/revisions/{revisionId}`");
     expect(readme).toContain("`GET /_api/v3/pages/list`");
     expect(readme).toContain("`PUT /_api/v3/page`");
     expect(readme).toContain("token-only で成立しない構成は現行版未対応です");
-    expect(readme).toContain("`pages/list` 非対応環境は現行版未対応です");
+    expect(readme).toContain(
+      "`revisions/list` または `pages/list` 非対応環境では一部機能が使えません",
+    );
   });
 
   it("documents the current attachment scope and draw.io boundary", () => {
     const readme = readText("README.md");
 
-    expect(readme).toContain("画像添付を Markdown Preview 上で扱う");
+    expect(readme).toContain("Markdown Preview 上で画像添付を表示する");
     expect(readme).toContain("画像以外の添付は現行版対象外です");
     expect(readme).toContain(
       "draw.io / diagrams.net / PlantUML / Mermaid の図描画",

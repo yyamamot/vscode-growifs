@@ -81,3 +81,5 @@ ci: check
 
 clean:
 	rm -rf dist out coverage .cache .nyc_output playwright-report test-results node_modules
+
+-include Makefile.private

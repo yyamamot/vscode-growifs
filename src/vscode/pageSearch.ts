@@ -2,18 +2,19 @@ import {
   type ParsedGrowiReference,
   parseGrowiLinkReference,
 } from "../core/uri";
+import type {
+  GrowiAccessFailureReason,
+  GrowiReadFailureReason,
+} from "./fsProvider";
 import { collectMarkdownLinkCandidates } from "./markdownLinks";
 
 export type ListPagesResult =
   | { ok: true; paths: string[] }
-  | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiAccessFailureReason };
 
 export type ReadPageBodyResult =
   | { ok: true; body: string }
-  | {
-      ok: false;
-      reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
-    };
+  | { ok: false; reason: GrowiReadFailureReason };
 
 export interface FindBacklinksInput {
   targetCanonicalPath: string;
@@ -24,10 +25,7 @@ export interface FindBacklinksInput {
   readPageBody(canonicalPath: string): Promise<ReadPageBodyResult>;
   resolvePageReference(reference: ParsedGrowiReference): Promise<
     | { ok: true; canonicalPath: string; uri: string }
-    | {
-        ok: false;
-        reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
-      }
+    | { ok: false; reason: GrowiReadFailureReason }
   >;
   timeoutMs: number;
   limit: number;
@@ -43,6 +41,10 @@ export type FindBacklinksResult =
   | {
       ok: false;
       reason:
+        | "BaseUrlNotConfigured"
+        | "ApiTokenNotConfigured"
+        | "InvalidApiToken"
+        | "PermissionDenied"
         | "ListPagesApiNotSupported"
         | "ReadPageApiNotSupported"
         | "ConnectionFailed"
@@ -111,6 +113,18 @@ export async function findBacklinks(
     }
 
     if (!listResult.ok) {
+      if (listResult.reason === "BaseUrlNotConfigured") {
+        return { ok: false, reason: "BaseUrlNotConfigured" };
+      }
+      if (listResult.reason === "ApiTokenNotConfigured") {
+        return { ok: false, reason: "ApiTokenNotConfigured" };
+      }
+      if (listResult.reason === "InvalidApiToken") {
+        return { ok: false, reason: "InvalidApiToken" };
+      }
+      if (listResult.reason === "PermissionDenied") {
+        return { ok: false, reason: "PermissionDenied" };
+      }
       if (listResult.reason === "ApiNotSupported") {
         return { ok: false, reason: "ListPagesApiNotSupported" };
       }
@@ -153,6 +167,18 @@ export async function findBacklinks(
     }
 
     if (!readResult.ok) {
+      if (readResult.reason === "BaseUrlNotConfigured") {
+        return { ok: false, reason: "BaseUrlNotConfigured" };
+      }
+      if (readResult.reason === "ApiTokenNotConfigured") {
+        return { ok: false, reason: "ApiTokenNotConfigured" };
+      }
+      if (readResult.reason === "InvalidApiToken") {
+        return { ok: false, reason: "InvalidApiToken" };
+      }
+      if (readResult.reason === "PermissionDenied") {
+        return { ok: false, reason: "PermissionDenied" };
+      }
       if (readResult.reason === "ApiNotSupported") {
         return { ok: false, reason: "ReadPageApiNotSupported" };
       }

@@ -9,12 +9,27 @@ import {
   parseAddPrefixInput,
   parseOpenPageInput,
 } from "../core/uri";
-import type { GrowiEditSession, GrowiPageWriteResult } from "./fsProvider";
+import type {
+  GrowiAccessFailureReason,
+  GrowiEditSession,
+  GrowiPageWriteResult,
+  GrowiReadFailureReason,
+} from "./fsProvider";
 import {
-  buildLocalWorkFilePath,
-  LOCAL_WORK_FILE_NAME,
-  parseLocalRoundTripWorkFile,
-  serializeLocalRoundTripWorkFile,
+  buildInstanceKey,
+  buildLegacyInstanceKey,
+  buildMirrorManifestPath,
+  buildMirrorManifestPathWithInstanceKey,
+  buildMirrorPageFilePath,
+  buildMirrorPageFilePathWithInstanceKey,
+  buildMirrorRootPathWithInstanceKey,
+  listMirrorInstanceKeys,
+  type MirrorManifest,
+  type MirrorManifestPage,
+  type MirrorManifestSkippedPage,
+  parseMirrorManifest,
+  planMirrorRelativeFilePaths,
+  serializeMirrorManifest,
 } from "./localRoundTrip";
 import { findBacklinks } from "./pageSearch";
 import {
@@ -38,31 +53,48 @@ export const GROWI_COMMANDS = {
   explorerShowBacklinks: "growi.explorerShowBacklinks",
   explorerShowCurrentPageInfo: "growi.explorerShowCurrentPageInfo",
   explorerShowRevisionHistoryDiff: "growi.explorerShowRevisionHistoryDiff",
+  explorerCreateLocalMirrorForCurrentPage:
+    "growi.explorerCreateLocalMirrorForCurrentPage",
+  explorerCreateLocalMirrorForCurrentPrefix:
+    "growi.explorerCreateLocalMirrorForCurrentPrefix",
+  explorerCompareLocalMirrorWithGrowi:
+    "growi.explorerCompareLocalMirrorWithGrowi",
+  explorerUploadLocalMirrorToGrowi: "growi.explorerUploadLocalMirrorToGrowi",
+  explorerCompareLocalMirrorSubtreeWithGrowi:
+    "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+  explorerUploadLocalMirrorSubtreeToGrowi:
+    "growi.explorerUploadLocalMirrorSubtreeToGrowi",
   explorerDownloadCurrentPageToLocalFile:
-    "growi.explorerDownloadCurrentPageToLocalFile",
+    "growi.explorerCreateLocalMirrorForCurrentPage",
   explorerDownloadCurrentPageSetToLocalBundle:
-    "growi.explorerDownloadCurrentPageSetToLocalBundle",
+    "growi.explorerCreateLocalMirrorForCurrentPrefix",
   explorerCompareLocalWorkFileWithCurrentPage:
-    "growi.explorerCompareLocalWorkFileWithCurrentPage",
+    "growi.explorerCompareLocalMirrorWithGrowi",
   explorerUploadExportedLocalFileToGrowi:
-    "growi.explorerUploadExportedLocalFileToGrowi",
+    "growi.explorerUploadLocalMirrorToGrowi",
   explorerCompareLocalBundleWithGrowi:
-    "growi.explorerCompareLocalBundleWithGrowi",
-  explorerUploadLocalBundleToGrowi: "growi.explorerUploadLocalBundleToGrowi",
+    "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+  explorerUploadLocalBundleToGrowi:
+    "growi.explorerUploadLocalMirrorSubtreeToGrowi",
   startEdit: "growi.startEdit",
   endEdit: "growi.endEdit",
   showCurrentPageActions: "growi.showCurrentPageActions",
-  showLocalRoundTripActions: "growi.showLocalRoundTripActions",
+  showLocalMirrorActions: "growi.showLocalMirrorActions",
+  showLocalRoundTripActions: "growi.showLocalMirrorActions",
   refreshCurrentPage: "growi.refreshCurrentPage",
   refreshListing: "growi.refreshListing",
-  downloadCurrentPageToLocalFile: "growi.downloadCurrentPageToLocalFile",
-  compareLocalWorkFileWithCurrentPage:
-    "growi.compareLocalWorkFileWithCurrentPage",
-  uploadExportedLocalFileToGrowi: "growi.uploadExportedLocalFileToGrowi",
+  createLocalMirrorForCurrentPage: "growi.createLocalMirrorForCurrentPage",
+  createLocalMirrorForCurrentPrefix: "growi.createLocalMirrorForCurrentPrefix",
+  refreshLocalMirror: "growi.refreshLocalMirror",
+  compareLocalMirrorWithGrowi: "growi.compareLocalMirrorWithGrowi",
+  uploadLocalMirrorToGrowi: "growi.uploadLocalMirrorToGrowi",
+  downloadCurrentPageToLocalFile: "growi.createLocalMirrorForCurrentPage",
+  compareLocalWorkFileWithCurrentPage: "growi.compareLocalMirrorWithGrowi",
+  uploadExportedLocalFileToGrowi: "growi.uploadLocalMirrorToGrowi",
   downloadCurrentPageSetToLocalBundle:
-    "growi.downloadCurrentPageSetToLocalBundle",
-  compareLocalBundleWithGrowi: "growi.compareLocalBundleWithGrowi",
-  uploadLocalBundleToGrowi: "growi.uploadLocalBundleToGrowi",
+    "growi.createLocalMirrorForCurrentPrefix",
+  compareLocalBundleWithGrowi: "growi.compareLocalMirrorWithGrowi",
+  uploadLocalBundleToGrowi: "growi.uploadLocalMirrorToGrowi",
   showCurrentPageInfo: "growi.showCurrentPageInfo",
   showBacklinks: "growi.showBacklinks",
   showRevisionHistoryDiff: "growi.showRevisionHistoryDiff",
@@ -118,7 +150,7 @@ export interface CommandDeps {
     canonicalPrefixPath: string,
   ): Promise<
     | { ok: true; paths: string[] }
-    | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" }
+    | { ok: false; reason: GrowiAccessFailureReason }
   >;
   listRevisions(pageId: string): Promise<GrowiRevisionListResult>;
   findOpenTextDocument(path: string): { isDirty: boolean } | undefined;
@@ -133,20 +165,17 @@ export interface CommandDeps {
   refreshOpenGrowiPage(
     canonicalPath: string,
   ): Promise<"reopened" | "not-open" | "dirty" | "failed">;
-  resolvePageReference(reference: ParsedGrowiReference): Promise<
+  resolvePageReference(
+    reference: ParsedGrowiReference,
+  ): Promise<
     | { ok: true; canonicalPath: string; uri: string }
-    | {
-        ok: false;
-        reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
-      }
+    | { ok: false; reason: GrowiReadFailureReason }
   >;
   saveDocument(uri: UriLike): Promise<boolean>;
-  readPageBody(canonicalPath: string): Promise<
-    | { ok: true; body: string }
-    | {
-        ok: false;
-        reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
-      }
+  readPageBody(
+    canonicalPath: string,
+  ): Promise<
+    { ok: true; body: string } | { ok: false; reason: GrowiReadFailureReason }
   >;
   readRevision(
     pageId: string,
@@ -184,6 +213,7 @@ export interface CommandDeps {
   storeSecret(key: string, value: string): Promise<void>;
   setEditSession(canonicalPath: string, editSession: GrowiEditSession): void;
   updateBaseUrl(value: string): Promise<void>;
+  deleteLocalPath(path: string): Promise<void>;
   writeLocalFile(path: string, content: string): Promise<void>;
   writePage(
     canonicalPath: string,
@@ -226,29 +256,6 @@ export interface RevisionQuickPickItem {
   author: string;
 }
 
-interface GrowiCurrentSetManifestPage {
-  canonicalPath: string;
-  relativeFilePath: string;
-  pageId: string;
-  baseRevisionId: string;
-  exportedAt: string;
-  contentHash: string;
-}
-
-interface GrowiCurrentSetManifest {
-  version: 1;
-  kind: "growi-current-set";
-  bundleName: "growi-current-set";
-  baseUrl: string;
-  rootCanonicalPath: string;
-  exportedAt: string;
-  pages: GrowiCurrentSetManifestPage[];
-}
-
-type ParsedGrowiCurrentSetManifest =
-  | { ok: true; value: GrowiCurrentSetManifest }
-  | { ok: false; reason: "InvalidJson" | "InvalidShape" };
-
 interface BundleCompareResult {
   canonicalPath: string;
   status:
@@ -261,6 +268,7 @@ interface BundleCompareResult {
 }
 
 type ChangesResourceTuple = readonly [UriLike, UriLike, UriLike];
+type MirrorRequestScope = "page" | "subtree";
 
 interface BundleUploadResult {
   canonicalPath: string;
@@ -270,6 +278,19 @@ interface BundleUploadResult {
     | "Conflict"
     | "MissingRemote"
     | "MissingLocal";
+}
+
+interface LoadedMirrorSelection {
+  workspaceRoot: string;
+  baseUrl: string;
+  manifestPath: string;
+  manifest: MirrorManifest;
+  instanceKey: string;
+  requestedCanonicalPath: string;
+  requestedScope: MirrorRequestScope;
+  effectiveRootCanonicalPath: string;
+  selectedPages: MirrorManifestPage[];
+  reusedAncestorPrefix: boolean;
 }
 
 interface CurrentPageActionsCommandDeps {
@@ -292,7 +313,7 @@ export type StartEditBootstrapResult =
         baseBody: string;
       };
     }
-  | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" | "NotFound" };
+  | { ok: false; reason: GrowiReadFailureReason };
 
 const REFRESH_CURRENT_PAGE_INVALID_TARGET_MESSAGE =
   "Refresh Current Page は growi: ページでのみ実行できます。";
@@ -325,66 +346,70 @@ const REFRESH_LISTING_CONNECTION_FAILED_MESSAGE =
 const REFRESH_LISTING_UNEXPECTED_ERROR_MESSAGE =
   "Refresh Listing の再読込に失敗しました。";
 const DOWNLOAD_CURRENT_PAGE_INVALID_TARGET_MESSAGE =
-  "Download Current Page to Local Work File は growi: ページでのみ実行できます。";
+  "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。";
 const DOWNLOAD_CURRENT_PAGE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Download Current Page to Local Work File を実行できません。先に file: workspace を開いてください。";
+  "ローカル folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace を開いてください。";
 const DOWNLOAD_CURRENT_PAGE_DIRTY_EDIT_SESSION_MESSAGE =
-  "未保存の変更があるため Download Current Page to Local Work File を実行できません。先に保存または End Edit を実行してください。";
-const DOWNLOAD_CURRENT_PAGE_DIRTY_LOCAL_WORK_FILE_MESSAGE = `${LOCAL_WORK_FILE_NAME} に未保存の変更があるため Download Current Page to Local Work File を実行できません。先に保存、Upload Local Work File to GROWI、または退避してください。`;
+  "未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存または End Edit を実行してください。";
 const DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE =
-  "本文取得 API が未対応のため Download Current Page to Local Work File を実行できませんでした。";
+  "本文取得 API が未対応のため Sync Local Mirror for Current Page を実行できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Download Current Page to Local Work File を実行できませんでした。";
+  "GROWI への接続に失敗したため Sync Local Mirror for Current Page を実行できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_NOT_FOUND_MESSAGE =
-  "対象ページが見つからないため Download Current Page to Local Work File を実行できませんでした。";
+  "対象ページが見つからないため Sync Local Mirror for Current Page を実行できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_WRITE_LOCAL_FILE_FAILED_MESSAGE =
-  "ローカル作業ファイルへの保存に失敗したため Download Current Page to Local Work File を完了できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_SUCCESS_MESSAGE = `現在ページを ${LOCAL_WORK_FILE_NAME} へ保存しました。`;
-const CURRENT_PAGE_SET_BUNDLE_NAME = "growi-current-set";
-const CURRENT_PAGE_SET_MANIFEST_FILE_NAME = "manifest.json";
+  "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Page を完了できませんでした。";
+const DOWNLOAD_CURRENT_PAGE_SUCCESS_MESSAGE =
+  "現在ページのローカルミラーを同期しました。";
+const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SUCCESS_MESSAGE =
+  "既存 prefix mirror 内の現在ページローカルミラーを同期しました。";
+const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE =
+  "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存してください。";
+const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SKIPPED_MESSAGE =
+  "既存 prefix mirror で対象ページが衝突により skip されているため Sync Local Mirror for Current Page を実行できません。prefix mirror を見直してください。";
 const CURRENT_PAGE_SET_MAX_PAGES = 50;
 const DOWNLOAD_CURRENT_PAGE_SET_INVALID_TARGET_MESSAGE =
-  "Download Current Page Set to Local Bundle は growi: ページでのみ実行できます。";
+  "Sync Local Mirror for Current Prefix は growi: ページでのみ実行できます。";
 const DOWNLOAD_CURRENT_PAGE_SET_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Download Current Page Set to Local Bundle を実行できません。先に file: workspace を開いてください。";
+  "ローカル folder が開かれていないため Sync Local Mirror for Current Prefix を実行できません。先に file: workspace を開いてください。";
 const DOWNLOAD_CURRENT_PAGE_SET_DIRTY_EDIT_SESSION_MESSAGE =
-  "未保存の変更があるため Download Current Page Set to Local Bundle を実行できません。先に保存または End Edit を実行してください。";
+  "未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存または End Edit を実行してください。";
 const DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE =
-  "一覧取得 API または本文取得 API が未対応のため Download Current Page Set to Local Bundle を実行できませんでした。";
+  "一覧取得 API または本文取得 API が未対応のため Sync Local Mirror for Current Prefix を実行できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Download Current Page Set to Local Bundle を実行できませんでした。";
+  "GROWI への接続に失敗したため Sync Local Mirror for Current Prefix を実行できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE =
-  "対象ページ配下の export 中にページが見つからなくなったため Download Current Page Set to Local Bundle を実行できませんでした。";
+  "対象ページ配下の export 中にページが見つからなくなったため Sync Local Mirror for Current Prefix を実行できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_SET_TOO_MANY_PAGES_MESSAGE =
-  "active page 配下が 50 pages を超えるため Download Current Page Set to Local Bundle を実行できません。";
+  "active page 配下が 50 pages を超えるため Sync Local Mirror for Current Prefix を実行できません。";
 const DOWNLOAD_CURRENT_PAGE_SET_WRITE_FAILED_MESSAGE =
-  "ローカル bundle への保存に失敗したため Download Current Page Set to Local Bundle を完了できませんでした。";
+  "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Prefix を完了できませんでした。";
 const DOWNLOAD_CURRENT_PAGE_SET_SUCCESS_MESSAGE =
-  "現在ページ配下を growi-current-set/ に保存しました。";
-const COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE = `${LOCAL_WORK_FILE_NAME} を開いた状態で Compare Local Work File with Current Page を実行してください。`;
-const COMPARE_LOCAL_WORK_FILE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Compare Local Work File with Current Page を実行できません。先に file: workspace を開いてください。";
-const COMPARE_LOCAL_WORK_FILE_INVALID_METADATA_MESSAGE = `${LOCAL_WORK_FILE_NAME} の GROWI metadata を読み取れないため Compare Local Work File with Current Page を実行できません。再度 download してください。`;
-const COMPARE_LOCAL_WORK_FILE_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定のため Compare Local Work File with Current Page を実行できません。先に Configure Base URL を実行してください。";
-const COMPARE_LOCAL_WORK_FILE_BASE_URL_MISMATCH_MESSAGE =
-  "export 元の GROWI base URL が現在設定と一致しないため Compare Local Work File with Current Page を実行できません。接続先を確認してください。";
-const COMPARE_LOCAL_WORK_FILE_OPEN_DIFF_FAILED_MESSAGE =
-  "差分ビューを開けませんでした。";
+  "現在ページ配下のローカルミラーを同期しました。";
+const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_SUCCESS_MESSAGE =
+  "既存 prefix mirror 内の現在ページ配下ローカルミラーを同期しました。";
+const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE =
+  "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存してください。";
+const COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE =
+  "Compare Local Mirror with GROWI は growi: ページでのみ実行できます。";
 const COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Compare Local Bundle with GROWI を実行できません。先に file: workspace を開いてください。";
+  "ローカル folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace を開いてください。";
 const COMPARE_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE =
-  "growi-current-set/manifest.json の読み込みに失敗したため Compare Local Bundle with GROWI を実行できませんでした。先に Download Current Page Set to Local Bundle を実行してください。";
+  ".growi-mirror.json の読み込みに失敗したため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
 const COMPARE_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE =
-  "growi-current-set/manifest.json の GROWI metadata を読み取れないため Compare Local Bundle with GROWI を実行できません。再度 download してください。";
+  ".growi-mirror.json の GROWI metadata を読み取れないため Compare Local Mirror with GROWI を実行できません。再度 Sync Local Mirror を実行してください。";
 const COMPARE_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定のため Compare Local Bundle with GROWI を実行できません。先に Configure Base URL を実行してください。";
+  "GROWI base URL が未設定のため Compare Local Mirror with GROWI を実行できません。先に Configure Base URL を実行してください。";
 const COMPARE_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE =
-  "export 元の GROWI base URL が現在設定と一致しないため Compare Local Bundle with GROWI を実行できません。接続先を確認してください。";
+  "mirror の GROWI base URL が現在設定と一致しないため Compare Local Mirror with GROWI を実行できません。接続先を確認してください。";
+const COMPARE_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE =
+  "対象の local mirror が見つからないため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
+const COMPARE_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE =
+  "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Compare Local Mirror with GROWI を実行できません。prefix mirror を見直してください。";
 const COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE =
-  "Compare Local Bundle with GROWI で changes editor の対象はありませんでした。";
+  "Compare Local Mirror with GROWI で changes editor の対象はありませんでした。";
 const COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE =
-  "bundle の差分ビューを開けませんでした。";
+  "mirror の差分ビューを開けませんでした。";
 const ADD_PREFIX_INVALID_BASE_URL_MESSAGE =
   "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
 const ADD_PREFIX_INVALID_PATH_MESSAGE =
@@ -407,8 +432,20 @@ const CLEAR_PREFIXES_NO_TARGET_MESSAGE =
   "現在の接続先に削除対象の Prefix はありません。";
 const CLEAR_PREFIXES_SUCCESS_MESSAGE =
   "現在の接続先に登録された GROWI Prefix を削除しました。";
+const GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE =
+  "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
+const GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE =
+  "GROWI API token が未設定です。先に Configure API Token を実行してください。";
+const GENERIC_INVALID_API_TOKEN_MESSAGE =
+  "GROWI API token が無効です。Configure API Token を確認してください。";
+const GENERIC_PERMISSION_DENIED_MESSAGE =
+  "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。";
 const OPEN_PAGE_NOT_FOUND_MESSAGE =
   "対象ページが見つからないため GROWI ページを開けませんでした。";
+const OPEN_PAGE_INVALID_API_TOKEN_MESSAGE =
+  "GROWI API token が無効なため GROWI ページを開けませんでした。Configure API Token を確認してください。";
+const OPEN_PAGE_PERMISSION_DENIED_MESSAGE =
+  "GROWI へのアクセス権が不足しているか、接続先が認証を拒否したため GROWI ページを開けませんでした。権限設定と API Token を確認してください。";
 const OPEN_PAGE_API_NOT_SUPPORTED_MESSAGE =
   "本文取得 API が未対応のため GROWI ページを開けませんでした。";
 const OPEN_PAGE_CONNECTION_FAILED_MESSAGE =
@@ -445,13 +482,21 @@ const SHOW_REVISION_HISTORY_DIFF_REVISION_PLACEHOLDER =
 const SHOW_LOCAL_ROUND_TRIP_ACTIONS_INVALID_TARGET_MESSAGE =
   "ローカル操作メニューは growi: ページでのみ実行できます。";
 const SHOW_LOCAL_ROUND_TRIP_ACTIONS_PLACEHOLDER =
-  "ローカルファイルに対して実行する操作を選択してください。";
+  "ローカルミラーに対して実行する操作を選択してください。";
 const SHOW_BACKLINKS_INVALID_TARGET_MESSAGE =
   "Show Backlinks は growi: ページでのみ実行できます。";
 const SHOW_BACKLINKS_NO_PREFIX_MESSAGE =
   "Backlinks の対象 Prefix がありません。先に Add Prefix を実行してください。";
 const SHOW_BACKLINKS_EMPTY_RESULT_MESSAGE =
   "Backlinks は見つかりませんでした。";
+const SHOW_BACKLINKS_BASE_URL_NOT_CONFIGURED_MESSAGE =
+  "GROWI base URL が未設定のため Backlinks を実行できません。先に Configure Base URL を実行してください。";
+const SHOW_BACKLINKS_API_TOKEN_NOT_CONFIGURED_MESSAGE =
+  "GROWI API token が未設定のため Backlinks を実行できません。先に Configure API Token を実行してください。";
+const SHOW_BACKLINKS_INVALID_API_TOKEN_MESSAGE =
+  "GROWI API token が無効なため Backlinks を実行できません。Configure API Token を確認してください。";
+const SHOW_BACKLINKS_PERMISSION_DENIED_MESSAGE =
+  "GROWI へのアクセス権が不足しているか、接続先が認証を拒否したため Backlinks を実行できませんでした。権限設定と API Token を確認してください。";
 const SHOW_BACKLINKS_LIST_API_NOT_SUPPORTED_MESSAGE =
   "Backlinks の対象一覧 API が未対応のため実行できません。";
 const SHOW_BACKLINKS_READ_API_NOT_SUPPORTED_MESSAGE =
@@ -468,184 +513,584 @@ const SHOW_BACKLINKS_PLACEHOLDER_TIMEOUT =
   "登録済み Prefix 配下を検索しました。結果は5秒で打ち切られています。";
 const SHOW_BACKLINKS_PLACEHOLDER_LIMIT_AND_TIMEOUT =
   "登録済み Prefix 配下を検索しました。結果は最大100件で打ち切られています。結果は5秒で打ち切られています。";
-const UPLOAD_EXPORTED_LOCAL_FILE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Upload Local Work File to GROWI を実行できません。先に file: workspace を開いてください。";
-const UPLOAD_EXPORTED_LOCAL_FILE_READ_LOCAL_FILE_FAILED_MESSAGE = `${LOCAL_WORK_FILE_NAME} の読み込みに失敗したため Upload Local Work File to GROWI を実行できませんでした。先に Download Current Page to Local Work File を実行してください。`;
-const UPLOAD_EXPORTED_LOCAL_FILE_INVALID_METADATA_MESSAGE = `${LOCAL_WORK_FILE_NAME} の GROWI metadata を読み取れませんでした。再度 download してください。`;
-const UPLOAD_EXPORTED_LOCAL_FILE_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
-const UPLOAD_EXPORTED_LOCAL_FILE_BASE_URL_MISMATCH_MESSAGE =
-  "export 元の GROWI base URL が現在設定と一致しません。接続先を確認してください。";
 const UPLOAD_EXPORTED_LOCAL_FILE_NOT_FOUND_MESSAGE =
-  "upload 先のページが見つからないため Upload Local Work File to GROWI を実行できませんでした。";
+  "upload 先のページが見つからないため Upload Local Mirror to GROWI を実行できませんでした。";
 const UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE =
-  "更新 API または本文取得 API が未対応のため Upload Local Work File to GROWI を実行できませんでした。";
+  "更新 API または本文取得 API が未対応のため Upload Local Mirror to GROWI を実行できませんでした。";
 const UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Upload Local Work File to GROWI を実行できませんでした。";
+  "GROWI への接続に失敗したため Upload Local Mirror to GROWI を実行できませんでした。";
 const UPLOAD_EXPORTED_LOCAL_FILE_PERMISSION_DENIED_MESSAGE =
-  "更新権限がないため Upload Local Work File to GROWI を実行できませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_CONFLICT_MESSAGE =
-  "download 後に GROWI 側が更新されたため Upload Local Work File to GROWI を中止しました。再度 download してやり直してください。";
-const UPLOAD_EXPORTED_LOCAL_FILE_SUCCESS_MESSAGE = `${LOCAL_WORK_FILE_NAME} の内容を GROWI へ反映しました。`;
-const UPLOAD_EXPORTED_LOCAL_FILE_METADATA_REFRESH_WARNING_MESSAGE =
-  "GROWI への upload は成功しましたが metadata の更新に失敗しました。次回 upload 前に再度 download してください。";
+  "更新権限がないため Upload Local Mirror to GROWI を実行できませんでした。";
 const UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE =
   "GROWI への upload は成功しましたが、表示中の growi: ページは未保存変更があるため自動再読込しませんでした。";
 const UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE =
   "GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。";
 const UPLOAD_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Upload Local Bundle to GROWI を実行できません。先に file: workspace を開いてください。";
+  "ローカル folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace を開いてください。";
 const UPLOAD_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE =
-  "growi-current-set/manifest.json の読み込みに失敗したため Upload Local Bundle to GROWI を実行できませんでした。先に Download Current Page Set to Local Bundle を実行してください。";
+  ".growi-mirror.json の読み込みに失敗したため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
 const UPLOAD_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE =
-  "growi-current-set/manifest.json の GROWI metadata を読み取れませんでした。再度 download してください。";
+  ".growi-mirror.json の GROWI metadata を読み取れませんでした。再度 Sync Local Mirror を実行してください。";
 const UPLOAD_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE =
   "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
 const UPLOAD_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE =
-  "export 元の GROWI base URL が現在設定と一致しません。接続先を確認してください。";
+  "mirror の GROWI base URL が現在設定と一致しません。接続先を確認してください。";
+const UPLOAD_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE =
+  "対象の local mirror が見つからないため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
+const UPLOAD_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE =
+  "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Upload Local Mirror to GROWI を実行できません。prefix mirror を見直してください。";
 const UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE =
-  "GROWI への bundle upload は成功しましたが manifest の更新に一部失敗しました。次回 upload 前に再度 download してください。";
-
-function joinUploadWarnings(messages: string[]): string {
-  return messages.join(" ");
-}
-
-function buildCurrentPageSetBundleRootPath(workspaceRoot: string): string {
-  return path.join(workspaceRoot, CURRENT_PAGE_SET_BUNDLE_NAME);
-}
-
-function buildCurrentPageSetManifestPath(workspaceRoot: string): string {
-  return path.join(
-    buildCurrentPageSetBundleRootPath(workspaceRoot),
-    CURRENT_PAGE_SET_MANIFEST_FILE_NAME,
-  );
-}
-
-function buildCurrentPageSetPageFileRelativePath(
-  canonicalPath: string,
-): string {
-  if (canonicalPath === "/") {
-    return "__root__.md";
-  }
-
-  const segments = canonicalPath
-    .split("/")
-    .filter((segment) => segment.length > 0);
-  return `${path.posix.join(...segments)}.md`;
-}
-
-function buildCurrentPageSetPageFilePath(
-  workspaceRoot: string,
-  relativeFilePath: string,
-): string {
-  return path.join(
-    buildCurrentPageSetBundleRootPath(workspaceRoot),
-    ...relativeFilePath.split("/"),
-  );
-}
+  "GROWI への mirror upload は成功しましたが manifest の更新に一部失敗しました。次回 upload 前に再度 Sync Local Mirror を実行してください。";
+const REFRESH_LOCAL_MIRROR_INVALID_TARGET_MESSAGE =
+  "Refresh Local Mirror は growi: ページでのみ実行できます。";
+const REFRESH_LOCAL_MIRROR_NO_LOCAL_WORKSPACE_MESSAGE =
+  "ローカル folder が開かれていないため Refresh Local Mirror を実行できません。先に file: workspace を開いてください。";
+const REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE =
+  ".growi-mirror.json の読み込みに失敗したため Refresh Local Mirror を実行できませんでした。先に Sync Local Mirror を実行してください。";
+const REFRESH_LOCAL_MIRROR_INVALID_MANIFEST_MESSAGE =
+  ".growi-mirror.json の GROWI metadata を読み取れないため Refresh Local Mirror を実行できません。再度 Sync Local Mirror を実行してください。";
+const REFRESH_LOCAL_MIRROR_BASE_URL_MISMATCH_MESSAGE =
+  "mirror の GROWI base URL が現在設定と一致しないため Refresh Local Mirror を実行できません。接続先を確認してください。";
+const REFRESH_LOCAL_MIRROR_LOCAL_CHANGES_MESSAGE =
+  "local changed があるため Refresh Local Mirror を実行できません。Compare Local Mirror with GROWI または Upload Local Mirror to GROWI を先に実行してください。";
+const REFRESH_LOCAL_MIRROR_SUCCESS_MESSAGE = "Local Mirror を再取得しました。";
+const SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION = "mirror が無ければ作成、あれば更新";
+const COMPARE_LOCAL_MIRROR_DESCRIPTION = "mirror manifest を使用";
+const UPLOAD_LOCAL_MIRROR_DESCRIPTION = "changed pages のみ送信";
 
 function hashBody(body: string): string {
   return createHash("sha256").update(body).digest("hex");
 }
 
-function serializeGrowiCurrentSetManifest(
-  manifest: GrowiCurrentSetManifest,
+function buildMirrorManifestFilePath(
+  workspaceRoot: string,
+  baseUrl: string,
+  rootCanonicalPath: string,
 ): string {
-  return `${JSON.stringify(manifest, null, 2)}\n`;
+  return buildMirrorManifestPath(workspaceRoot, baseUrl, rootCanonicalPath);
 }
 
-function parseGrowiCurrentSetManifest(
-  raw: string,
-): ParsedGrowiCurrentSetManifest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, reason: "InvalidJson" };
+function buildMirrorLocalFilePath(
+  workspaceRoot: string,
+  baseUrl: string,
+  rootCanonicalPath: string,
+  relativeFilePath: string,
+): string {
+  return buildMirrorPageFilePath(
+    workspaceRoot,
+    baseUrl,
+    rootCanonicalPath,
+    relativeFilePath,
+  );
+}
+
+function buildPreferredMirrorInstanceKey(baseUrl: string): string {
+  return buildInstanceKey(baseUrl);
+}
+
+function buildLegacyMirrorInstanceKey(baseUrl: string): string {
+  return buildLegacyInstanceKey(baseUrl);
+}
+
+function buildMirrorManifestFilePathWithInstanceKey(
+  workspaceRoot: string,
+  instanceKey: string,
+  rootCanonicalPath: string,
+): string {
+  return buildMirrorManifestPathWithInstanceKey(
+    workspaceRoot,
+    instanceKey,
+    rootCanonicalPath,
+  );
+}
+
+function buildMirrorLocalFilePathWithInstanceKey(
+  workspaceRoot: string,
+  instanceKey: string,
+  rootCanonicalPath: string,
+  relativeFilePath: string,
+): string {
+  return buildMirrorPageFilePathWithInstanceKey(
+    workspaceRoot,
+    instanceKey,
+    rootCanonicalPath,
+    relativeFilePath,
+  );
+}
+
+function listMirrorManifestCandidates(
+  workspaceRoot: string,
+  baseUrl: string,
+  rootCanonicalPath: string,
+): Array<{ instanceKey: string; manifestPath: string }> {
+  return listMirrorInstanceKeys(baseUrl).map((instanceKey) => ({
+    instanceKey,
+    manifestPath: buildMirrorManifestFilePathWithInstanceKey(
+      workspaceRoot,
+      instanceKey,
+      rootCanonicalPath,
+    ),
+  }));
+}
+
+async function migrateMirrorRootIfNeeded(
+  deps: CommandDeps,
+  input: {
+    workspaceRoot: string;
+    baseUrl: string;
+    rootCanonicalPath: string;
+    sourceInstanceKey: string;
+    manifest: MirrorManifest;
+  },
+): Promise<string> {
+  const targetInstanceKey = buildPreferredMirrorInstanceKey(input.baseUrl);
+  if (targetInstanceKey === input.sourceInstanceKey) {
+    return buildMirrorManifestFilePathWithInstanceKey(
+      input.workspaceRoot,
+      input.sourceInstanceKey,
+      input.rootCanonicalPath,
+    );
   }
 
-  const candidate = parsed as Partial<GrowiCurrentSetManifest>;
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    candidate.version !== 1 ||
-    candidate.kind !== "growi-current-set" ||
-    candidate.bundleName !== "growi-current-set" ||
-    typeof candidate.baseUrl !== "string" ||
-    typeof candidate.rootCanonicalPath !== "string" ||
-    typeof candidate.exportedAt !== "string" ||
-    !Array.isArray(candidate.pages)
-  ) {
-    return { ok: false, reason: "InvalidShape" };
-  }
-
-  const pages: GrowiCurrentSetManifestPage[] = [];
-  for (const page of candidate.pages) {
-    if (
-      typeof page !== "object" ||
-      page === null ||
-      typeof page.canonicalPath !== "string" ||
-      typeof page.relativeFilePath !== "string" ||
-      typeof page.pageId !== "string" ||
-      typeof page.baseRevisionId !== "string" ||
-      typeof page.exportedAt !== "string" ||
-      typeof page.contentHash !== "string"
-    ) {
-      return { ok: false, reason: "InvalidShape" };
+  for (const page of input.manifest.pages) {
+    const sourcePath = buildMirrorLocalFilePathWithInstanceKey(
+      input.workspaceRoot,
+      input.sourceInstanceKey,
+      input.rootCanonicalPath,
+      page.relativeFilePath,
+    );
+    try {
+      await deps.readLocalFile(
+        buildMirrorLocalFilePathWithInstanceKey(
+          input.workspaceRoot,
+          targetInstanceKey,
+          input.rootCanonicalPath,
+          page.relativeFilePath,
+        ),
+      );
+      continue;
+    } catch {
+      // Target file does not exist yet.
     }
-    pages.push({
-      canonicalPath: page.canonicalPath,
-      relativeFilePath: page.relativeFilePath,
-      pageId: page.pageId,
-      baseRevisionId: page.baseRevisionId,
-      exportedAt: page.exportedAt,
-      contentHash: page.contentHash,
-    });
+
+    try {
+      const body = await deps.readLocalFile(sourcePath);
+      await deps.writeLocalFile(
+        buildMirrorLocalFilePathWithInstanceKey(
+          input.workspaceRoot,
+          targetInstanceKey,
+          input.rootCanonicalPath,
+          page.relativeFilePath,
+        ),
+        body,
+      );
+    } catch {
+      // Preserve missing locals as-is.
+    }
   }
 
-  return {
-    ok: true,
-    value: {
-      version: 1,
-      kind: "growi-current-set",
-      bundleName: "growi-current-set",
-      baseUrl: candidate.baseUrl,
-      rootCanonicalPath: candidate.rootCanonicalPath,
-      exportedAt: candidate.exportedAt,
-      pages,
-    },
-  };
-}
-
-function dedupeAndSortCanonicalPaths(paths: readonly string[]): string[] {
-  return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
-}
-
-function mapBundleListFailureToMessage(result: {
-  ok: false;
-  reason: "ApiNotSupported" | "ConnectionFailed";
-}): string {
-  if (result.reason === "ApiNotSupported") {
-    return DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE;
+  for (const page of input.manifest.pages) {
+    await deps.deleteLocalPath(
+      buildMirrorLocalFilePathWithInstanceKey(
+        input.workspaceRoot,
+        input.sourceInstanceKey,
+        input.rootCanonicalPath,
+        page.relativeFilePath,
+      ),
+    );
   }
-  return DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE;
+  for (const page of input.manifest.skippedPages ?? []) {
+    await deps.deleteLocalPath(
+      buildMirrorLocalFilePathWithInstanceKey(
+        input.workspaceRoot,
+        input.sourceInstanceKey,
+        input.rootCanonicalPath,
+        page.relativeFilePath,
+      ),
+    );
+  }
+  await deps.deleteLocalPath(
+    buildMirrorManifestFilePathWithInstanceKey(
+      input.workspaceRoot,
+      input.sourceInstanceKey,
+      input.rootCanonicalPath,
+    ),
+  );
+
+  return buildMirrorManifestFilePathWithInstanceKey(
+    input.workspaceRoot,
+    targetInstanceKey,
+    input.rootCanonicalPath,
+  );
 }
 
-function mapBundleSnapshotFailureToMessage(
-  result: Exclude<StartEditBootstrapResult, { ok: true }>,
-): string {
-  return mapSnapshotFailureToMessage(result, {
-    apiNotSupported: DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE,
-    connectionFailed: DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE,
-    notFound: DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE,
+function listAncestorCanonicalPaths(canonicalPath: string): string[] {
+  const segments = canonicalPath.split("/").filter((segment) => segment.length > 0);
+  const ancestors: string[] = [];
+  for (let length = segments.length - 1; length >= 1; length -= 1) {
+    ancestors.push(`/${segments.slice(0, length).join("/")}`);
+  }
+  if (segments.length > 0) {
+    ancestors.push("/");
+  }
+  return ancestors;
+}
+
+function isWithinCanonicalSubtree(
+  candidatePath: string,
+  rootCanonicalPath: string,
+): boolean {
+  return (
+    candidatePath === rootCanonicalPath ||
+    candidatePath.startsWith(`${rootCanonicalPath}/`)
+  );
+}
+
+async function findReusableAncestorPrefixMirror(
+  deps: CommandDeps,
+  input: {
+    workspaceRoot: string;
+    baseUrl: string;
+    canonicalPath: string;
+  },
+): Promise<
+  | {
+      kind: "reusable";
+      manifestPath: string;
+      manifest: MirrorManifest;
+      page: MirrorManifestPage;
+      instanceKey: string;
+    }
+  | {
+      kind: "skipped";
+      manifest: MirrorManifest;
+      skippedPage: MirrorManifestSkippedPage;
+    }
+  | undefined
+> {
+  for (const ancestorPath of listAncestorCanonicalPaths(input.canonicalPath)) {
+    for (const { instanceKey, manifestPath } of listMirrorManifestCandidates(
+      input.workspaceRoot,
+      input.baseUrl,
+      ancestorPath,
+    )) {
+      let rawManifest: string;
+      try {
+        rawManifest = await deps.readLocalFile(manifestPath);
+      } catch {
+        continue;
+      }
+      const parsedManifest = parseMirrorManifest(rawManifest);
+      if (!parsedManifest.ok || parsedManifest.value.mode !== "prefix") {
+        continue;
+      }
+      const manifest = parsedManifest.value;
+      const page = manifest.pages.find(
+        (candidate) => candidate.canonicalPath === input.canonicalPath,
+      );
+      if (page) {
+        return { kind: "reusable", manifestPath, manifest, page, instanceKey };
+      }
+      const skippedPage = manifest.skippedPages?.find(
+        (candidate) => candidate.canonicalPath === input.canonicalPath,
+      );
+      if (skippedPage) {
+        return { kind: "skipped", manifest, skippedPage };
+      }
+    }
+  }
+  return undefined;
+}
+
+async function exportPageIntoExistingPrefixMirror(
+  deps: CommandDeps,
+  input: {
+    workspaceRoot: string;
+    baseUrl: string;
+    canonicalPath: string;
+    writeFailedMessage: string;
+  },
+): Promise<
+  | { handled: false }
+  | { handled: true; manifest?: MirrorManifest }
+> {
+  const reusable = await findReusableAncestorPrefixMirror(deps, {
+    workspaceRoot: input.workspaceRoot,
+    baseUrl: input.baseUrl,
+    canonicalPath: input.canonicalPath,
   });
+  if (!reusable) {
+    return { handled: false };
+  }
+  if (reusable.kind === "skipped") {
+    deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SKIPPED_MESSAGE);
+    return { handled: true };
+  }
+
+  const localFilePath = buildMirrorLocalFilePath(
+    input.workspaceRoot,
+    input.baseUrl,
+    reusable.manifest.rootCanonicalPath,
+    reusable.page.relativeFilePath,
+  );
+  const sourceLocalFilePath = buildMirrorLocalFilePathWithInstanceKey(
+    input.workspaceRoot,
+    reusable.instanceKey,
+    reusable.manifest.rootCanonicalPath,
+    reusable.page.relativeFilePath,
+  );
+  if (deps.findOpenTextDocument(sourceLocalFilePath)?.isDirty) {
+    deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE);
+    return { handled: true };
+  }
+
+  const snapshot = await deps.bootstrapEditSession(input.canonicalPath);
+  if (!snapshot.ok) {
+    deps.showErrorMessage(
+      mapSnapshotFailureToMessage(snapshot, {
+        apiNotSupported: DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE,
+        connectionFailed: DOWNLOAD_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE,
+        notFound: DOWNLOAD_CURRENT_PAGE_NOT_FOUND_MESSAGE,
+      }),
+    );
+    return { handled: true };
+  }
+
+  const exportedAt = new Date().toISOString();
+  const updatedPages = reusable.manifest.pages.map((page) =>
+    page.canonicalPath === input.canonicalPath
+      ? {
+          ...page,
+          pageId: snapshot.value.pageId,
+          baseRevisionId: snapshot.value.baseRevisionId,
+          exportedAt,
+          contentHash: hashBody(snapshot.value.baseBody),
+        }
+      : page,
+  );
+
+  try {
+    const targetLocalFilePath = buildMirrorLocalFilePath(
+      input.workspaceRoot,
+      input.baseUrl,
+      reusable.manifest.rootCanonicalPath,
+      reusable.page.relativeFilePath,
+    );
+    await deps.writeLocalFile(targetLocalFilePath, snapshot.value.baseBody);
+    const updatedManifest: MirrorManifest = {
+      ...reusable.manifest,
+      exportedAt,
+      pages: updatedPages,
+    };
+    const targetManifestPath = await migrateMirrorRootIfNeeded(deps, {
+      workspaceRoot: input.workspaceRoot,
+      baseUrl: input.baseUrl,
+      rootCanonicalPath: reusable.manifest.rootCanonicalPath,
+      sourceInstanceKey: reusable.instanceKey,
+      manifest: updatedManifest,
+    });
+    await deps.writeLocalFile(targetManifestPath, serializeMirrorManifest(updatedManifest));
+    await deps.openLocalFile(targetLocalFilePath);
+    deps.showInformationMessage(DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SUCCESS_MESSAGE);
+    return { handled: true, manifest: updatedManifest };
+  } catch {
+    deps.showErrorMessage(input.writeFailedMessage);
+    return { handled: true };
+  }
+}
+
+async function exportPrefixIntoExistingPrefixMirror(
+  deps: CommandDeps,
+  input: {
+    workspaceRoot: string;
+    baseUrl: string;
+    canonicalPath: string;
+    writeFailedMessage: string;
+  },
+): Promise<
+  | { handled: false }
+  | { handled: true; manifest?: MirrorManifest }
+> {
+  const reusable = await findReusableAncestorPrefixMirror(deps, {
+    workspaceRoot: input.workspaceRoot,
+    baseUrl: input.baseUrl,
+    canonicalPath: input.canonicalPath,
+  });
+  if (!reusable) {
+    return { handled: false };
+  }
+  if (reusable.kind === "skipped") {
+    deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SKIPPED_MESSAGE);
+    return { handled: true };
+  }
+
+  const listedPages = await deps.listPages(input.canonicalPath);
+  if (!listedPages.ok) {
+    deps.showErrorMessage(mapBundleListFailureToMessage(listedPages));
+    return { handled: true };
+  }
+
+  const subtreePagePaths = dedupeAndSortCanonicalPaths([
+    input.canonicalPath,
+    ...listedPages.paths,
+  ]);
+  if (subtreePagePaths.length > CURRENT_PAGE_SET_MAX_PAGES) {
+    deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_SET_TOO_MANY_PAGES_MESSAGE);
+    return { handled: true };
+  }
+
+  const plannedPages = planMirrorRelativeFilePaths(
+    reusable.manifest.rootCanonicalPath,
+    subtreePagePaths,
+  );
+
+  const subtreeManifestPages = reusable.manifest.pages.filter((page) =>
+    isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+  );
+  for (const page of subtreeManifestPages) {
+    const localFilePath = buildMirrorLocalFilePathWithInstanceKey(
+      input.workspaceRoot,
+      reusable.instanceKey,
+      reusable.manifest.rootCanonicalPath,
+      page.relativeFilePath,
+    );
+    if (deps.findOpenTextDocument(localFilePath)?.isDirty) {
+      deps.showErrorMessage(
+        DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE,
+      );
+      return { handled: true };
+    }
+  }
+
+  const exportedAt = new Date().toISOString();
+  const updatedSubtreePages: MirrorManifestPage[] = [];
+
+  try {
+    for (const plannedPage of plannedPages.pages) {
+      const snapshot = await deps.bootstrapEditSession(plannedPage.canonicalPath);
+      if (!snapshot.ok) {
+        deps.showErrorMessage(mapBundleSnapshotFailureToMessage(snapshot));
+        return { handled: true };
+      }
+      const localFilePath = buildMirrorLocalFilePath(
+        input.workspaceRoot,
+        input.baseUrl,
+        reusable.manifest.rootCanonicalPath,
+        plannedPage.relativeFilePath,
+      );
+      await deps.writeLocalFile(localFilePath, snapshot.value.baseBody);
+      updatedSubtreePages.push({
+        canonicalPath: plannedPage.canonicalPath,
+        relativeFilePath: plannedPage.relativeFilePath,
+        pageId: snapshot.value.pageId,
+        baseRevisionId: snapshot.value.baseRevisionId,
+        exportedAt,
+        contentHash: hashBody(snapshot.value.baseBody),
+      });
+    }
+
+    const previousTrackedPaths = new Set(
+      [
+        ...reusable.manifest.pages
+          .filter((page) => isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath))
+          .map((page) => page.relativeFilePath),
+        ...(reusable.manifest.skippedPages ?? [])
+          .filter((page) => isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath))
+          .map((page) => page.relativeFilePath),
+      ].map((relativeFilePath) =>
+        buildMirrorLocalFilePathWithInstanceKey(
+          input.workspaceRoot,
+          reusable.instanceKey,
+          reusable.manifest.rootCanonicalPath,
+          relativeFilePath,
+        ),
+      ),
+    );
+    const currentTrackedPaths = new Set(
+      [
+        ...updatedSubtreePages.map((page) => page.relativeFilePath),
+        ...plannedPages.skippedPages.map((page) => page.relativeFilePath),
+      ].map((relativeFilePath) =>
+        buildMirrorLocalFilePath(
+          input.workspaceRoot,
+          input.baseUrl,
+          reusable.manifest.rootCanonicalPath,
+          relativeFilePath,
+        ),
+      ),
+    );
+    const updatedManifest: MirrorManifest = {
+      ...reusable.manifest,
+      exportedAt,
+      pages: [
+        ...reusable.manifest.pages.filter(
+          (page) => !isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+        ),
+        ...updatedSubtreePages,
+      ],
+      ...(reusable.manifest.skippedPages || plannedPages.skippedPages.length > 0
+        ? {
+            skippedPages: [
+              ...(reusable.manifest.skippedPages ?? []).filter(
+                (page) =>
+                  !isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+              ),
+              ...plannedPages.skippedPages,
+            ],
+          }
+        : {}),
+    };
+
+    const targetManifestPath = await migrateMirrorRootIfNeeded(deps, {
+      workspaceRoot: input.workspaceRoot,
+      baseUrl: input.baseUrl,
+      rootCanonicalPath: reusable.manifest.rootCanonicalPath,
+      sourceInstanceKey: reusable.instanceKey,
+      manifest: updatedManifest,
+    });
+
+    for (const stalePath of previousTrackedPaths) {
+      if (currentTrackedPaths.has(stalePath)) {
+        continue;
+      }
+      await deps.deleteLocalPath(stalePath);
+    }
+
+    await deps.writeLocalFile(targetManifestPath, serializeMirrorManifest(updatedManifest));
+    await deps.openLocalFile(
+      buildMirrorLocalFilePath(
+        input.workspaceRoot,
+        input.baseUrl,
+        reusable.manifest.rootCanonicalPath,
+        updatedSubtreePages[0]?.relativeFilePath ??
+          plannedPages.skippedPages[0]?.relativeFilePath ??
+          reusable.page.relativeFilePath,
+      ),
+    );
+    if (plannedPages.skippedPages.length > 0) {
+      deps.showWarningMessage(
+        [
+          DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_SUCCESS_MESSAGE,
+          formatSkippedMirrorPagesSummary(plannedPages.skippedPages),
+        ].join("\n"),
+      );
+    } else {
+      deps.showInformationMessage(
+        DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_SUCCESS_MESSAGE,
+      );
+    }
+    return { handled: true, manifest: updatedManifest };
+  } catch {
+    deps.showErrorMessage(input.writeFailedMessage);
+    return { handled: true };
+  }
 }
 
 function formatBundleCompareSkippedSummary(
   results: readonly BundleCompareResult[],
 ): string {
   return [
-    "Compare Local Bundle with GROWI では一部ページを changes editor に含めませんでした。",
+    "Compare Local Mirror with GROWI では一部ページを changes editor に含めませんでした。",
     ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
   ].join("\n");
 }
@@ -654,9 +1099,90 @@ function formatBundleUploadSummary(
   results: readonly BundleUploadResult[],
 ): string {
   return [
-    "Upload Local Bundle to GROWI を完了しました。",
+    "Upload Local Mirror to GROWI を完了しました。",
     ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
   ].join("\n");
+}
+
+function formatSkippedMirrorPagesSummary(
+  skippedPages: readonly MirrorManifestSkippedPage[],
+): string {
+  return [
+    "Local Mirror では一部ページを保存しませんでした。",
+    ...skippedPages.map(
+      (page) => `${page.reason}: ${page.canonicalPath} -> ${page.relativeFilePath}`,
+    ),
+  ].join("\n");
+}
+
+function dedupeAndSortCanonicalPaths(paths: readonly string[]): string[] {
+  return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
+}
+
+type AccessFailureMessages = {
+  baseUrlNotConfigured?: string;
+  apiTokenNotConfigured?: string;
+  invalidApiToken?: string;
+  permissionDenied?: string;
+  apiNotSupported: string;
+  connectionFailed: string;
+  notFound?: string;
+};
+
+function mapAccessFailureReasonToMessage(
+  reason: GrowiAccessFailureReason,
+  messages: AccessFailureMessages,
+): string {
+  if (reason === "BaseUrlNotConfigured") {
+    return (
+      messages.baseUrlNotConfigured ?? GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE
+    );
+  }
+  if (reason === "ApiTokenNotConfigured") {
+    return (
+      messages.apiTokenNotConfigured ?? GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE
+    );
+  }
+  if (reason === "InvalidApiToken") {
+    return messages.invalidApiToken ?? GENERIC_INVALID_API_TOKEN_MESSAGE;
+  }
+  if (reason === "PermissionDenied") {
+    return messages.permissionDenied ?? GENERIC_PERMISSION_DENIED_MESSAGE;
+  }
+  if (reason === "ApiNotSupported") {
+    return messages.apiNotSupported;
+  }
+  return messages.connectionFailed;
+}
+
+function mapReadFailureReasonToMessage(
+  reason: GrowiReadFailureReason,
+  messages: AccessFailureMessages & { notFound: string },
+): string {
+  if (reason === "NotFound") {
+    return messages.notFound;
+  }
+  return mapAccessFailureReasonToMessage(reason, messages);
+}
+
+function mapBundleListFailureToMessage(result: {
+  ok: false;
+  reason: GrowiAccessFailureReason;
+}): string {
+  return mapAccessFailureReasonToMessage(result.reason, {
+    apiNotSupported: DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE,
+    connectionFailed: DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE,
+  });
+}
+
+function mapBundleSnapshotFailureToMessage(
+  result: Exclude<StartEditBootstrapResult, { ok: true }>,
+): string {
+  return mapReadFailureReasonToMessage(result.reason, {
+    apiNotSupported: DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE,
+    connectionFailed: DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE,
+    notFound: DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE,
+  });
 }
 
 function resolveCommandInput(
@@ -709,29 +1235,33 @@ async function openResolvedGrowiPage(
 ): Promise<void> {
   const resolved = await deps.resolvePageReference(reference);
   if (!resolved.ok) {
-    if (resolved.reason === "NotFound") {
-      deps.showErrorMessage(OPEN_PAGE_NOT_FOUND_MESSAGE);
-      return;
-    }
-    if (resolved.reason === "ApiNotSupported") {
-      deps.showErrorMessage(OPEN_PAGE_API_NOT_SUPPORTED_MESSAGE);
-      return;
-    }
-    deps.showErrorMessage(OPEN_PAGE_CONNECTION_FAILED_MESSAGE);
+    deps.showErrorMessage(
+      mapReadFailureReasonToMessage(resolved.reason, {
+        apiTokenNotConfigured: GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE,
+        baseUrlNotConfigured: GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE,
+        invalidApiToken: OPEN_PAGE_INVALID_API_TOKEN_MESSAGE,
+        permissionDenied: OPEN_PAGE_PERMISSION_DENIED_MESSAGE,
+        apiNotSupported: OPEN_PAGE_API_NOT_SUPPORTED_MESSAGE,
+        connectionFailed: OPEN_PAGE_CONNECTION_FAILED_MESSAGE,
+        notFound: OPEN_PAGE_NOT_FOUND_MESSAGE,
+      }),
+    );
     return;
   }
 
   const page = await deps.readPageBody(resolved.canonicalPath);
   if (!page.ok) {
-    if (page.reason === "NotFound") {
-      deps.showErrorMessage(OPEN_PAGE_NOT_FOUND_MESSAGE);
-      return;
-    }
-    if (page.reason === "ApiNotSupported") {
-      deps.showErrorMessage(OPEN_PAGE_API_NOT_SUPPORTED_MESSAGE);
-      return;
-    }
-    deps.showErrorMessage(OPEN_PAGE_CONNECTION_FAILED_MESSAGE);
+    deps.showErrorMessage(
+      mapReadFailureReasonToMessage(page.reason, {
+        apiTokenNotConfigured: GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE,
+        baseUrlNotConfigured: GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE,
+        invalidApiToken: OPEN_PAGE_INVALID_API_TOKEN_MESSAGE,
+        permissionDenied: OPEN_PAGE_PERMISSION_DENIED_MESSAGE,
+        apiNotSupported: OPEN_PAGE_API_NOT_SUPPORTED_MESSAGE,
+        connectionFailed: OPEN_PAGE_CONNECTION_FAILED_MESSAGE,
+        notFound: OPEN_PAGE_NOT_FOUND_MESSAGE,
+      }),
+    );
     return;
   }
 
@@ -820,6 +1350,14 @@ type ExplorerCommandTarget =
     }
   | undefined;
 
+type MirrorCommandTarget =
+  | UriLike
+  | {
+      uri?: UriLike;
+      scope?: MirrorRequestScope;
+    }
+  | undefined;
+
 function resolveExplorerTargetUri(
   target: ExplorerCommandTarget,
 ): UriLike | undefined {
@@ -844,6 +1382,44 @@ function resolveExplorerTargetUri(
   }
 
   return toGrowiPageUri(canonicalPath);
+}
+
+function resolveMirrorRequestScope(target: MirrorCommandTarget): MirrorRequestScope {
+  return typeof target === "object" &&
+    target !== null &&
+    "scope" in target &&
+    target.scope === "subtree"
+    ? "subtree"
+    : "page";
+}
+
+function resolveMirrorTargetUri(target: MirrorCommandTarget): UriLike | undefined {
+  if (
+    typeof target === "object" &&
+    target !== null &&
+    "uri" in target
+  ) {
+    return target.uri;
+  }
+  if (
+    typeof target === "object" &&
+    target !== null &&
+    "scheme" in target &&
+    "path" in target
+  ) {
+    return target as UriLike;
+  }
+  return undefined;
+}
+
+function buildMirrorDiffTitle(loaded: LoadedMirrorSelection): string {
+  if (!loaded.reusedAncestorPrefix) {
+    return `GROWI Mirror Diff: ${loaded.manifest.rootCanonicalPath}`;
+  }
+  if (loaded.requestedScope === "page") {
+    return `GROWI Mirror Diff: ${loaded.requestedCanonicalPath}`;
+  }
+  return `GROWI Mirror Diff: ${loaded.requestedCanonicalPath}/*`;
 }
 
 function createExplorerDelegatingCommand(
@@ -875,6 +1451,31 @@ function createExplorerBundleDelegatingCommand(
     }
 
     await deps.executeCommand?.(command, targetUri);
+  };
+}
+
+function createExplorerMirrorDelegatingCommand(
+  deps: CommandDeps,
+  command: string,
+): (target?: ExplorerCommandTarget) => Promise<void> {
+  return async function explorerMirrorDelegatingCommand(
+    target?: ExplorerCommandTarget,
+  ): Promise<void> {
+    const targetUri = resolveExplorerTargetUri(target);
+    if (!targetUri) {
+      return;
+    }
+
+    const scope: MirrorRequestScope =
+      typeof target === "object" &&
+      target !== null &&
+      "contextValue" in target &&
+      (target.contextValue === "growi.directory" ||
+        target.contextValue === "growi.prefixRoot")
+        ? "subtree"
+        : "page";
+
+    await deps.executeCommand?.(command, { uri: targetUri, scope });
   };
 }
 
@@ -1046,15 +1647,17 @@ export function createAddPrefixCommand(deps: CommandDeps) {
 
     const resolved = await deps.resolvePageReference(parsed.value);
     if (!resolved.ok) {
-      if (resolved.reason === "NotFound") {
-        deps.showErrorMessage(ADD_PREFIX_NOT_FOUND_MESSAGE);
-        return;
-      }
-      if (resolved.reason === "ApiNotSupported") {
-        deps.showErrorMessage(ADD_PREFIX_API_NOT_SUPPORTED_MESSAGE);
-        return;
-      }
-      deps.showErrorMessage(ADD_PREFIX_CONNECTION_FAILED_MESSAGE);
+      deps.showErrorMessage(
+        mapReadFailureReasonToMessage(resolved.reason, {
+          apiTokenNotConfigured: GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE,
+          baseUrlNotConfigured: ADD_PREFIX_INVALID_BASE_URL_MESSAGE,
+          invalidApiToken: GENERIC_INVALID_API_TOKEN_MESSAGE,
+          permissionDenied: GENERIC_PERMISSION_DENIED_MESSAGE,
+          apiNotSupported: ADD_PREFIX_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed: ADD_PREFIX_CONNECTION_FAILED_MESSAGE,
+          notFound: ADD_PREFIX_NOT_FOUND_MESSAGE,
+        }),
+      );
       return;
     }
 
@@ -1251,7 +1854,7 @@ export function createExplorerDownloadCurrentPageToLocalFileCommand(
 ) {
   return createExplorerDelegatingCommand(
     deps,
-    GROWI_COMMANDS.downloadCurrentPageToLocalFile,
+    GROWI_COMMANDS.createLocalMirrorForCurrentPage,
   );
 }
 
@@ -1260,43 +1863,43 @@ export function createExplorerDownloadCurrentPageSetToLocalBundleCommand(
 ) {
   return createExplorerBundleDelegatingCommand(
     deps,
-    GROWI_COMMANDS.downloadCurrentPageSetToLocalBundle,
+    GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
   );
 }
 
 export function createExplorerCompareLocalWorkFileWithCurrentPageCommand(
   deps: CommandDeps,
 ) {
-  return createExplorerPassthroughCommand(
+  return createExplorerMirrorDelegatingCommand(
     deps,
-    GROWI_COMMANDS.compareLocalWorkFileWithCurrentPage,
-  );
-}
-
-export function createExplorerUploadExportedLocalFileToGrowiCommand(
-  deps: CommandDeps,
-) {
-  return createExplorerPassthroughCommand(
-    deps,
-    GROWI_COMMANDS.uploadExportedLocalFileToGrowi,
+    GROWI_COMMANDS.compareLocalMirrorWithGrowi,
   );
 }
 
 export function createExplorerCompareLocalBundleWithGrowiCommand(
   deps: CommandDeps,
 ) {
-  return createExplorerPassthroughCommand(
+  return createExplorerBundleDelegatingCommand(
     deps,
-    GROWI_COMMANDS.compareLocalBundleWithGrowi,
+    GROWI_COMMANDS.compareLocalMirrorWithGrowi,
+  );
+}
+
+export function createExplorerUploadExportedLocalFileToGrowiCommand(
+  deps: CommandDeps,
+) {
+  return createExplorerMirrorDelegatingCommand(
+    deps,
+    GROWI_COMMANDS.uploadLocalMirrorToGrowi,
   );
 }
 
 export function createExplorerUploadLocalBundleToGrowiCommand(
   deps: CommandDeps,
 ) {
-  return createExplorerPassthroughCommand(
+  return createExplorerBundleDelegatingCommand(
     deps,
-    GROWI_COMMANDS.uploadLocalBundleToGrowi,
+    GROWI_COMMANDS.uploadLocalMirrorToGrowi,
   );
 }
 
@@ -1322,17 +1925,6 @@ function isPageUri(uri: UriLike | undefined): uri is UriLike {
   return Boolean(uri && uri.scheme === "growi" && !uri.path.endsWith("/"));
 }
 
-function isLocalWorkFileUri(
-  uri: UriLike | undefined,
-  expectedLocalWorkFilePath: string,
-): uri is UriLike {
-  if (!uri || uri.scheme !== "file") {
-    return false;
-  }
-
-  return (uri.fsPath ?? uri.path) === expectedLocalWorkFilePath;
-}
-
 function toParentDirectoryPath(canonicalPath: string): string {
   if (canonicalPath === "/") {
     return "/";
@@ -1347,31 +1939,19 @@ function toParentDirectoryPath(canonicalPath: string): string {
 
 function mapSnapshotFailureToMessage(
   result: Exclude<StartEditBootstrapResult, { ok: true }>,
-  messages: {
-    apiNotSupported: string;
-    connectionFailed: string;
-    notFound: string;
-  },
+  messages: AccessFailureMessages & { notFound: string },
 ): string {
-  if (result.reason === "ApiNotSupported") {
-    return messages.apiNotSupported;
-  }
-  if (result.reason === "ConnectionFailed") {
-    return messages.connectionFailed;
-  }
-  return messages.notFound;
+  return mapReadFailureReasonToMessage(result.reason, messages);
 }
 
 function mapUploadWriteFailureToMessage(
   result: Exclude<GrowiPageWriteResult, { ok: true }>,
 ): string {
-  if (result.reason === "PermissionDenied") {
-    return UPLOAD_EXPORTED_LOCAL_FILE_PERMISSION_DENIED_MESSAGE;
-  }
-  if (result.reason === "ConnectionFailed") {
-    return UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE;
-  }
-  return UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE;
+  return mapAccessFailureReasonToMessage(result.reason, {
+    permissionDenied: UPLOAD_EXPORTED_LOCAL_FILE_PERMISSION_DENIED_MESSAGE,
+    apiNotSupported: UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE,
+    connectionFailed: UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE,
+  });
 }
 
 function resolveDirectoryCanonicalPathFromDirectoryUri(
@@ -1409,27 +1989,56 @@ function getErrorText(error: unknown): string {
   return String(error);
 }
 
-function mapRefreshCurrentPageErrorMessage(error: unknown): string {
+function parseVirtualFsFailureReason(
+  error: unknown,
+): GrowiReadFailureReason | undefined {
   const text = getErrorText(error);
   if (text.includes("FileNotFound")) {
-    return REFRESH_CURRENT_PAGE_NOT_FOUND_MESSAGE;
+    return "NotFound";
   }
-  if (text.includes("read page API is not supported")) {
-    return REFRESH_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE;
+  if (text.includes("base URL is not configured")) {
+    return "BaseUrlNotConfigured";
+  }
+  if (text.includes("API token is not configured")) {
+    return "ApiTokenNotConfigured";
+  }
+  if (text.includes("invalid API token")) {
+    return "InvalidApiToken";
+  }
+  if (text.includes("permission denied")) {
+    return "PermissionDenied";
+  }
+  if (
+    text.includes("read page API is not supported") ||
+    text.includes("list pages API is not supported")
+  ) {
+    return "ApiNotSupported";
   }
   if (text.includes("failed to connect to GROWI")) {
-    return REFRESH_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE;
+    return "ConnectionFailed";
+  }
+  return undefined;
+}
+
+function mapRefreshCurrentPageErrorMessage(error: unknown): string {
+  const reason = parseVirtualFsFailureReason(error);
+  if (reason) {
+    return mapReadFailureReasonToMessage(reason, {
+      apiNotSupported: REFRESH_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE,
+      connectionFailed: REFRESH_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE,
+      notFound: REFRESH_CURRENT_PAGE_NOT_FOUND_MESSAGE,
+    });
   }
   return REFRESH_CURRENT_PAGE_UNEXPECTED_ERROR_MESSAGE;
 }
 
 function mapRefreshListingErrorMessage(error: unknown): string {
-  const text = getErrorText(error);
-  if (text.includes("list pages API is not supported")) {
-    return REFRESH_LISTING_API_NOT_SUPPORTED_MESSAGE;
-  }
-  if (text.includes("failed to connect to GROWI")) {
-    return REFRESH_LISTING_CONNECTION_FAILED_MESSAGE;
+  const reason = parseVirtualFsFailureReason(error);
+  if (reason && reason !== "NotFound") {
+    return mapAccessFailureReasonToMessage(reason, {
+      apiNotSupported: REFRESH_LISTING_API_NOT_SUPPORTED_MESSAGE,
+      connectionFailed: REFRESH_LISTING_CONNECTION_FAILED_MESSAGE,
+    });
   }
   return REFRESH_LISTING_UNEXPECTED_ERROR_MESSAGE;
 }
@@ -1487,16 +2096,13 @@ export function createStartEditCommand(deps: CommandDeps) {
 
     const bootstrapResult = await deps.bootstrapEditSession(canonicalPath);
     if (!bootstrapResult.ok) {
-      if (bootstrapResult.reason === "ApiNotSupported") {
-        deps.showErrorMessage(START_EDIT_API_NOT_SUPPORTED_MESSAGE);
-        return;
-      }
-      if (bootstrapResult.reason === "ConnectionFailed") {
-        deps.showErrorMessage(START_EDIT_CONNECTION_FAILED_MESSAGE);
-        return;
-      }
-
-      deps.showErrorMessage(START_EDIT_NOT_FOUND_MESSAGE);
+      deps.showErrorMessage(
+        mapSnapshotFailureToMessage(bootstrapResult, {
+          apiNotSupported: START_EDIT_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed: START_EDIT_CONNECTION_FAILED_MESSAGE,
+          notFound: START_EDIT_NOT_FOUND_MESSAGE,
+        }),
+      );
       return;
     }
 
@@ -1626,10 +2232,15 @@ function mapRevisionSummaryToQuickPickItem(
 function mapShowRevisionHistoryDiffReadFailureToMessage(
   result: Extract<GrowiRevisionReadResult, { ok: false }>,
 ): string {
-  if (result.reason === "ConnectionFailed") {
-    return SHOW_REVISION_HISTORY_DIFF_CONNECTION_FAILED_MESSAGE;
-  }
-  return SHOW_REVISION_HISTORY_DIFF_READ_API_NOT_SUPPORTED_MESSAGE;
+  return mapReadFailureReasonToMessage(result.reason, {
+    baseUrlNotConfigured: GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE,
+    apiTokenNotConfigured: GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE,
+    invalidApiToken: GENERIC_INVALID_API_TOKEN_MESSAGE,
+    permissionDenied: GENERIC_PERMISSION_DENIED_MESSAGE,
+    apiNotSupported: SHOW_REVISION_HISTORY_DIFF_READ_API_NOT_SUPPORTED_MESSAGE,
+    connectionFailed: SHOW_REVISION_HISTORY_DIFF_CONNECTION_FAILED_MESSAGE,
+    notFound: SHOW_REVISION_HISTORY_DIFF_READ_API_NOT_SUPPORTED_MESSAGE,
+  });
 }
 
 export function createShowRevisionHistoryDiffCommand(deps: CommandDeps) {
@@ -1655,9 +2266,16 @@ export function createShowRevisionHistoryDiffCommand(deps: CommandDeps) {
     const revisions = await deps.listRevisions(pageInfo.pageId);
     if (!revisions.ok) {
       deps.showErrorMessage(
-        revisions.reason === "ConnectionFailed"
-          ? SHOW_REVISION_HISTORY_DIFF_CONNECTION_FAILED_MESSAGE
-          : SHOW_REVISION_HISTORY_DIFF_LIST_API_NOT_SUPPORTED_MESSAGE,
+        mapAccessFailureReasonToMessage(revisions.reason, {
+          baseUrlNotConfigured: GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE,
+          apiTokenNotConfigured: GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE,
+          invalidApiToken: GENERIC_INVALID_API_TOKEN_MESSAGE,
+          permissionDenied: GENERIC_PERMISSION_DENIED_MESSAGE,
+          apiNotSupported:
+            SHOW_REVISION_HISTORY_DIFF_LIST_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed:
+            SHOW_REVISION_HISTORY_DIFF_CONNECTION_FAILED_MESSAGE,
+        }),
       );
       return;
     }
@@ -1754,14 +2372,14 @@ export function createShowCurrentPageActionsCommand(
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
         {
-          label: "現在ページをローカルへダウンロード",
-          description: "growi-current.md に保存",
-          command: GROWI_COMMANDS.downloadCurrentPageToLocalFile,
+          label: "現在ページのローカルミラーを同期",
+          description: "__<page>__.md と .growi-mirror.json を作成または更新",
+          command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "配下ページをローカルへダウンロード",
-          description: "growi-current-set/ に保存",
-          command: GROWI_COMMANDS.downloadCurrentPageSetToLocalBundle,
+          label: "現在ページ配下をローカルミラーに同期",
+          description: "prefix mirror を作成または更新",
+          command: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
         },
       ] as readonly CurrentPageActionQuickPickItem[],
       {
@@ -1780,9 +2398,7 @@ export function createShowCurrentPageActionsCommand(
 export function createShowLocalRoundTripActionsCommand(
   deps: CurrentPageActionsCommandDeps,
 ) {
-  return async function showLocalRoundTripActions(
-    uri?: UriLike,
-  ): Promise<void> {
+  return async function showLocalMirrorActions(uri?: UriLike): Promise<void> {
     const targetUri = uri ?? deps.getActiveEditorUri();
     const canonicalPath = resolveCurrentPageCanonicalPath(targetUri);
     if (!canonicalPath || !targetUri) {
@@ -1795,24 +2411,19 @@ export function createShowLocalRoundTripActionsCommand(
     const selected = (await deps.showQuickPick(
       [
         {
-          label: "ローカルと現在ページを比較",
-          description: "growi-current.md を使用",
-          command: GROWI_COMMANDS.compareLocalWorkFileWithCurrentPage,
+          label: "現在ページのローカルミラーを同期",
+          description: SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION,
+          command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "ローカルを現在ページへ反映",
-          description: "growi-current.md を使用",
-          command: GROWI_COMMANDS.uploadExportedLocalFileToGrowi,
+          label: "ローカルミラーを比較",
+          description: COMPARE_LOCAL_MIRROR_DESCRIPTION,
+          command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
         {
-          label: "ローカルと配下ページを比較",
-          description: "growi-current-set/ を使用",
-          command: GROWI_COMMANDS.compareLocalBundleWithGrowi,
-        },
-        {
-          label: "ローカルを配下ページへ反映",
-          description: "growi-current-set/ を使用",
-          command: GROWI_COMMANDS.uploadLocalBundleToGrowi,
+          label: "ローカルミラーを反映",
+          description: UPLOAD_LOCAL_MIRROR_DESCRIPTION,
+          command: GROWI_COMMANDS.uploadLocalMirrorToGrowi,
         },
       ] as readonly CurrentPageActionQuickPickItem[],
       {
@@ -1826,6 +2437,699 @@ export function createShowLocalRoundTripActionsCommand(
 
     await deps.executeCommand(selected.command, targetUri);
   };
+}
+
+async function exportMirror(
+  deps: CommandDeps,
+  input: {
+    rootCanonicalPath: string;
+    mode: "page" | "prefix";
+    successMessage: string;
+    writeFailedMessage: string;
+  },
+): Promise<MirrorManifest | undefined> {
+  const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
+  if (!localWorkspaceRoot) {
+    deps.showErrorMessage(
+      input.mode === "page"
+        ? DOWNLOAD_CURRENT_PAGE_NO_LOCAL_WORKSPACE_MESSAGE
+        : DOWNLOAD_CURRENT_PAGE_SET_NO_LOCAL_WORKSPACE_MESSAGE,
+    );
+    return undefined;
+  }
+
+  const baseUrl = deps.getBaseUrl()?.trim();
+  if (!baseUrl) {
+    deps.showErrorMessage(ADD_PREFIX_INVALID_BASE_URL_MESSAGE);
+    return undefined;
+  }
+
+  if (input.mode === "page") {
+    const reused = await exportPageIntoExistingPrefixMirror(deps, {
+      workspaceRoot: localWorkspaceRoot,
+      baseUrl,
+      canonicalPath: input.rootCanonicalPath,
+      writeFailedMessage: input.writeFailedMessage,
+    });
+    if (reused.handled) {
+      return reused.manifest;
+    }
+  } else {
+    const reused = await exportPrefixIntoExistingPrefixMirror(deps, {
+      workspaceRoot: localWorkspaceRoot,
+      baseUrl,
+      canonicalPath: input.rootCanonicalPath,
+      writeFailedMessage: input.writeFailedMessage,
+    });
+    if (reused.handled) {
+      return reused.manifest;
+    }
+  }
+
+  let pagePaths: string[];
+  if (input.mode === "page") {
+    pagePaths = [input.rootCanonicalPath];
+  } else {
+    const listedPages = await deps.listPages(input.rootCanonicalPath);
+    if (!listedPages.ok) {
+      deps.showErrorMessage(mapBundleListFailureToMessage(listedPages));
+      return undefined;
+    }
+    pagePaths = dedupeAndSortCanonicalPaths([
+      input.rootCanonicalPath,
+      ...listedPages.paths,
+    ]);
+    if (pagePaths.length > CURRENT_PAGE_SET_MAX_PAGES) {
+      deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_SET_TOO_MANY_PAGES_MESSAGE);
+      return undefined;
+    }
+  }
+
+  const exportedAt = new Date().toISOString();
+  const pages: MirrorManifestPage[] = [];
+  let previousManifest: MirrorManifest | undefined;
+  let previousManifestInstanceKey: string | undefined;
+
+  try {
+    for (const { instanceKey, manifestPath } of listMirrorManifestCandidates(
+      localWorkspaceRoot,
+      baseUrl,
+      input.rootCanonicalPath,
+    )) {
+      const rawPreviousManifest = await deps.readLocalFile(manifestPath);
+      const parsedPreviousManifest = parseMirrorManifest(rawPreviousManifest);
+      if (parsedPreviousManifest.ok) {
+        previousManifest = parsedPreviousManifest.value;
+        previousManifestInstanceKey = instanceKey;
+        break;
+      }
+    }
+  } catch {
+    // Treat missing or unreadable previous manifests as a fresh export.
+  }
+
+  const plannedPages = planMirrorRelativeFilePaths(input.rootCanonicalPath, pagePaths);
+
+  try {
+    for (const plannedPage of plannedPages.pages) {
+      const pagePath = plannedPage.canonicalPath;
+      const snapshot = await deps.bootstrapEditSession(pagePath);
+      if (!snapshot.ok) {
+        deps.showErrorMessage(
+          input.mode === "page"
+            ? mapSnapshotFailureToMessage(snapshot, {
+                apiNotSupported:
+                  DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE,
+                connectionFailed:
+                  DOWNLOAD_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE,
+                notFound: DOWNLOAD_CURRENT_PAGE_NOT_FOUND_MESSAGE,
+              })
+            : mapBundleSnapshotFailureToMessage(snapshot),
+        );
+        return undefined;
+      }
+
+      await deps.writeLocalFile(
+        buildMirrorLocalFilePath(
+          localWorkspaceRoot,
+          baseUrl,
+          input.rootCanonicalPath,
+          plannedPage.relativeFilePath,
+        ),
+        snapshot.value.baseBody,
+      );
+      pages.push({
+        canonicalPath: pagePath,
+        relativeFilePath: plannedPage.relativeFilePath,
+        pageId: snapshot.value.pageId,
+        baseRevisionId: snapshot.value.baseRevisionId,
+        exportedAt,
+        contentHash: hashBody(snapshot.value.baseBody),
+      });
+    }
+
+    const currentTrackedPaths = new Set(
+      [
+        ...pages.map((page) => page.relativeFilePath),
+        ...plannedPages.skippedPages.map((page) => page.relativeFilePath),
+      ].map((relativeFilePath) =>
+        buildMirrorLocalFilePath(
+          localWorkspaceRoot,
+          baseUrl,
+          input.rootCanonicalPath,
+          relativeFilePath,
+        ),
+      ),
+    );
+    const previousTrackedPaths = new Set(
+      [
+        ...(previousManifest?.pages ?? []).map((page) => page.relativeFilePath),
+        ...(previousManifest?.skippedPages ?? []).map(
+          (page) => page.relativeFilePath,
+        ),
+      ].map((relativeFilePath) =>
+        buildMirrorLocalFilePath(
+          localWorkspaceRoot,
+          baseUrl,
+          input.rootCanonicalPath,
+          relativeFilePath,
+        ),
+      ),
+    );
+    for (const stalePath of previousTrackedPaths) {
+      if (currentTrackedPaths.has(stalePath)) {
+        continue;
+      }
+      await deps.deleteLocalPath(stalePath);
+    }
+
+    const manifest: MirrorManifest = {
+      version: 1,
+      baseUrl,
+      rootCanonicalPath: input.rootCanonicalPath,
+      mode: input.mode,
+      exportedAt,
+      pages,
+      ...(plannedPages.skippedPages.length > 0
+        ? { skippedPages: plannedPages.skippedPages }
+        : {}),
+    };
+    const preferredManifestPath = buildMirrorManifestFilePath(
+      localWorkspaceRoot,
+      baseUrl,
+      input.rootCanonicalPath,
+    );
+    await deps.writeLocalFile(preferredManifestPath, serializeMirrorManifest(manifest));
+    if (
+      previousManifest &&
+      previousManifestInstanceKey &&
+      previousManifestInstanceKey !== buildPreferredMirrorInstanceKey(baseUrl)
+    ) {
+      await migrateMirrorRootIfNeeded(deps, {
+        workspaceRoot: localWorkspaceRoot,
+        baseUrl,
+        rootCanonicalPath: input.rootCanonicalPath,
+        sourceInstanceKey: previousManifestInstanceKey,
+        manifest,
+      });
+    }
+    await deps.openLocalFile(
+      buildMirrorLocalFilePath(
+        localWorkspaceRoot,
+        baseUrl,
+        input.rootCanonicalPath,
+        pages[0]?.relativeFilePath ??
+          plannedPages.pages[0]?.relativeFilePath ??
+          plannedPages.skippedPages[0]?.relativeFilePath ??
+          "__root__.md",
+      ),
+    );
+    if (plannedPages.skippedPages.length > 0) {
+      deps.showWarningMessage(
+        [input.successMessage, formatSkippedMirrorPagesSummary(plannedPages.skippedPages)].join(
+          "\n",
+        ),
+      );
+    } else {
+      deps.showInformationMessage(input.successMessage);
+    }
+    return manifest;
+  } catch {
+    deps.showErrorMessage(input.writeFailedMessage);
+    return undefined;
+  }
+}
+
+async function loadMirrorManifest(
+  deps: CommandDeps,
+  input: {
+    requestedCanonicalPath: string;
+    requestedScope: MirrorRequestScope;
+    allowAncestorReuse?: boolean;
+    noWorkspaceMessage: string;
+    readManifestFailedMessage: string;
+    invalidManifestMessage: string;
+    invalidBaseUrlMessage: string;
+    baseUrlMismatchMessage: string;
+    mirrorNotFoundMessage: string;
+    reusedPrefixSkippedMessage: string;
+  },
+): Promise<LoadedMirrorSelection | undefined> {
+  const workspaceRoot = deps.getLocalWorkspaceRoot();
+  if (!workspaceRoot) {
+    deps.showErrorMessage(input.noWorkspaceMessage);
+    return undefined;
+  }
+
+  const baseUrl = deps.getBaseUrl()?.trim();
+  if (!baseUrl) {
+    deps.showErrorMessage(input.invalidBaseUrlMessage);
+    return undefined;
+  }
+
+  for (const { instanceKey, manifestPath: exactManifestPath } of listMirrorManifestCandidates(
+    workspaceRoot,
+    baseUrl,
+    input.requestedCanonicalPath,
+  )) {
+    let rawManifest: string | undefined;
+    try {
+      rawManifest = await deps.readLocalFile(exactManifestPath);
+    } catch {
+      rawManifest = undefined;
+    }
+
+    if (rawManifest === undefined) {
+      continue;
+    }
+    const parsedManifest = parseMirrorManifest(rawManifest);
+    if (!parsedManifest.ok) {
+      deps.showErrorMessage(input.invalidManifestMessage);
+      return undefined;
+    }
+    if (parsedManifest.value.baseUrl !== baseUrl) {
+      deps.showErrorMessage(input.baseUrlMismatchMessage);
+      return undefined;
+    }
+
+    return {
+      workspaceRoot,
+      baseUrl,
+      manifestPath: exactManifestPath,
+      manifest: parsedManifest.value,
+      instanceKey,
+      requestedCanonicalPath: input.requestedCanonicalPath,
+      requestedScope: input.requestedScope,
+      effectiveRootCanonicalPath: parsedManifest.value.rootCanonicalPath,
+      selectedPages: parsedManifest.value.pages,
+      reusedAncestorPrefix: false,
+    };
+  }
+
+  if (!input.allowAncestorReuse) {
+    deps.showErrorMessage(input.readManifestFailedMessage);
+    return undefined;
+  }
+
+  for (const ancestorPath of listAncestorCanonicalPaths(input.requestedCanonicalPath)) {
+    for (const { instanceKey, manifestPath } of listMirrorManifestCandidates(
+      workspaceRoot,
+      baseUrl,
+      ancestorPath,
+    )) {
+      let ancestorRawManifest: string;
+      try {
+        ancestorRawManifest = await deps.readLocalFile(manifestPath);
+      } catch {
+        continue;
+      }
+
+      const parsedManifest = parseMirrorManifest(ancestorRawManifest);
+      if (!parsedManifest.ok) {
+        deps.showErrorMessage(input.invalidManifestMessage);
+        return undefined;
+      }
+      if (parsedManifest.value.baseUrl !== baseUrl) {
+        deps.showErrorMessage(input.baseUrlMismatchMessage);
+        return undefined;
+      }
+      if (parsedManifest.value.mode !== "prefix") {
+        continue;
+      }
+
+      const selectedPages = parsedManifest.value.pages.filter((page) =>
+        input.requestedScope === "page"
+          ? page.canonicalPath === input.requestedCanonicalPath
+          : isWithinCanonicalSubtree(
+              page.canonicalPath,
+              input.requestedCanonicalPath,
+            ),
+      );
+      if (selectedPages.length > 0) {
+        return {
+          workspaceRoot,
+          baseUrl,
+          manifestPath,
+          manifest: parsedManifest.value,
+          instanceKey,
+          requestedCanonicalPath: input.requestedCanonicalPath,
+          requestedScope: input.requestedScope,
+          effectiveRootCanonicalPath: parsedManifest.value.rootCanonicalPath,
+          selectedPages,
+          reusedAncestorPrefix: true,
+        };
+      }
+
+      const skippedPages = (parsedManifest.value.skippedPages ?? []).filter((page) =>
+        input.requestedScope === "page"
+          ? page.canonicalPath === input.requestedCanonicalPath
+          : isWithinCanonicalSubtree(
+              page.canonicalPath,
+              input.requestedCanonicalPath,
+            ),
+      );
+      if (skippedPages.length > 0) {
+        deps.showErrorMessage(input.reusedPrefixSkippedMessage);
+        return undefined;
+      }
+    }
+  }
+
+  deps.showErrorMessage(input.mirrorNotFoundMessage);
+  return undefined;
+}
+
+async function compareMirror(
+  deps: CommandDeps,
+  target?: MirrorCommandTarget,
+): Promise<BundleCompareResult[] | undefined> {
+  const targetUri = resolveMirrorTargetUri(target) ?? deps.getActiveEditorUri();
+  const requestedCanonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+  if (!requestedCanonicalPath) {
+    deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE);
+    return undefined;
+  }
+
+  const requestedScope = resolveMirrorRequestScope(target);
+  const loaded = await loadMirrorManifest(deps, {
+    requestedCanonicalPath,
+    requestedScope,
+    allowAncestorReuse: true,
+    noWorkspaceMessage: COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE,
+    readManifestFailedMessage:
+      COMPARE_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE,
+    invalidManifestMessage: COMPARE_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE,
+    invalidBaseUrlMessage: COMPARE_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE,
+    baseUrlMismatchMessage: COMPARE_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE,
+    mirrorNotFoundMessage: COMPARE_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE,
+    reusedPrefixSkippedMessage:
+      COMPARE_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE,
+  });
+  if (!loaded) {
+    return undefined;
+  }
+
+  const results: BundleCompareResult[] = [];
+  const skippedDiffResults: BundleCompareResult[] = [];
+  const diffResources: ChangesResourceTuple[] = [];
+  for (const page of loaded.selectedPages) {
+    const localFilePath = buildMirrorLocalFilePath(
+      loaded.workspaceRoot,
+      loaded.baseUrl,
+      loaded.manifest.rootCanonicalPath,
+      page.relativeFilePath,
+    );
+    const sourceLocalFilePath = buildMirrorLocalFilePathWithInstanceKey(
+      loaded.workspaceRoot,
+      loaded.instanceKey,
+      loaded.manifest.rootCanonicalPath,
+      page.relativeFilePath,
+    );
+
+    let localBody: string;
+    try {
+      localBody = await deps.readLocalFile(sourceLocalFilePath);
+    } catch {
+      results.push({
+        canonicalPath: page.canonicalPath,
+        status: "MissingLocal",
+      });
+      continue;
+    }
+
+    const localChanged = hashBody(localBody) !== page.contentHash;
+    const currentSnapshot = await deps.bootstrapEditSession(page.canonicalPath);
+    if (!currentSnapshot.ok) {
+      if (currentSnapshot.reason === "NotFound") {
+        results.push({
+          canonicalPath: page.canonicalPath,
+          status: "MissingRemote",
+        });
+        continue;
+      }
+      deps.showErrorMessage(
+        mapSnapshotFailureToMessage(currentSnapshot, {
+          apiNotSupported: DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed: DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE,
+          notFound: DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE,
+        }),
+      );
+      return undefined;
+    }
+
+    const remoteChanged =
+      currentSnapshot.value.pageId !== page.pageId ||
+      currentSnapshot.value.baseRevisionId !== page.baseRevisionId;
+    const result: BundleCompareResult = {
+      canonicalPath: page.canonicalPath,
+      status: localChanged
+        ? remoteChanged
+          ? "Conflict"
+          : "LocalChanged"
+        : remoteChanged
+          ? "RemoteChanged"
+          : "Unchanged",
+    };
+    results.push(result);
+
+    if (
+      result.status === "LocalChanged" ||
+      result.status === "RemoteChanged" ||
+      result.status === "Conflict"
+    ) {
+      const localFileUri = {
+        scheme: "file",
+        path: sourceLocalFilePath,
+        fsPath: sourceLocalFilePath,
+      } as const;
+      diffResources.push([
+        localFileUri,
+        { scheme: "growi", path: `${page.canonicalPath}.md` },
+        localFileUri,
+      ]);
+    }
+  }
+
+  for (const result of results) {
+    if (result.status === "MissingLocal" || result.status === "MissingRemote") {
+      skippedDiffResults.push(result);
+    }
+  }
+
+  if (diffResources.length === 0) {
+    if (skippedDiffResults.length > 0) {
+      deps.showWarningMessage(
+        [
+          COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE,
+          formatBundleCompareSkippedSummary(skippedDiffResults),
+        ].join("\n"),
+      );
+    } else {
+      deps.showInformationMessage(COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE);
+    }
+    return results;
+  }
+
+  try {
+    await openChangesEditor(
+      deps,
+      buildMirrorDiffTitle(loaded),
+      diffResources,
+    );
+  } catch {
+    deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE);
+    return undefined;
+  }
+
+  if (skippedDiffResults.length > 0) {
+    deps.showWarningMessage(
+      formatBundleCompareSkippedSummary(skippedDiffResults),
+    );
+  }
+  return results;
+}
+
+async function uploadMirror(
+  deps: CommandDeps,
+  target?: MirrorCommandTarget,
+): Promise<BundleUploadResult[] | undefined> {
+  const targetUri = resolveMirrorTargetUri(target) ?? deps.getActiveEditorUri();
+  const requestedCanonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+  if (!requestedCanonicalPath) {
+    deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE);
+    return undefined;
+  }
+
+  const requestedScope = resolveMirrorRequestScope(target);
+  const loaded = await loadMirrorManifest(deps, {
+    requestedCanonicalPath,
+    requestedScope,
+    allowAncestorReuse: true,
+    noWorkspaceMessage: UPLOAD_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE,
+    readManifestFailedMessage: UPLOAD_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE,
+    invalidManifestMessage: UPLOAD_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE,
+    invalidBaseUrlMessage: UPLOAD_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE,
+    baseUrlMismatchMessage: UPLOAD_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE,
+    mirrorNotFoundMessage: UPLOAD_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE,
+    reusedPrefixSkippedMessage:
+      UPLOAD_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE,
+  });
+  if (!loaded) {
+    return undefined;
+  }
+
+  const results: BundleUploadResult[] = [];
+  const postUploadWarnings: string[] = [];
+  let manifestRefreshFailed = false;
+  let manifestChanged = false;
+  const updatedPages = loaded.manifest.pages.map((page) => ({ ...page }));
+  const selectedCanonicalPaths = new Set(
+    loaded.selectedPages.map((page) => page.canonicalPath),
+  );
+
+  for (const page of updatedPages) {
+    if (!selectedCanonicalPaths.has(page.canonicalPath)) {
+      continue;
+    }
+    const localFilePath = buildMirrorLocalFilePath(
+      loaded.workspaceRoot,
+      loaded.baseUrl,
+      loaded.manifest.rootCanonicalPath,
+      page.relativeFilePath,
+    );
+    const sourceLocalFilePath = buildMirrorLocalFilePathWithInstanceKey(
+      loaded.workspaceRoot,
+      loaded.instanceKey,
+      loaded.manifest.rootCanonicalPath,
+      page.relativeFilePath,
+    );
+
+    let localBody: string;
+    try {
+      localBody = await deps.readLocalFile(sourceLocalFilePath);
+    } catch {
+      results.push({
+        canonicalPath: page.canonicalPath,
+        status: "MissingLocal",
+      });
+      continue;
+    }
+
+    if (hashBody(localBody) === page.contentHash) {
+      results.push({ canonicalPath: page.canonicalPath, status: "Unchanged" });
+      continue;
+    }
+
+    const currentSnapshot = await deps.bootstrapEditSession(page.canonicalPath);
+    if (!currentSnapshot.ok) {
+      if (currentSnapshot.reason === "NotFound") {
+        results.push({
+          canonicalPath: page.canonicalPath,
+          status: "MissingRemote",
+        });
+        continue;
+      }
+      deps.showErrorMessage(
+        mapSnapshotFailureToMessage(currentSnapshot, {
+          apiNotSupported: UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed:
+            UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE,
+          notFound: UPLOAD_EXPORTED_LOCAL_FILE_NOT_FOUND_MESSAGE,
+        }),
+      );
+      return undefined;
+    }
+
+    if (
+      currentSnapshot.value.pageId !== page.pageId ||
+      currentSnapshot.value.baseRevisionId !== page.baseRevisionId
+    ) {
+      results.push({ canonicalPath: page.canonicalPath, status: "Conflict" });
+      continue;
+    }
+
+    const writeResult = await deps.writePage(page.canonicalPath, localBody, {
+      pageId: page.pageId,
+      baseRevisionId: page.baseRevisionId,
+      baseUpdatedAt: currentSnapshot.value.baseUpdatedAt,
+      baseBody: currentSnapshot.value.baseBody,
+      enteredAt: page.exportedAt,
+      dirty: false,
+    });
+    if (!writeResult.ok) {
+      deps.showErrorMessage(mapUploadWriteFailureToMessage(writeResult));
+      return undefined;
+    }
+
+    deps.invalidateReadFileCache(page.canonicalPath);
+    manifestChanged = true;
+    results.push({ canonicalPath: page.canonicalPath, status: "Uploaded" });
+
+    const refreshedSnapshot = await deps.bootstrapEditSession(
+      page.canonicalPath,
+    );
+    if (!refreshedSnapshot.ok) {
+      manifestRefreshFailed = true;
+    } else {
+      page.pageId = refreshedSnapshot.value.pageId;
+      page.baseRevisionId = refreshedSnapshot.value.baseRevisionId;
+      page.exportedAt = new Date().toISOString();
+      page.contentHash = hashBody(localBody);
+    }
+
+    const reopenResult = await deps.refreshOpenGrowiPage(page.canonicalPath);
+    if (reopenResult === "dirty") {
+      postUploadWarnings.push(
+        `${page.canonicalPath}: ${UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE}`,
+      );
+    }
+    if (reopenResult === "failed") {
+      postUploadWarnings.push(
+        `${page.canonicalPath}: ${UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE}`,
+      );
+    }
+  }
+
+  if (manifestChanged) {
+    try {
+      const targetManifestPath = await migrateMirrorRootIfNeeded(deps, {
+        workspaceRoot: loaded.workspaceRoot,
+        baseUrl: loaded.baseUrl,
+        rootCanonicalPath: loaded.manifest.rootCanonicalPath,
+        sourceInstanceKey: loaded.instanceKey,
+        manifest: {
+          ...loaded.manifest,
+          exportedAt: new Date().toISOString(),
+          pages: updatedPages,
+        },
+      });
+      await deps.writeLocalFile(
+        targetManifestPath,
+        serializeMirrorManifest({
+          ...loaded.manifest,
+          exportedAt: new Date().toISOString(),
+          pages: updatedPages,
+        }),
+      );
+    } catch {
+      manifestRefreshFailed = true;
+    }
+  }
+
+  if (manifestRefreshFailed) {
+    postUploadWarnings.unshift(
+      UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE,
+    );
+  }
+
+  const summary = formatBundleUploadSummary(results);
+  if (postUploadWarnings.length > 0) {
+    deps.showWarningMessage([summary, ...postUploadWarnings].join("\n"));
+    return results;
+  }
+
+  deps.showInformationMessage(summary);
+  return results;
 }
 
 export function createDownloadCurrentPageToLocalFileCommand(deps: CommandDeps) {
@@ -1850,261 +3154,30 @@ export function createDownloadCurrentPageToLocalFileCommand(deps: CommandDeps) {
       return;
     }
 
-    const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
-    if (!localWorkspaceRoot) {
-      deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_NO_LOCAL_WORKSPACE_MESSAGE);
-      return;
-    }
-
-    const localWorkFilePath = buildLocalWorkFilePath(localWorkspaceRoot);
-    const openLocalWorkFile = deps.findOpenTextDocument(localWorkFilePath);
-    if (openLocalWorkFile?.isDirty) {
-      deps.showErrorMessage(
-        DOWNLOAD_CURRENT_PAGE_DIRTY_LOCAL_WORK_FILE_MESSAGE,
-      );
-      return;
-    }
-
-    const baseUrl = deps.getBaseUrl()?.trim();
-    if (!baseUrl) {
-      deps.showErrorMessage(ADD_PREFIX_INVALID_BASE_URL_MESSAGE);
-      return;
-    }
-
-    const snapshot = await deps.bootstrapEditSession(canonicalPath);
-    if (!snapshot.ok) {
-      deps.showErrorMessage(
-        mapSnapshotFailureToMessage(snapshot, {
-          apiNotSupported: DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE,
-          connectionFailed: DOWNLOAD_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE,
-          notFound: DOWNLOAD_CURRENT_PAGE_NOT_FOUND_MESSAGE,
-        }),
-      );
-      return;
-    }
-
-    try {
-      await deps.writeLocalFile(
-        localWorkFilePath,
-        serializeLocalRoundTripWorkFile(
-          {
-            version: 1,
-            baseUrl,
-            canonicalPath,
-            pageId: snapshot.value.pageId,
-            baseRevisionId: snapshot.value.baseRevisionId,
-            exportedAt: new Date().toISOString(),
-          },
-          snapshot.value.baseBody,
-        ),
-      );
-      await deps.openLocalFile(localWorkFilePath);
-    } catch {
-      deps.showErrorMessage(
-        DOWNLOAD_CURRENT_PAGE_WRITE_LOCAL_FILE_FAILED_MESSAGE,
-      );
-      return;
-    }
-
-    deps.showInformationMessage(DOWNLOAD_CURRENT_PAGE_SUCCESS_MESSAGE);
+    await exportMirror(deps, {
+      rootCanonicalPath: canonicalPath,
+      mode: "page",
+      successMessage: DOWNLOAD_CURRENT_PAGE_SUCCESS_MESSAGE,
+      writeFailedMessage: DOWNLOAD_CURRENT_PAGE_WRITE_LOCAL_FILE_FAILED_MESSAGE,
+    });
   };
 }
 
 export function createCompareLocalWorkFileWithCurrentPageCommand(
   deps: CommandDeps,
 ) {
-  return async function compareLocalWorkFileWithCurrentPage(): Promise<void> {
-    const targetUri = deps.getActiveEditorUri();
-    const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
-    if (!localWorkspaceRoot) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_NO_LOCAL_WORKSPACE_MESSAGE);
-      return;
-    }
-
-    const localWorkFilePath = buildLocalWorkFilePath(localWorkspaceRoot);
-    if (!isLocalWorkFileUri(targetUri, localWorkFilePath)) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE);
-      return;
-    }
-
-    const activeEditorText = deps.getActiveEditorText();
-    if (activeEditorText === undefined) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE);
-      return;
-    }
-
-    const parsedWorkFile = parseLocalRoundTripWorkFile(activeEditorText);
-    if (!parsedWorkFile.ok) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_METADATA_MESSAGE);
-      return;
-    }
-
-    const baseUrl = deps.getBaseUrl()?.trim();
-    if (!baseUrl) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_BASE_URL_MESSAGE);
-      return;
-    }
-    if (baseUrl !== parsedWorkFile.value.metadata.baseUrl) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_BASE_URL_MISMATCH_MESSAGE);
-      return;
-    }
-
-    const growiUri = buildGrowiUriFromInput(
-      parsedWorkFile.value.metadata.canonicalPath,
-    );
-    if (!growiUri.ok) {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_METADATA_MESSAGE);
-      return;
-    }
-
-    try {
-      await deps.openDiff(
-        { scheme: "growi", path: `${growiUri.value.canonicalPath}.md` },
-        targetUri,
-        `GROWI Diff: ${parsedWorkFile.value.metadata.canonicalPath} <-> ${LOCAL_WORK_FILE_NAME}`,
-      );
-    } catch {
-      deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_OPEN_DIFF_FAILED_MESSAGE);
-    }
+  return async function compareLocalWorkFileWithCurrentPage(
+    target?: MirrorCommandTarget,
+  ): Promise<BundleCompareResult[] | undefined> {
+    return await compareMirror(deps, target);
   };
 }
 
 export function createUploadExportedLocalFileToGrowiCommand(deps: CommandDeps) {
-  return async function uploadExportedLocalFileToGrowi(): Promise<void> {
-    const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
-    if (!localWorkspaceRoot) {
-      deps.showErrorMessage(
-        UPLOAD_EXPORTED_LOCAL_FILE_NO_LOCAL_WORKSPACE_MESSAGE,
-      );
-      return;
-    }
-    const localWorkFilePath = buildLocalWorkFilePath(localWorkspaceRoot);
-
-    let localWorkFileContent: string;
-    try {
-      localWorkFileContent = await deps.readLocalFile(localWorkFilePath);
-    } catch {
-      deps.showErrorMessage(
-        UPLOAD_EXPORTED_LOCAL_FILE_READ_LOCAL_FILE_FAILED_MESSAGE,
-      );
-      return;
-    }
-
-    const parsedWorkFile = parseLocalRoundTripWorkFile(localWorkFileContent);
-    if (!parsedWorkFile.ok) {
-      deps.showErrorMessage(
-        UPLOAD_EXPORTED_LOCAL_FILE_INVALID_METADATA_MESSAGE,
-      );
-      return;
-    }
-
-    const baseUrl = deps.getBaseUrl()?.trim();
-    if (!baseUrl) {
-      deps.showErrorMessage(
-        UPLOAD_EXPORTED_LOCAL_FILE_INVALID_BASE_URL_MESSAGE,
-      );
-      return;
-    }
-    if (baseUrl !== parsedWorkFile.value.metadata.baseUrl) {
-      deps.showErrorMessage(
-        UPLOAD_EXPORTED_LOCAL_FILE_BASE_URL_MISMATCH_MESSAGE,
-      );
-      return;
-    }
-
-    const currentSnapshot = await deps.bootstrapEditSession(
-      parsedWorkFile.value.metadata.canonicalPath,
-    );
-    if (!currentSnapshot.ok) {
-      deps.showErrorMessage(
-        mapSnapshotFailureToMessage(currentSnapshot, {
-          apiNotSupported: UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE,
-          connectionFailed:
-            UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE,
-          notFound: UPLOAD_EXPORTED_LOCAL_FILE_NOT_FOUND_MESSAGE,
-        }),
-      );
-      return;
-    }
-    if (
-      currentSnapshot.value.pageId !== parsedWorkFile.value.metadata.pageId ||
-      currentSnapshot.value.baseRevisionId !==
-        parsedWorkFile.value.metadata.baseRevisionId
-    ) {
-      deps.showErrorMessage(UPLOAD_EXPORTED_LOCAL_FILE_CONFLICT_MESSAGE);
-      return;
-    }
-
-    const writeResult = await deps.writePage(
-      parsedWorkFile.value.metadata.canonicalPath,
-      parsedWorkFile.value.body,
-      {
-        pageId: parsedWorkFile.value.metadata.pageId,
-        baseRevisionId: parsedWorkFile.value.metadata.baseRevisionId,
-        baseUpdatedAt: currentSnapshot.value.baseUpdatedAt,
-        baseBody: currentSnapshot.value.baseBody,
-        enteredAt: parsedWorkFile.value.metadata.exportedAt,
-        dirty: false,
-      },
-    );
-    if (!writeResult.ok) {
-      deps.showErrorMessage(mapUploadWriteFailureToMessage(writeResult));
-      return;
-    }
-
-    deps.invalidateReadFileCache(parsedWorkFile.value.metadata.canonicalPath);
-    const postUploadWarnings: string[] = [];
-
-    const refreshedSnapshot = await deps.bootstrapEditSession(
-      parsedWorkFile.value.metadata.canonicalPath,
-    );
-    if (!refreshedSnapshot.ok) {
-      postUploadWarnings.push(
-        UPLOAD_EXPORTED_LOCAL_FILE_METADATA_REFRESH_WARNING_MESSAGE,
-      );
-    } else {
-      try {
-        await deps.writeLocalFile(
-          localWorkFilePath,
-          serializeLocalRoundTripWorkFile(
-            {
-              version: 1,
-              baseUrl,
-              canonicalPath: parsedWorkFile.value.metadata.canonicalPath,
-              pageId: refreshedSnapshot.value.pageId,
-              baseRevisionId: refreshedSnapshot.value.baseRevisionId,
-              exportedAt: new Date().toISOString(),
-            },
-            parsedWorkFile.value.body,
-          ),
-        );
-      } catch {
-        postUploadWarnings.push(
-          UPLOAD_EXPORTED_LOCAL_FILE_METADATA_REFRESH_WARNING_MESSAGE,
-        );
-      }
-    }
-
-    const reopenResult = await deps.refreshOpenGrowiPage(
-      parsedWorkFile.value.metadata.canonicalPath,
-    );
-    if (reopenResult === "dirty") {
-      postUploadWarnings.push(
-        UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE,
-      );
-    }
-    if (reopenResult === "failed") {
-      postUploadWarnings.push(
-        UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE,
-      );
-    }
-
-    if (postUploadWarnings.length > 0) {
-      deps.showWarningMessage(joinUploadWarnings(postUploadWarnings));
-      return;
-    }
-
-    deps.showInformationMessage(UPLOAD_EXPORTED_LOCAL_FILE_SUCCESS_MESSAGE);
+  return async function uploadExportedLocalFileToGrowi(
+    target?: MirrorCommandTarget,
+  ): Promise<BundleUploadResult[] | undefined> {
+    return await uploadMirror(deps, target);
   };
 }
 
@@ -2113,7 +3186,7 @@ export function createDownloadCurrentPageSetToLocalBundleCommand(
 ) {
   return async function downloadCurrentPageSetToLocalBundle(
     uri?: UriLike,
-  ): Promise<GrowiCurrentSetManifest | undefined> {
+  ): Promise<MirrorManifest | undefined> {
     const targetUri = uri ?? deps.getActiveEditorUri();
     if (!isPageUri(targetUri)) {
       deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_SET_INVALID_TARGET_MESSAGE);
@@ -2134,422 +3207,114 @@ export function createDownloadCurrentPageSetToLocalBundleCommand(
       return undefined;
     }
 
-    const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
-    if (!localWorkspaceRoot) {
-      deps.showErrorMessage(
-        DOWNLOAD_CURRENT_PAGE_SET_NO_LOCAL_WORKSPACE_MESSAGE,
-      );
-      return undefined;
+    return await exportMirror(deps, {
+      rootCanonicalPath: canonicalPath,
+      mode: "prefix",
+      successMessage: DOWNLOAD_CURRENT_PAGE_SET_SUCCESS_MESSAGE,
+      writeFailedMessage: DOWNLOAD_CURRENT_PAGE_SET_WRITE_FAILED_MESSAGE,
+    });
+  };
+}
+
+export function createRefreshLocalMirrorCommand(deps: CommandDeps) {
+  return async function refreshLocalMirror(uri?: UriLike): Promise<void> {
+    const targetUri = uri ?? deps.getActiveEditorUri();
+    const rootCanonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+    if (!rootCanonicalPath) {
+      deps.showErrorMessage(REFRESH_LOCAL_MIRROR_INVALID_TARGET_MESSAGE);
+      return;
     }
 
-    const baseUrl = deps.getBaseUrl()?.trim();
-    if (!baseUrl) {
-      deps.showErrorMessage(ADD_PREFIX_INVALID_BASE_URL_MESSAGE);
-      return undefined;
+    const loaded = await loadMirrorManifest(deps, {
+      requestedCanonicalPath: rootCanonicalPath,
+      requestedScope: "page",
+      allowAncestorReuse: false,
+      noWorkspaceMessage: REFRESH_LOCAL_MIRROR_NO_LOCAL_WORKSPACE_MESSAGE,
+      readManifestFailedMessage:
+        REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE,
+      invalidManifestMessage: REFRESH_LOCAL_MIRROR_INVALID_MANIFEST_MESSAGE,
+      invalidBaseUrlMessage: COMPARE_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE,
+      baseUrlMismatchMessage: REFRESH_LOCAL_MIRROR_BASE_URL_MISMATCH_MESSAGE,
+      mirrorNotFoundMessage: REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE,
+      reusedPrefixSkippedMessage:
+        REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE,
+    });
+    if (!loaded) {
+      return;
     }
 
-    const listedPages = await deps.listPages(canonicalPath);
-    if (!listedPages.ok) {
-      deps.showErrorMessage(mapBundleListFailureToMessage(listedPages));
-      return undefined;
+    const compareResults = await compareMirror(deps, targetUri);
+    if (!compareResults) {
+      return;
+    }
+    if (
+      compareResults.some(
+        (result) =>
+          result.status === "LocalChanged" ||
+          result.status === "Conflict" ||
+          result.status === "MissingLocal",
+      )
+    ) {
+      deps.showErrorMessage(REFRESH_LOCAL_MIRROR_LOCAL_CHANGES_MESSAGE);
+      return;
     }
 
-    const pagePaths = dedupeAndSortCanonicalPaths([
-      canonicalPath,
-      ...listedPages.paths,
-    ]);
-    if (pagePaths.length > CURRENT_PAGE_SET_MAX_PAGES) {
-      deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_SET_TOO_MANY_PAGES_MESSAGE);
-      return undefined;
-    }
-
-    const exportedAt = new Date().toISOString();
-    const pages: GrowiCurrentSetManifestPage[] = [];
-
-    try {
-      for (const pagePath of pagePaths) {
-        const snapshot = await deps.bootstrapEditSession(pagePath);
-        if (!snapshot.ok) {
-          deps.showErrorMessage(mapBundleSnapshotFailureToMessage(snapshot));
-          return undefined;
-        }
-
-        const relativeFilePath =
-          buildCurrentPageSetPageFileRelativePath(pagePath);
-        await deps.writeLocalFile(
-          buildCurrentPageSetPageFilePath(localWorkspaceRoot, relativeFilePath),
-          snapshot.value.baseBody,
-        );
-        pages.push({
-          canonicalPath: pagePath,
-          relativeFilePath,
-          pageId: snapshot.value.pageId,
-          baseRevisionId: snapshot.value.baseRevisionId,
-          exportedAt,
-          contentHash: hashBody(snapshot.value.baseBody),
-        });
-      }
-
-      const manifest: GrowiCurrentSetManifest = {
-        version: 1,
-        kind: "growi-current-set",
-        bundleName: "growi-current-set",
-        baseUrl,
-        rootCanonicalPath: canonicalPath,
-        exportedAt,
-        pages,
-      };
-      const manifestPath = buildCurrentPageSetManifestPath(localWorkspaceRoot);
-      await deps.writeLocalFile(
-        manifestPath,
-        serializeGrowiCurrentSetManifest(manifest),
-      );
-      await deps.openLocalFile(manifestPath);
-      deps.showInformationMessage(DOWNLOAD_CURRENT_PAGE_SET_SUCCESS_MESSAGE);
-      return manifest;
-    } catch {
-      deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_SET_WRITE_FAILED_MESSAGE);
-      return undefined;
+    const exported = await exportMirror(deps, {
+      rootCanonicalPath: loaded.manifest.rootCanonicalPath,
+      mode: loaded.manifest.mode,
+      successMessage: REFRESH_LOCAL_MIRROR_SUCCESS_MESSAGE,
+      writeFailedMessage:
+        loaded.manifest.mode === "page"
+          ? DOWNLOAD_CURRENT_PAGE_WRITE_LOCAL_FILE_FAILED_MESSAGE
+          : DOWNLOAD_CURRENT_PAGE_SET_WRITE_FAILED_MESSAGE,
+    });
+    if (!exported) {
+      return;
     }
   };
 }
 
 export function createCompareLocalBundleWithGrowiCommand(deps: CommandDeps) {
-  return async function compareLocalBundleWithGrowi(): Promise<
-    BundleCompareResult[] | undefined
-  > {
-    const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
-    if (!localWorkspaceRoot) {
-      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE);
-      return undefined;
-    }
-
-    const manifestPath = buildCurrentPageSetManifestPath(localWorkspaceRoot);
-    let rawManifest: string;
-    try {
-      rawManifest = await deps.readLocalFile(manifestPath);
-    } catch {
-      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE);
-      return undefined;
-    }
-
-    const parsedManifest = parseGrowiCurrentSetManifest(rawManifest);
-    if (!parsedManifest.ok) {
-      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE);
-      return undefined;
-    }
-
-    const baseUrl = deps.getBaseUrl()?.trim();
-    if (!baseUrl) {
-      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE);
-      return undefined;
-    }
-    if (baseUrl !== parsedManifest.value.baseUrl) {
-      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE);
-      return undefined;
-    }
-
-    const results: BundleCompareResult[] = [];
-    const skippedDiffResults: BundleCompareResult[] = [];
-    const diffResources: ChangesResourceTuple[] = [];
-    for (const page of parsedManifest.value.pages) {
-      const localFilePath = buildCurrentPageSetPageFilePath(
-        localWorkspaceRoot,
-        page.relativeFilePath,
-      );
-
-      let localBody: string;
-      try {
-        localBody = await deps.readLocalFile(localFilePath);
-      } catch {
-        results.push({
-          canonicalPath: page.canonicalPath,
-          status: "MissingLocal",
-        });
-        continue;
-      }
-
-      const localChanged = hashBody(localBody) !== page.contentHash;
-      const currentSnapshot = await deps.bootstrapEditSession(
-        page.canonicalPath,
-      );
-      if (!currentSnapshot.ok) {
-        if (currentSnapshot.reason === "NotFound") {
-          results.push({
-            canonicalPath: page.canonicalPath,
-            status: "MissingRemote",
-          });
-          continue;
-        }
-
-        deps.showErrorMessage(
-          mapSnapshotFailureToMessage(currentSnapshot, {
-            apiNotSupported:
-              DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE,
-            connectionFailed:
-              DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE,
-            notFound: DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE,
-          }),
-        );
-        return undefined;
-      }
-
-      const remoteChanged =
-        currentSnapshot.value.pageId !== page.pageId ||
-        currentSnapshot.value.baseRevisionId !== page.baseRevisionId;
-
-      const result: BundleCompareResult = {
-        canonicalPath: page.canonicalPath,
-        status: localChanged
-          ? remoteChanged
-            ? "Conflict"
-            : "LocalChanged"
-          : remoteChanged
-            ? "RemoteChanged"
-            : "Unchanged",
-      };
-      results.push(result);
-
-      if (
-        result.status === "LocalChanged" ||
-        result.status === "RemoteChanged" ||
-        result.status === "Conflict"
-      ) {
-        const localFileUri = {
-          scheme: "file",
-          path: localFilePath,
-          fsPath: localFilePath,
-        } as const;
-        diffResources.push([
-          localFileUri,
-          { scheme: "growi", path: `${page.canonicalPath}.md` },
-          localFileUri,
-        ]);
-      }
-    }
-
-    for (const result of results) {
-      if (
-        result.status === "MissingLocal" ||
-        result.status === "MissingRemote"
-      ) {
-        skippedDiffResults.push(result);
-      }
-    }
-
-    if (diffResources.length === 0) {
-      if (skippedDiffResults.length > 0) {
-        deps.showWarningMessage(
-          [
-            COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE,
-            formatBundleCompareSkippedSummary(skippedDiffResults),
-          ].join("\n"),
-        );
-      } else {
-        deps.showInformationMessage(COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE);
-      }
-      return results;
-    }
-
-    try {
-      await openChangesEditor(
-        deps,
-        `GROWI Bundle Diff: ${parsedManifest.value.rootCanonicalPath}`,
-        diffResources,
-      );
-    } catch {
-      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE);
-      return undefined;
-    }
-
-    if (skippedDiffResults.length > 0) {
-      deps.showWarningMessage(
-        formatBundleCompareSkippedSummary(skippedDiffResults),
-      );
-    }
-    return results;
+  return async function compareLocalBundleWithGrowi(
+    target?: MirrorCommandTarget,
+  ): Promise<BundleCompareResult[] | undefined> {
+    return await compareMirror(
+      deps,
+      typeof target === "object" &&
+        target !== null &&
+        "scope" in target &&
+        target.scope !== undefined
+        ? target
+        : {
+            uri:
+              (typeof target === "object" && target !== null && "uri" in target
+                ? target.uri
+                : target) as UriLike | undefined,
+            scope: "subtree",
+          },
+    );
   };
 }
 
 export function createUploadLocalBundleToGrowiCommand(deps: CommandDeps) {
-  return async function uploadLocalBundleToGrowi(): Promise<
-    BundleUploadResult[] | undefined
-  > {
-    const localWorkspaceRoot = deps.getLocalWorkspaceRoot();
-    if (!localWorkspaceRoot) {
-      deps.showErrorMessage(UPLOAD_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE);
-      return undefined;
-    }
-
-    const manifestPath = buildCurrentPageSetManifestPath(localWorkspaceRoot);
-    let rawManifest: string;
-    try {
-      rawManifest = await deps.readLocalFile(manifestPath);
-    } catch {
-      deps.showErrorMessage(UPLOAD_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE);
-      return undefined;
-    }
-
-    const parsedManifest = parseGrowiCurrentSetManifest(rawManifest);
-    if (!parsedManifest.ok) {
-      deps.showErrorMessage(UPLOAD_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE);
-      return undefined;
-    }
-
-    const baseUrl = deps.getBaseUrl()?.trim();
-    if (!baseUrl) {
-      deps.showErrorMessage(UPLOAD_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE);
-      return undefined;
-    }
-    if (baseUrl !== parsedManifest.value.baseUrl) {
-      deps.showErrorMessage(UPLOAD_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE);
-      return undefined;
-    }
-
-    const results: BundleUploadResult[] = [];
-    const postUploadWarnings: string[] = [];
-    let manifestRefreshFailed = false;
-    let manifestChanged = false;
-    const updatedPages = parsedManifest.value.pages.map((page) => ({
-      ...page,
-    }));
-
-    for (const page of updatedPages) {
-      const localFilePath = buildCurrentPageSetPageFilePath(
-        localWorkspaceRoot,
-        page.relativeFilePath,
-      );
-
-      let localBody: string;
-      try {
-        localBody = await deps.readLocalFile(localFilePath);
-      } catch {
-        results.push({
-          canonicalPath: page.canonicalPath,
-          status: "MissingLocal",
-        });
-        continue;
-      }
-
-      if (hashBody(localBody) === page.contentHash) {
-        results.push({
-          canonicalPath: page.canonicalPath,
-          status: "Unchanged",
-        });
-        continue;
-      }
-
-      const currentSnapshot = await deps.bootstrapEditSession(
-        page.canonicalPath,
-      );
-      if (!currentSnapshot.ok) {
-        if (currentSnapshot.reason === "NotFound") {
-          results.push({
-            canonicalPath: page.canonicalPath,
-            status: "MissingRemote",
-          });
-          continue;
-        }
-
-        deps.showErrorMessage(
-          mapSnapshotFailureToMessage(currentSnapshot, {
-            apiNotSupported:
-              UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE,
-            connectionFailed:
-              UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE,
-            notFound: UPLOAD_EXPORTED_LOCAL_FILE_NOT_FOUND_MESSAGE,
-          }),
-        );
-        return undefined;
-      }
-
-      if (
-        currentSnapshot.value.pageId !== page.pageId ||
-        currentSnapshot.value.baseRevisionId !== page.baseRevisionId
-      ) {
-        results.push({
-          canonicalPath: page.canonicalPath,
-          status: "Conflict",
-        });
-        continue;
-      }
-
-      const writeResult = await deps.writePage(page.canonicalPath, localBody, {
-        pageId: page.pageId,
-        baseRevisionId: page.baseRevisionId,
-        baseUpdatedAt: currentSnapshot.value.baseUpdatedAt,
-        baseBody: currentSnapshot.value.baseBody,
-        enteredAt: page.exportedAt,
-        dirty: false,
-      });
-      if (!writeResult.ok) {
-        deps.showErrorMessage(mapUploadWriteFailureToMessage(writeResult));
-        return undefined;
-      }
-
-      deps.invalidateReadFileCache(page.canonicalPath);
-      manifestChanged = true;
-      results.push({
-        canonicalPath: page.canonicalPath,
-        status: "Uploaded",
-      });
-
-      const refreshedSnapshot = await deps.bootstrapEditSession(
-        page.canonicalPath,
-      );
-      if (!refreshedSnapshot.ok) {
-        manifestRefreshFailed = true;
-      } else {
-        page.pageId = refreshedSnapshot.value.pageId;
-        page.baseRevisionId = refreshedSnapshot.value.baseRevisionId;
-        page.exportedAt = new Date().toISOString();
-        page.contentHash = hashBody(localBody);
-      }
-
-      const reopenResult = await deps.refreshOpenGrowiPage(page.canonicalPath);
-      if (reopenResult === "dirty") {
-        postUploadWarnings.push(
-          `${page.canonicalPath}: ${UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE}`,
-        );
-      }
-      if (reopenResult === "failed") {
-        postUploadWarnings.push(
-          `${page.canonicalPath}: ${UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE}`,
-        );
-      }
-    }
-
-    if (manifestChanged) {
-      const updatedManifest: GrowiCurrentSetManifest = {
-        ...parsedManifest.value,
-        exportedAt: new Date().toISOString(),
-        pages: updatedPages,
-      };
-
-      try {
-        await deps.writeLocalFile(
-          manifestPath,
-          serializeGrowiCurrentSetManifest(updatedManifest),
-        );
-      } catch {
-        manifestRefreshFailed = true;
-      }
-    }
-
-    if (manifestRefreshFailed) {
-      postUploadWarnings.unshift(
-        UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE,
-      );
-    }
-
-    const summary = formatBundleUploadSummary(results);
-    if (postUploadWarnings.length > 0) {
-      deps.showWarningMessage([summary, ...postUploadWarnings].join("\n"));
-      return results;
-    }
-
-    deps.showInformationMessage(summary);
-    return results;
+  return async function uploadLocalBundleToGrowi(
+    target?: MirrorCommandTarget,
+  ): Promise<BundleUploadResult[] | undefined> {
+    return await uploadMirror(
+      deps,
+      typeof target === "object" &&
+        target !== null &&
+        "scope" in target &&
+        target.scope !== undefined
+        ? target
+        : {
+            uri:
+              (typeof target === "object" && target !== null && "uri" in target
+                ? target.uri
+                : target) as UriLike | undefined,
+            scope: "subtree",
+          },
+    );
   };
 }
 
@@ -2597,6 +3362,22 @@ export function createShowBacklinksCommand(deps: CommandDeps) {
     });
 
     if (!result.ok) {
+      if (result.reason === "BaseUrlNotConfigured") {
+        deps.showErrorMessage(SHOW_BACKLINKS_BASE_URL_NOT_CONFIGURED_MESSAGE);
+        return;
+      }
+      if (result.reason === "ApiTokenNotConfigured") {
+        deps.showErrorMessage(SHOW_BACKLINKS_API_TOKEN_NOT_CONFIGURED_MESSAGE);
+        return;
+      }
+      if (result.reason === "InvalidApiToken") {
+        deps.showErrorMessage(SHOW_BACKLINKS_INVALID_API_TOKEN_MESSAGE);
+        return;
+      }
+      if (result.reason === "PermissionDenied") {
+        deps.showErrorMessage(SHOW_BACKLINKS_PERMISSION_DENIED_MESSAGE);
+        return;
+      }
       if (result.reason === "ListPagesApiNotSupported") {
         deps.showErrorMessage(SHOW_BACKLINKS_LIST_API_NOT_SUPPORTED_MESSAGE);
         return;

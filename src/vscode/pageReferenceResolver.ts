@@ -1,8 +1,12 @@
 import { buildGrowiUri, type ParsedGrowiReference } from "../core/uri";
+import type {
+  GrowiAccessFailureReason,
+  GrowiReadFailureReason,
+} from "./fsProvider";
 
 export type ResolvePageIdResult =
   | { ok: true; canonicalPath: string }
-  | { ok: false; reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiReadFailureReason };
 
 export interface PageReferenceResolverDeps {
   resolvePageId(pageId: string): Promise<ResolvePageIdResult>;
@@ -10,7 +14,7 @@ export interface PageReferenceResolverDeps {
 
 export type ResolveParsedGrowiReferenceResult =
   | { ok: true; canonicalPath: string; uri: string }
-  | { ok: false; reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiReadFailureReason };
 
 const CACHE_TTL_MS = 60_000;
 

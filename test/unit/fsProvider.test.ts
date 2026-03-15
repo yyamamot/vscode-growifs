@@ -432,18 +432,18 @@ describe("GrowiFileSystemProvider", () => {
     );
   });
 
-  it("classifies missing baseUrl/token and malformed payload as ApiNotSupported", async () => {
+  it("classifies missing baseUrl/token and malformed payload on readFile", async () => {
     const uri = { scheme: "growi", path: "/team/dev/spec.md" } as vscode.Uri;
 
     const withoutBaseUrl = activateWithApiContext({ baseUrl: undefined });
     await expect(withoutBaseUrl.provider.readFile(uri)).rejects.toThrow(
-      /read page API is not supported/,
+      /base URL is not configured/,
     );
     expect(withoutBaseUrl.fetchMock).not.toHaveBeenCalled();
 
     const withoutToken = activateWithApiContext({ apiToken: undefined });
     await expect(withoutToken.provider.readFile(uri)).rejects.toThrow(
-      /read page API is not supported/,
+      /API token is not configured/,
     );
     expect(withoutToken.fetchMock).not.toHaveBeenCalled();
 
@@ -510,6 +510,28 @@ describe("GrowiFileSystemProvider", () => {
     });
     await expect(methodNotAllowed.provider.readFile(uri)).rejects.toThrow(
       /read page API is not supported/,
+    );
+  });
+
+  it("classifies 401 and 403 separately on readFile", async () => {
+    const uri = { scheme: "growi", path: "/team/dev/spec.md" } as vscode.Uri;
+
+    const invalidToken = activateWithApiContext({
+      fetchMock: vi
+        .fn()
+        .mockResolvedValueOnce(createJsonResponse({ error: "unauthorized" }, 401)),
+    });
+    await expect(invalidToken.provider.readFile(uri)).rejects.toThrow(
+      /invalid API token/,
+    );
+
+    const permissionDenied = activateWithApiContext({
+      fetchMock: vi
+        .fn()
+        .mockResolvedValueOnce(createJsonResponse({ error: "forbidden" }, 403)),
+    });
+    await expect(permissionDenied.provider.readFile(uri)).rejects.toThrow(
+      /permission denied/,
     );
   });
 
@@ -605,18 +627,18 @@ describe("GrowiFileSystemProvider", () => {
     expect(entries).toHaveLength(102);
   });
 
-  it("classifies list API unsupported cases as ApiNotSupported on readDirectory", async () => {
+  it("classifies missing baseUrl/token and list API unsupported cases on readDirectory", async () => {
     const uri = { scheme: "growi", path: "/team/dev/" } as vscode.Uri;
 
     const withoutBaseUrl = activateWithApiContext({ baseUrl: undefined });
     await expect(withoutBaseUrl.provider.readDirectory(uri)).rejects.toThrow(
-      /list pages API is not supported/,
+      /base URL is not configured/,
     );
     expect(withoutBaseUrl.fetchMock).not.toHaveBeenCalled();
 
     const withoutToken = activateWithApiContext({ apiToken: undefined });
     await expect(withoutToken.provider.readDirectory(uri)).rejects.toThrow(
-      /list pages API is not supported/,
+      /API token is not configured/,
     );
     expect(withoutToken.fetchMock).not.toHaveBeenCalled();
 
@@ -660,6 +682,28 @@ describe("GrowiFileSystemProvider", () => {
         `scenario: ${scenario.name}`,
       ).rejects.toThrow(/list pages API is not supported/);
     }
+  });
+
+  it("classifies 401 and 403 separately on readDirectory", async () => {
+    const uri = { scheme: "growi", path: "/team/dev/" } as vscode.Uri;
+
+    const invalidToken = activateWithApiContext({
+      fetchMock: vi
+        .fn()
+        .mockResolvedValueOnce(createJsonResponse({ error: "unauthorized" }, 401)),
+    });
+    await expect(invalidToken.provider.readDirectory(uri)).rejects.toThrow(
+      /invalid API token/,
+    );
+
+    const permissionDenied = activateWithApiContext({
+      fetchMock: vi
+        .fn()
+        .mockResolvedValueOnce(createJsonResponse({ error: "forbidden" }, 403)),
+    });
+    await expect(permissionDenied.provider.readDirectory(uri)).rejects.toThrow(
+      /permission denied/,
+    );
   });
 
   it("classifies list fetch rejection and timeout as ConnectionFailed on readDirectory", async () => {
@@ -1041,6 +1085,7 @@ describe("GrowiFileSystemProvider", () => {
     const uri = { scheme: "growi", path: "/team/dev/spec.md" } as vscode.Uri;
     const scenarios: Array<{
       name: string;
+      expectedMessage: RegExp;
       fourthResponse?: Response;
       mutateBeforeWrite?: (deps: {
         baseUrlGetMock: ReturnType<typeof vi.fn>;
@@ -1049,6 +1094,7 @@ describe("GrowiFileSystemProvider", () => {
     }> = [
       {
         name: "baseUrl missing on write",
+        expectedMessage: /base URL is not configured/,
         mutateBeforeWrite: ({ baseUrlGetMock }) => {
           baseUrlGetMock
             .mockImplementationOnce((key: string) =>
@@ -1059,6 +1105,7 @@ describe("GrowiFileSystemProvider", () => {
       },
       {
         name: "api token missing on write",
+        expectedMessage: /API token is not configured/,
         mutateBeforeWrite: ({ secretGetMock }) => {
           secretGetMock.mockResolvedValueOnce("test-token");
           secretGetMock.mockResolvedValue(undefined);
@@ -1066,10 +1113,12 @@ describe("GrowiFileSystemProvider", () => {
       },
       {
         name: "404 response",
+        expectedMessage: /write page API is not supported/,
         fourthResponse: createJsonResponse({ error: "not found" }, 404),
       },
       {
         name: "405 response",
+        expectedMessage: /write page API is not supported/,
         fourthResponse: createJsonResponse(
           { error: "method not allowed" },
           405,
@@ -1077,6 +1126,7 @@ describe("GrowiFileSystemProvider", () => {
       },
       {
         name: "non-json response",
+        expectedMessage: /write page API is not supported/,
         fourthResponse: new Response("<html>not json</html>", {
           headers: { "content-type": "text/html" },
           status: 200,
@@ -1084,6 +1134,7 @@ describe("GrowiFileSystemProvider", () => {
       },
       {
         name: "login redirect response",
+        expectedMessage: /write page API is not supported/,
         fourthResponse: new Response(null, {
           headers: { location: "/login" },
           status: 302,
@@ -1131,7 +1182,7 @@ describe("GrowiFileSystemProvider", () => {
           overwrite: true,
         }),
         `scenario: ${scenario.name}`,
-      ).rejects.toThrow(/write page API is not supported/);
+      ).rejects.toThrow(scenario.expectedMessage);
     }
   });
 
@@ -1384,6 +1435,24 @@ describe("GrowiFileSystemProvider", () => {
     await expect(provider.readFile(uri)).rejects.toThrow(
       /read page API is not supported/,
     );
+  });
+
+  it("maps PermissionDenied to FileSystemError.NoPermissions on readFile", async () => {
+    const provider = createProvider({
+      readPage: async () => ({ ok: false, reason: "PermissionDenied" }),
+    });
+    const uri = { scheme: "growi", path: "/team/dev/設計.md" } as vscode.Uri;
+
+    await expect(provider.readFile(uri)).rejects.toThrow(/permission denied/);
+  });
+
+  it("maps InvalidApiToken to FileSystemError.NoPermissions on readFile", async () => {
+    const provider = createProvider({
+      readPage: async () => ({ ok: false, reason: "InvalidApiToken" }),
+    });
+    const uri = { scheme: "growi", path: "/team/dev/設計.md" } as vscode.Uri;
+
+    await expect(provider.readFile(uri)).rejects.toThrow(/invalid API token/);
   });
 
   it("maps ConnectionFailed to FileSystemError.Unavailable", async () => {
@@ -2263,6 +2332,28 @@ describe("GrowiFileSystemProvider", () => {
 
     await expect(provider.readDirectory(uri)).rejects.toThrow(
       /list pages API is not supported/,
+    );
+  });
+
+  it("maps PermissionDenied to FileSystemError.NoPermissions on readDirectory", async () => {
+    const provider = createProvider({
+      listPages: async () => ({ ok: false, reason: "PermissionDenied" }),
+    });
+    const uri = { scheme: "growi", path: "/team/dev/" } as vscode.Uri;
+
+    await expect(provider.readDirectory(uri)).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+
+  it("maps InvalidApiToken to FileSystemError.NoPermissions on readDirectory", async () => {
+    const provider = createProvider({
+      listPages: async () => ({ ok: false, reason: "InvalidApiToken" }),
+    });
+    const uri = { scheme: "growi", path: "/team/dev/" } as vscode.Uri;
+
+    await expect(provider.readDirectory(uri)).rejects.toThrow(
+      /invalid API token/,
     );
   });
 

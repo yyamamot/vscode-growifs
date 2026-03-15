@@ -186,6 +186,13 @@ async function updateFixture(adminBaseUrl, pages) {
   });
 }
 
+async function updateAuthMode(adminBaseUrl, mode) {
+  await fetchAdmin(adminBaseUrl, "/__admin/auth", {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
+}
+
 async function getPageFixture(adminBaseUrl, path) {
   const payload = await fetchAdmin(
     adminBaseUrl,
@@ -310,6 +317,42 @@ function getBundleManifestPath() {
 
 function getBundlePageFilePath(canonicalPath) {
   return `${path.join(getBundleRootPath(), ...canonicalPath.slice(1).split("/"))}.md`;
+}
+
+function buildHostInstanceKey(baseUrl) {
+  const parsed = new URL(baseUrl);
+  const pathname = parsed.pathname.endsWith("/")
+    ? parsed.pathname.slice(0, -1)
+    : parsed.pathname;
+  return `${parsed.host}${pathname}`.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function buildLegacyHostInstanceKey(baseUrl) {
+  const parsed = new URL(baseUrl);
+  const pathname = parsed.pathname.endsWith("/")
+    ? parsed.pathname.slice(0, -1)
+    : parsed.pathname;
+  return `${parsed.origin}${pathname}`.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function getWorkspaceMirrorRootPath(baseUrl, rootCanonicalPath) {
+  const trimmedRoot = rootCanonicalPath.replace(/^\/+/, "");
+  return path.join(
+    getLocalWorkspaceRoot(),
+    ".growi-workspaces",
+    buildHostInstanceKey(baseUrl),
+    trimmedRoot,
+  );
+}
+
+function getLegacyWorkspaceMirrorRootPath(baseUrl, rootCanonicalPath) {
+  const trimmedRoot = rootCanonicalPath.replace(/^\/+/, "");
+  return path.join(
+    getLocalWorkspaceRoot(),
+    ".growi-workspaces",
+    buildLegacyHostInstanceKey(baseUrl),
+    trimmedRoot,
+  );
 }
 
 function hashBody(body) {
@@ -437,6 +480,100 @@ export async function run() {
     );
 
     await vscode.commands.executeCommand("growi.configureBaseUrl", baseUrl);
+  });
+
+  await runCase("open page reports missing base URL", async () => {
+    const beforePath = await getActivePath();
+    const errorMessages = [];
+
+    await withWindowOverrides(
+      {
+        showErrorMessage: async (message) => {
+          errorMessages.push(message);
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.workspace
+          .getConfiguration("growi")
+          .update("baseUrl", undefined, vscode.ConfigurationTarget.Global);
+        await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      },
+    );
+
+    assert(
+      errorMessages.at(-1) ===
+        "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      `Unexpected missing base URL error: ${errorMessages.at(-1)}`,
+    );
+    assert(
+      (await getActivePath()) === beforePath,
+      "Missing base URL should not replace active editor.",
+    );
+
+    await vscode.commands.executeCommand("growi.configureBaseUrl", baseUrl);
+  });
+
+  await runCase("open page reports invalid token", async () => {
+    await resetStats(adminUrl);
+    await updateAuthMode(adminUrl, "invalidToken");
+    const beforePath = await getActivePath();
+    const errorMessages = [];
+
+    await withWindowOverrides(
+      {
+        showErrorMessage: async (message) => {
+          errorMessages.push(message);
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      },
+    );
+
+    assert(
+      errorMessages.at(-1) ===
+        "GROWI API token が無効なため GROWI ページを開けませんでした。Configure API Token を確認してください。",
+      `Unexpected invalid token error: ${errorMessages.at(-1)}`,
+    );
+    assert(
+      (await getActivePath()) === beforePath,
+      "Invalid token should not replace active editor.",
+    );
+
+    await updateAuthMode(adminUrl, "normal");
+  });
+
+  await runCase("open page reports permission denied", async () => {
+    await resetStats(adminUrl);
+    await updateAuthMode(adminUrl, "permissionDenied");
+    const beforePath = await getActivePath();
+    const errorMessages = [];
+
+    await withWindowOverrides(
+      {
+        showErrorMessage: async (message) => {
+          errorMessages.push(message);
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      },
+    );
+
+    assert(
+      errorMessages.at(-1) ===
+        "GROWI へのアクセス権が不足しているか、接続先が認証を拒否したため GROWI ページを開けませんでした。権限設定と API Token を確認してください。",
+      `Unexpected permission denied error: ${errorMessages.at(-1)}`,
+    );
+    assert(
+      (await getActivePath()) === beforePath,
+      "Permission denied should not replace active editor.",
+    );
+
+    await updateAuthMode(adminUrl, "normal");
   });
 
   await runCase(
@@ -948,6 +1085,491 @@ export async function run() {
       );
 
       await updateFixture(adminUrl, BACKLINK_FIXTURE_PAGES);
+    },
+  );
+
+  await runCase(
+    "current page mirror uses the scheme-less instanceKey",
+    async () => {
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+      await fs.rm(getLegacyWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPage");
+
+      const newManifestPath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+        ".growi-mirror.json",
+      );
+      const oldManifestPath = path.join(
+        getLegacyWorkspaceMirrorRootPath(baseUrl, "/sample"),
+        ".growi-mirror.json",
+      );
+      const newExists = await fs
+        .access(newManifestPath)
+        .then(() => true)
+        .catch(() => false);
+      const oldExists = await fs
+        .access(oldManifestPath)
+        .then(() => true)
+        .catch(() => false);
+
+      assert(
+        newExists === true && oldExists === false,
+        `Expected page mirror to use the scheme-less instanceKey: ${toJsonString({
+          newManifestPath,
+          oldManifestPath,
+          newExists,
+          oldExists,
+        })}`,
+      );
+    },
+  );
+
+  await runCase(
+    "current page mirror reuses existing ancestor prefix mirror",
+    async () => {
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/hello",
+          body: "# hello page",
+          updatedAt: "2026-03-08T01:01:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/test",
+          body: "# test page",
+          updatedAt: "2026-03-08T01:02:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample/hello");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPage");
+
+      const prefixManifestPath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+        ".growi-mirror.json",
+      );
+      const prefixManifest = JSON.parse(
+        await fs.readFile(prefixManifestPath, "utf8"),
+      );
+      assert(
+        prefixManifest.mode === "prefix",
+        `Expected prefix manifest to remain the source of truth: ${toJsonString(prefixManifest)}`,
+      );
+      assert(
+        prefixManifest.pages.some(
+          (page) =>
+            page.canonicalPath === "/sample/hello" &&
+            page.relativeFilePath === "hello.md",
+        ),
+        `Expected /sample/hello to stay in ancestor prefix manifest: ${toJsonString(prefixManifest)}`,
+      );
+      const nestedManifestPath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample/hello"),
+        ".growi-mirror.json",
+      );
+      const nestedReservedPath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample/hello"),
+        "__hello__.md",
+      );
+      const nestedManifestExists = await fs
+        .access(nestedManifestPath)
+        .then(() => true)
+        .catch(() => false);
+      const nestedReservedExists = await fs
+        .access(nestedReservedPath)
+        .then(() => true)
+        .catch(() => false);
+      assert(
+        nestedManifestExists === false && nestedReservedExists === false,
+        `Current page mirror should not create nested mirror root: ${toJsonString({
+          nestedManifestPath,
+          nestedReservedPath,
+          nestedManifestExists,
+          nestedReservedExists,
+        })}`,
+      );
+    },
+  );
+
+  await runCase(
+    "compare local work file reuses existing ancestor prefix mirror",
+    async () => {
+      const capturedChangesCalls = [];
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/hello",
+          body: "# hello page",
+          updatedAt: "2026-03-08T01:01:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await fs.writeFile(
+        path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), "hello.md"),
+        "# hello page updated locally\n",
+        "utf8",
+      );
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample/hello");
+      const results = await withCommandExecuteOverride(
+        async (next, command, args) => {
+          if (command === "vscode.changes") {
+            capturedChangesCalls.push(args);
+            return undefined;
+          }
+          return await next(command, ...args);
+        },
+        async () =>
+          await vscode.commands.executeCommand(
+            "growi.compareLocalWorkFileWithCurrentPage",
+          ),
+      );
+
+      assert(
+        Array.isArray(results) &&
+          results.length === 1 &&
+          results[0]?.canonicalPath === "/sample/hello" &&
+          results[0]?.status === "LocalChanged",
+        `Expected ancestor compare to limit results to /sample/hello: ${toJsonString(results)}`,
+      );
+      assert(
+        capturedChangesCalls.length === 1 &&
+          capturedChangesCalls[0]?.[0] === "GROWI Mirror Diff: /sample/hello",
+        `Unexpected changes title for ancestor page compare: ${toJsonString(capturedChangesCalls)}`,
+      );
+    },
+  );
+
+  await runCase(
+    "upload local work file reuses existing ancestor prefix mirror",
+    async () => {
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/hello",
+          body: "# hello page",
+          updatedAt: "2026-03-08T01:01:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/test",
+          body: "# test page",
+          updatedAt: "2026-03-08T01:02:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await fs.writeFile(
+        path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), "hello.md"),
+        "# hello page updated locally\n",
+        "utf8",
+      );
+      await resetStats(adminUrl);
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample/hello");
+      const results = await vscode.commands.executeCommand(
+        "growi.uploadExportedLocalFileToGrowi",
+      );
+
+      assert(
+        Array.isArray(results) &&
+          results.length === 1 &&
+          results[0]?.canonicalPath === "/sample/hello" &&
+          results[0]?.status === "Uploaded",
+        `Expected ancestor upload to limit results to /sample/hello: ${toJsonString(results)}`,
+      );
+
+      const page = await getPageFixture(adminUrl, "/sample/hello");
+      assert(
+        page.body === "# hello page updated locally\n",
+        `Expected uploaded body to reach mock GROWI: ${toJsonString(page)}`,
+      );
+      const stats = await getStats(adminUrl);
+      assert(
+        stats.write === 1,
+        `Expected ancestor upload to write exactly one page: ${toJsonString(stats)}`,
+      );
+      const prefixManifest = JSON.parse(
+        await fs.readFile(
+          path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), ".growi-mirror.json"),
+          "utf8",
+        ),
+      );
+      assert(
+        prefixManifest.pages.some(
+          (page) =>
+            page.canonicalPath === "/sample/hello" &&
+            typeof page.baseRevisionId === "string",
+        ),
+        `Expected ancestor prefix manifest to stay updated: ${toJsonString(prefixManifest)}`,
+      );
+    },
+  );
+
+  await runCase(
+    "legacy-key page compare and upload migrate to the scheme-less instanceKey",
+    async () => {
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/hello",
+          body: "# hello page",
+          updatedAt: "2026-03-08T01:01:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+
+      const newRootPath = getWorkspaceMirrorRootPath(baseUrl, "/sample/hello");
+      const legacyRootPath = getLegacyWorkspaceMirrorRootPath(
+        baseUrl,
+        "/sample/hello",
+      );
+      await fs.rm(newRootPath, { recursive: true, force: true });
+      await fs.rm(legacyRootPath, { recursive: true, force: true });
+      await fs.mkdir(legacyRootPath, { recursive: true });
+
+      const exportedAt = "2026-03-09T00:00:00.000Z";
+      const legacyBody = "# hello page legacy local change\n";
+      await fs.writeFile(path.join(legacyRootPath, "__hello__.md"), legacyBody, "utf8");
+      await fs.writeFile(
+        path.join(legacyRootPath, ".growi-mirror.json"),
+        `${JSON.stringify(
+          {
+            version: 1,
+            baseUrl,
+            rootCanonicalPath: "/sample/hello",
+            mode: "page",
+            exportedAt,
+            pages: [
+              {
+                canonicalPath: "/sample/hello",
+                relativeFilePath: "__hello__.md",
+                pageId: "sample-hello",
+                baseRevisionId: "sample-hello-rev-1",
+                exportedAt,
+                contentHash: hashBody("# hello page"),
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample/hello");
+      const compareResults = await withCommandExecuteOverride(
+        async (next, command, args) => {
+          if (command === "vscode.changes") {
+            return undefined;
+          }
+          return await next(command, ...args);
+        },
+        async () =>
+          await vscode.commands.executeCommand(
+            "growi.compareLocalWorkFileWithCurrentPage",
+          ),
+      );
+      assert(
+        Array.isArray(compareResults) &&
+          compareResults.length === 1 &&
+          compareResults[0]?.status === "LocalChanged",
+        `Expected compare to read the legacy-key page mirror: ${toJsonString(compareResults)}`,
+      );
+
+      await resetStats(adminUrl);
+      const uploadResults = await vscode.commands.executeCommand(
+        "growi.uploadExportedLocalFileToGrowi",
+      );
+      assert(
+        Array.isArray(uploadResults) &&
+          uploadResults.length === 1 &&
+          uploadResults[0]?.status === "Uploaded",
+        `Expected upload to reuse the legacy-key page mirror: ${toJsonString(uploadResults)}`,
+      );
+
+      const page = await getPageFixture(adminUrl, "/sample/hello");
+      assert(
+        page.body === legacyBody,
+        `Expected uploaded body to match the legacy mirror file: ${toJsonString(page)}`,
+      );
+
+      const stats = await getStats(adminUrl);
+      assert(
+        stats.write === 1,
+        `Expected exactly one upload from the migrated legacy mirror: ${toJsonString(stats)}`,
+      );
+
+      const newManifestPath = path.join(newRootPath, ".growi-mirror.json");
+      const newManifest = JSON.parse(await fs.readFile(newManifestPath, "utf8"));
+      const newBody = await fs.readFile(path.join(newRootPath, "__hello__.md"), "utf8");
+      const legacyManifestExists = await fs
+        .access(path.join(legacyRootPath, ".growi-mirror.json"))
+        .then(() => true)
+        .catch(() => false);
+      const legacyBodyExists = await fs
+        .access(path.join(legacyRootPath, "__hello__.md"))
+        .then(() => true)
+        .catch(() => false);
+
+      assert(
+        newManifest.rootCanonicalPath === "/sample/hello" &&
+          newManifest.pages.some(
+            (entry) =>
+              entry.canonicalPath === "/sample/hello" &&
+              entry.relativeFilePath === "__hello__.md",
+          ) &&
+          newBody === legacyBody &&
+          legacyManifestExists === false &&
+          legacyBodyExists === false,
+        `Expected legacy-key page mirror to migrate into the scheme-less instanceKey: ${toJsonString({
+          newManifestPath,
+          newManifest,
+          newBody,
+          legacyRootPath,
+          legacyManifestExists,
+          legacyBodyExists,
+        })}`,
+      );
+    },
+  );
+
+  await runCase(
+    "current prefix mirror reuses existing ancestor prefix mirror",
+    async () => {
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/hello",
+          body: "# hello page",
+          updatedAt: "2026-03-08T01:01:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/test",
+          body: "# test page",
+          updatedAt: "2026-03-08T01:02:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/test/child",
+          body: "# child page",
+          updatedAt: "2026-03-08T01:03:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample/test");
+      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+
+      const prefixManifestPath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+        ".growi-mirror.json",
+      );
+      const prefixManifest = JSON.parse(
+        await fs.readFile(prefixManifestPath, "utf8"),
+      );
+      assert(
+        prefixManifest.pages.some(
+          (page) =>
+            page.canonicalPath === "/sample/test" &&
+            page.relativeFilePath === "test/__test__.md",
+        ),
+        `Expected /sample/test to stay in ancestor prefix manifest: ${toJsonString(prefixManifest)}`,
+      );
+      assert(
+        prefixManifest.pages.some(
+          (page) =>
+            page.canonicalPath === "/sample/test/child" &&
+            page.relativeFilePath === "test/child.md",
+        ),
+        `Expected subtree page to stay in ancestor prefix manifest: ${toJsonString(prefixManifest)}`,
+      );
+      const nestedManifestPath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample/test"),
+        ".growi-mirror.json",
+      );
+      const nestedManifestExists = await fs
+        .access(nestedManifestPath)
+        .then(() => true)
+        .catch(() => false);
+      assert(
+        nestedManifestExists === false,
+        `Current prefix mirror should not create nested manifest root: ${toJsonString({
+          nestedManifestPath,
+          nestedManifestExists,
+        })}`,
+      );
     },
   );
 
@@ -1856,8 +2478,9 @@ export async function run() {
         `Unexpected delegated command: ${toJsonString(delegatedCommands)}`,
       );
       assert(
-        delegatedCommands[0]?.args[0]?.toString?.() ===
-          "growi:/team/dev/spec.md",
+        delegatedCommands[0]?.args[0]?.uri?.toString?.() ===
+          "growi:/team/dev/spec.md" &&
+          delegatedCommands[0]?.args[0]?.scope === "page",
         `Unexpected delegated target URI: ${toJsonString(delegatedCommands)}`,
       );
     },
@@ -1903,17 +2526,17 @@ export async function run() {
                   `Current page compare action was not first: ${toJsonString(items)}`,
                 );
                 assert(
-                  items[1]?.label === "ローカルを現在ページへ反映" &&
-                    items[1]?.description === "growi-current.md を使用" &&
-                    items[1]?.command ===
-                      "growi.uploadExportedLocalFileToGrowi",
-                  `Current page upload action was not second: ${toJsonString(items)}`,
+                  items[1]?.label === "ローカルと配下ページを比較" &&
+                    items[1]?.description === "growi-current-set/ を使用" &&
+                    items[1]?.command === "growi.compareLocalBundleWithGrowi",
+                  `Bundle compare action was not second: ${toJsonString(items)}`,
                 );
                 assert(
-                  items[2]?.label === "ローカルと配下ページを比較" &&
-                    items[2]?.description === "growi-current-set/ を使用" &&
-                    items[2]?.command === "growi.compareLocalBundleWithGrowi",
-                  `Bundle compare action was not third: ${toJsonString(items)}`,
+                  items[2]?.label === "ローカルを現在ページへ反映" &&
+                    items[2]?.description === "growi-current.md を使用" &&
+                    items[2]?.command ===
+                      "growi.uploadExportedLocalFileToGrowi",
+                  `Current page upload action was not third: ${toJsonString(items)}`,
                 );
                 assert(
                   items[3]?.label === "ローカルを配下ページへ反映" &&
@@ -1921,7 +2544,7 @@ export async function run() {
                     items[3]?.command === "growi.uploadLocalBundleToGrowi",
                   `Bundle upload action was not fourth: ${toJsonString(items)}`,
                 );
-                return items[2];
+                return items[1];
               },
             },
             async () => {
@@ -1952,7 +2575,7 @@ export async function run() {
   );
 
   await runCase(
-    "Explorer directory context wrapper delegates current-page actions to the paired page",
+    "Explorer synthetic directory page wrapper delegates current-page actions to the page URI",
     async () => {
       const delegatedCommands = [];
 
@@ -1968,8 +2591,8 @@ export async function run() {
           await vscode.commands.executeCommand(
             "growi.explorerDownloadCurrentPageSetToLocalBundle",
             {
-              uri: { scheme: "growi", path: "/team/dev/" },
-              contextValue: "growi.directoryWithPage",
+              uri: { scheme: "growi", path: "/team/dev.md" },
+              contextValue: "growi.directoryPage",
             },
           );
         },
@@ -1983,7 +2606,7 @@ export async function run() {
       );
       assert(
         delegatedCommands[0]?.args[0]?.path === "/team/dev.md",
-        `Unexpected delegated paired page URI: ${toJsonString(
+        `Unexpected delegated page URI: ${toJsonString(
           delegatedCommands,
         )}`,
       );
@@ -1991,7 +2614,7 @@ export async function run() {
   );
 
   await runCase(
-    "Explorer context wrappers delegate prefix-root and local bundle actions",
+    "Explorer context wrappers delegate prefix-root and local mirror actions",
     async () => {
       const delegatedCommands = [];
 
@@ -1999,7 +2622,8 @@ export async function run() {
         async (next, command, args) => {
           if (
             command === "growi.showCurrentPageInfo" ||
-            command === "growi.compareLocalBundleWithGrowi"
+            command === "growi.compareLocalBundleWithGrowi" ||
+            command === "growi.uploadLocalBundleToGrowi"
           ) {
             delegatedCommands.push({ command, args });
             return undefined;
@@ -2021,12 +2645,19 @@ export async function run() {
               contextValue: "growi.prefixRoot",
             },
           );
+          await vscode.commands.executeCommand(
+            "growi.explorerUploadLocalBundleToGrowi",
+            {
+              uri: { scheme: "growi", path: "/team/" },
+              contextValue: "growi.prefixRoot",
+            },
+          );
         },
       );
 
       assert(
-        delegatedCommands.length === 2,
-        `Expected two delegated Explorer context actions, got ${toJsonString(
+        delegatedCommands.length === 3,
+        `Expected three delegated Explorer context actions, got ${toJsonString(
           delegatedCommands,
         )}`,
       );
@@ -2039,8 +2670,17 @@ export async function run() {
       );
       assert(
         delegatedCommands[1]?.command === "growi.compareLocalBundleWithGrowi" &&
-          delegatedCommands[1]?.args?.length === 0,
-        `Unexpected local bundle delegation: ${toJsonString(
+          delegatedCommands[1]?.args[0]?.uri?.path === "/team.md" &&
+          delegatedCommands[1]?.args[0]?.scope === "subtree",
+        `Unexpected local bundle compare delegation: ${toJsonString(
+          delegatedCommands,
+        )}`,
+      );
+      assert(
+        delegatedCommands[2]?.command === "growi.uploadLocalBundleToGrowi" &&
+          delegatedCommands[2]?.args[0]?.uri?.path === "/team.md" &&
+          delegatedCommands[2]?.args[0]?.scope === "subtree",
+        `Unexpected local bundle upload delegation: ${toJsonString(
           delegatedCommands,
         )}`,
       );

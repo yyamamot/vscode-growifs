@@ -104,9 +104,18 @@ function isLoginRedirectResponse(response: Response): boolean {
 
 function classifyPageSnapshotFailureStatus(
   status: number,
-): StartEditBootstrapResult {
+): {
+  ok: false;
+  reason: "NotFound" | "InvalidApiToken" | "PermissionDenied" | "ApiNotSupported";
+} {
   if (status === 404) {
     return { ok: false, reason: "NotFound" };
+  }
+  if (status === 401) {
+    return { ok: false, reason: "InvalidApiToken" };
+  }
+  if (status === 403) {
+    return { ok: false, reason: "PermissionDenied" };
   }
   return { ok: false, reason: "ApiNotSupported" };
 }
@@ -114,6 +123,12 @@ function classifyPageSnapshotFailureStatus(
 function classifyPageLookupFailureStatus(status: number) {
   if (status === 404) {
     return { ok: false, reason: "NotFound" } as const;
+  }
+  if (status === 401) {
+    return { ok: false, reason: "InvalidApiToken" } as const;
+  }
+  if (status === 403) {
+    return { ok: false, reason: "PermissionDenied" } as const;
   }
   return { ok: false, reason: "ApiNotSupported" } as const;
 }
@@ -210,7 +225,15 @@ type PageSnapshotDataResult =
         pageInfo?: GrowiCurrentPageInfo;
       };
     }
-  | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" | "NotFound" };
+  | {
+        ok: false;
+        reason:
+          | "InvalidApiToken"
+          | "PermissionDenied"
+          | "ApiNotSupported"
+          | "ConnectionFailed"
+        | "NotFound";
+    };
 
 export type GrowiApiAdapter = {
   fetchPageSnapshot(
@@ -231,7 +254,12 @@ export type GrowiApiAdapter = {
     | { ok: true; canonicalPath: string; pageInfo?: GrowiCurrentPageInfo }
     | {
         ok: false;
-        reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
+        reason:
+          | "NotFound"
+          | "InvalidApiToken"
+          | "PermissionDenied"
+          | "ApiNotSupported"
+          | "ConnectionFailed";
       }
   >;
   listPages(
@@ -274,7 +302,12 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
     | { ok: true; page: JsonObject }
     | {
         ok: false;
-        reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
+        reason:
+          | "NotFound"
+          | "InvalidApiToken"
+          | "PermissionDenied"
+          | "ApiNotSupported"
+          | "ConnectionFailed";
       }
   > {
     const requestInit = createGetRequestInit(apiToken);
@@ -480,6 +513,12 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
         if (isLoginRedirectResponse(listResponse)) {
           return { ok: false, reason: "ApiNotSupported" } as const;
         }
+        if (listResponse.status === 401) {
+          return { ok: false, reason: "InvalidApiToken" } as const;
+        }
+        if (listResponse.status === 403) {
+          return { ok: false, reason: "PermissionDenied" } as const;
+        }
         if (
           !listResponse.ok ||
           listResponse.status === 404 ||
@@ -543,6 +582,12 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
       if (isLoginRedirectResponse(revisionsResponse)) {
         return { ok: false, reason: "ApiNotSupported" } as const;
       }
+      if (revisionsResponse.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (revisionsResponse.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
       if (
         !revisionsResponse.ok ||
         revisionsResponse.status === 404 ||
@@ -604,6 +649,12 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
 
       if (isLoginRedirectResponse(revisionResponse)) {
         return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (revisionResponse.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (revisionResponse.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
       }
       if (revisionResponse.status === 404) {
         return { ok: false, reason: "NotFound" } as const;
@@ -706,6 +757,9 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
 
       if (isLoginRedirectResponse(pageResponse)) {
         return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (pageResponse.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
       }
       if (pageResponse.status === 403) {
         return { ok: false, reason: "PermissionDenied" } as const;

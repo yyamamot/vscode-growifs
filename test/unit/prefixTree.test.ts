@@ -114,13 +114,19 @@ describe("GrowiPrefixTreeDataProvider", () => {
     const children = await provider.getChildren(root);
 
     expect(children.map((item) => [item.label, item.kind])).toEqual([
+      ["__team__.md", "page"],
       ["dev", "directory"],
+      ["__dev__.md", "page"],
     ]);
     expect(children.map((item) => item.contextValue)).toEqual([
-      "growi.directoryWithPage",
+      "growi.directoryPage",
+      "growi.directory",
+      "growi.directoryPage",
     ]);
     expect(children.map((item) => item.uri.toString())).toEqual([
+      "growi:/team.md",
       "growi:/team/dev/",
+      "growi:/team/dev.md",
     ]);
   });
 
@@ -139,13 +145,31 @@ describe("GrowiPrefixTreeDataProvider", () => {
     const children = await provider.getChildren(root);
 
     expect(children.map((item) => [item.label, item.kind])).toEqual([
+      ["__team__.md", "page"],
       ["docs", "directory"],
       ["guide.md", "page"],
     ]);
     expect(children.map((item) => item.contextValue)).toEqual([
+      "growi.directoryPage",
       "growi.directory",
       "growi.page",
     ]);
+  });
+
+  it("uses __root__.md as the synthetic page label for the slash prefix", async () => {
+    const provider = createGrowiPrefixTreeDataProvider({
+      getRegisteredPrefixes: () => ["/"],
+      readDirectory: vi.fn(async () =>
+        createDirectoryEntries([["guide.md", vscode.FileType.File]]),
+      ),
+    });
+
+    const [root] = await provider.getChildren();
+    const children = await provider.getChildren(root);
+
+    expect(children[0]?.label).toBe("__root__.md");
+    expect(children[0]?.contextValue).toBe("growi.directoryPage");
+    expect(children[0]?.uri.toString()).toBe("growi:/.md");
   });
 
   it("assigns vscode.open command to page items", async () => {

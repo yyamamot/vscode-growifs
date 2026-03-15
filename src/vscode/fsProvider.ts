@@ -2,9 +2,21 @@ import * as vscode from "vscode";
 
 import { normalizeCanonicalPath } from "../core/uri";
 
+export type GrowiAccessFailureReason =
+  | "BaseUrlNotConfigured"
+  | "ApiTokenNotConfigured"
+  | "InvalidApiToken"
+  | "PermissionDenied"
+  | "ApiNotSupported"
+  | "ConnectionFailed";
+
+export type GrowiReadFailureReason =
+  | GrowiAccessFailureReason
+  | "NotFound";
+
 export type GrowiPageReadResult =
   | { ok: true; body: string; pageInfo?: GrowiCurrentPageInfo }
-  | { ok: false; reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiReadFailureReason };
 
 export type GrowiPageReader = {
   readPage(canonicalPath: string): Promise<GrowiPageReadResult>;
@@ -14,7 +26,7 @@ export type GrowiPageWriteResult =
   | { ok: true; pageInfo?: GrowiCurrentPageInfo }
   | {
       ok: false;
-      reason: "PermissionDenied" | "ApiNotSupported" | "ConnectionFailed";
+      reason: GrowiAccessFailureReason;
     };
 
 export type GrowiPageWriter = {
@@ -37,7 +49,7 @@ export type GrowiCurrentRevisionReader = {
 
 export type GrowiPageListResult =
   | { ok: true; paths: string[] }
-  | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiAccessFailureReason };
 
 export type GrowiPageListReader = {
   listPages(canonicalPrefixPath: string): Promise<GrowiPageListResult>;
@@ -94,6 +106,10 @@ function createUnavailableError(kind: FailureKind): vscode.FileSystemError {
 }
 
 const LIST_FAILURE_MESSAGES = {
+  BaseUrlNotConfigured: "base URL is not configured",
+  ApiTokenNotConfigured: "API token is not configured",
+  InvalidApiToken: "invalid API token",
+  PermissionDenied: "permission denied",
   ApiNotSupported: "list pages API is not supported",
   ConnectionFailed: "failed to connect to GROWI",
 } as const;
@@ -101,12 +117,18 @@ const LIST_FAILURE_MESSAGES = {
 function createListReaderError(
   kind: keyof typeof LIST_FAILURE_MESSAGES,
 ): vscode.FileSystemError {
-  return vscode.FileSystemError.Unavailable(
-    `growi: ${LIST_FAILURE_MESSAGES[kind]}`,
-  );
+  const message = `growi: ${LIST_FAILURE_MESSAGES[kind]}`;
+  if (kind === "InvalidApiToken" || kind === "PermissionDenied") {
+    return vscode.FileSystemError.NoPermissions(message);
+  }
+  return vscode.FileSystemError.Unavailable(message);
 }
 
 const READ_FAILURE_MESSAGES = {
+  BaseUrlNotConfigured: "base URL is not configured",
+  ApiTokenNotConfigured: "API token is not configured",
+  InvalidApiToken: "invalid API token",
+  PermissionDenied: "permission denied",
   ApiNotSupported: "read page API is not supported",
   ConnectionFailed: "failed to connect to GROWI",
 } as const;
@@ -114,12 +136,17 @@ const READ_FAILURE_MESSAGES = {
 function createReadReaderError(
   kind: keyof typeof READ_FAILURE_MESSAGES,
 ): vscode.FileSystemError {
-  return vscode.FileSystemError.Unavailable(
-    `growi: ${READ_FAILURE_MESSAGES[kind]}`,
-  );
+  const message = `growi: ${READ_FAILURE_MESSAGES[kind]}`;
+  if (kind === "InvalidApiToken" || kind === "PermissionDenied") {
+    return vscode.FileSystemError.NoPermissions(message);
+  }
+  return vscode.FileSystemError.Unavailable(message);
 }
 
 const WRITE_FAILURE_MESSAGES = {
+  BaseUrlNotConfigured: "base URL is not configured",
+  ApiTokenNotConfigured: "API token is not configured",
+  InvalidApiToken: "invalid API token",
   PermissionDenied: "permission denied",
   ApiNotSupported: "write page API is not supported",
   ConnectionFailed: "failed to connect to GROWI",
@@ -129,7 +156,7 @@ function createWriteWriterError(
   kind: keyof typeof WRITE_FAILURE_MESSAGES,
 ): vscode.FileSystemError {
   const message = `growi: ${WRITE_FAILURE_MESSAGES[kind]}`;
-  if (kind === "PermissionDenied") {
+  if (kind === "InvalidApiToken" || kind === "PermissionDenied") {
     return vscode.FileSystemError.NoPermissions(message);
   }
   return vscode.FileSystemError.Unavailable(message);
@@ -149,6 +176,9 @@ function createConflictError(): vscode.FileSystemError {
 
 type SaveFailureKind =
   | "Conflict"
+  | "BaseUrlNotConfigured"
+  | "ApiTokenNotConfigured"
+  | "InvalidApiToken"
   | "PermissionDenied"
   | "ApiNotSupported"
   | "ConnectionFailed"
@@ -158,6 +188,12 @@ type SaveFailureKind =
 const SAVE_FAILURE_MESSAGES: Record<SaveFailureKind, string> = {
   Conflict:
     "保存できません: 他の更新が先に保存されました。ページを再読込して内容を確認してください。",
+  BaseUrlNotConfigured:
+    "保存できません: GROWI base URL が未設定です。Configure Base URL を実行してください。",
+  ApiTokenNotConfigured:
+    "保存できません: GROWI API token が未設定です。Configure API Token を実行してください。",
+  InvalidApiToken:
+    "保存できません: GROWI API token が無効です。Configure API Token を確認してください。",
   PermissionDenied:
     "保存できません: 更新権限がありません。GROWI の権限設定を確認してください。",
   ApiNotSupported:
@@ -633,13 +669,7 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
       throw error;
     }
     if (!result.ok) {
-      if (result.reason === "PermissionDenied") {
-        this.notifySaveFailure("PermissionDenied");
-      } else if (result.reason === "ApiNotSupported") {
-        this.notifySaveFailure("ApiNotSupported");
-      } else {
-        this.notifySaveFailure("ConnectionFailed");
-      }
+      this.notifySaveFailure(result.reason);
       throw createWriteWriterError(result.reason);
     }
 

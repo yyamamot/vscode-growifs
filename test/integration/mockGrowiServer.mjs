@@ -120,6 +120,7 @@ function toFixture(pages = DEFAULT_PAGES) {
 export async function startMockGrowiServer(options = {}) {
   const token = options.token ?? DEFAULT_TOKEN;
   let fixture = toFixture(options.pages);
+  let authMode = "normal";
   const requestStats = {
     page: 0,
     revision: 0,
@@ -133,6 +134,14 @@ export async function startMockGrowiServer(options = {}) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
     if (url.pathname.startsWith("/_api/")) {
+      if (authMode === "invalidToken") {
+        writeJson(res, 401, { ok: false, error: "Unauthorized" });
+        return;
+      }
+      if (authMode === "permissionDenied") {
+        writeJson(res, 403, { ok: false, error: "Forbidden" });
+        return;
+      }
       const authorization = req.headers.authorization;
       if (authorization !== `Bearer ${token}`) {
         writeJson(res, 401, { ok: false, error: "Unauthorized" });
@@ -359,7 +368,32 @@ export async function startMockGrowiServer(options = {}) {
       requestStats.revisionList = 0;
       requestStats.list = 0;
       requestStats.write = 0;
+      authMode = "normal";
       writeJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/__admin/auth") {
+      const bodyChunks = [];
+      req.on("data", (chunk) => {
+        bodyChunks.push(chunk);
+      });
+      req.on("end", () => {
+        try {
+          const payload = JSON.parse(
+            Buffer.concat(bodyChunks).toString("utf8"),
+          );
+          const nextMode =
+            payload?.mode === "invalidToken" ||
+            payload?.mode === "permissionDenied"
+              ? payload.mode
+              : "normal";
+          authMode = nextMode;
+          writeJson(res, 200, { ok: true, mode: authMode });
+        } catch {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+        }
+      });
       return;
     }
 

@@ -18,7 +18,7 @@ interface TreeEntryCandidate {
   kind: "directory" | "page";
   label: string;
   uri: vscode.Uri;
-  hasDirectoryPage?: boolean;
+  contextValue?: "growi.directoryPage";
 }
 
 function toPrefixUri(prefix: string): vscode.Uri {
@@ -57,15 +57,6 @@ function createPrefixRootItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   return item;
 }
 
-function createDirectoryWithPageItem(
-  uri: vscode.Uri,
-  label: string,
-): PrefixTreeItem {
-  const item = createDirectoryItem(uri, label);
-  item.contextValue = "growi.directoryWithPage";
-  return item;
-}
-
 function createPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   const item = new vscode.TreeItem(
     label,
@@ -84,6 +75,22 @@ function createPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   return item;
 }
 
+function createDirectoryPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
+  const item = createPageItem(uri, label);
+  item.contextValue = "growi.directoryPage";
+  return item;
+}
+
+function getReservedDirectoryPageLabel(canonicalPath: string): string {
+  if (canonicalPath === "/") {
+    return "__root__.md";
+  }
+
+  const segments = canonicalPath.split("/").filter((segment) => segment.length);
+  const basename = segments.at(-1) ?? "root";
+  return `__${basename}__.md`;
+}
+
 function buildChildCandidates(
   parent: vscode.Uri,
   entries: readonly [string, vscode.FileType][],
@@ -97,15 +104,29 @@ function buildChildCandidates(
   const candidates: TreeEntryCandidate[] = [];
   for (const [name, type] of entries) {
     if (type === vscode.FileType.Directory) {
+      const directoryUri = toChildUri(parent, name, type);
       candidates.push({
         kind: "directory",
         label: name,
-        uri: toChildUri(parent, name, type),
-        hasDirectoryPage: entries.some(
+        uri: directoryUri,
+      });
+
+      if (
+        entries.some(
           ([fileName, fileType]) =>
             fileType === vscode.FileType.File && fileName === `${name}.md`,
-        ),
-      });
+        )
+      ) {
+        const canonicalPath = directoryUri.path.endsWith("/")
+          ? directoryUri.path.slice(0, -1)
+          : directoryUri.path;
+        candidates.push({
+          kind: "page",
+          label: getReservedDirectoryPageLabel(canonicalPath),
+          uri: toChildUri(parent, `${name}.md`, vscode.FileType.File),
+          contextValue: "growi.directoryPage",
+        });
+      }
       continue;
     }
 
@@ -154,12 +175,27 @@ export class GrowiPrefixTreeDataProvider
     }
 
     const entries = await this.deps.readDirectory(element.uri);
-    return buildChildCandidates(element.uri, entries).map((candidate) => {
+    const candidates = buildChildCandidates(element.uri, entries);
+    if (element.contextValue === "growi.prefixRoot") {
+      const canonicalPath = element.uri.path.endsWith("/")
+        ? element.uri.path.slice(0, -1) || "/"
+        : element.uri.path;
+      candidates.unshift({
+        kind: "page",
+        label: getReservedDirectoryPageLabel(canonicalPath),
+        uri: vscode.Uri.parse(
+          canonicalPath === "/" ? "growi:/.md" : `growi:${canonicalPath}.md`,
+        ),
+        contextValue: "growi.directoryPage",
+      });
+    }
+
+    return candidates.map((candidate) => {
       if (candidate.kind === "directory") {
-        if (candidate.hasDirectoryPage) {
-          return createDirectoryWithPageItem(candidate.uri, candidate.label);
-        }
         return createDirectoryItem(candidate.uri, candidate.label);
+      }
+      if (candidate.contextValue === "growi.directoryPage") {
+        return createDirectoryPageItem(candidate.uri, candidate.label);
       }
       return createPageItem(candidate.uri, candidate.label);
     });

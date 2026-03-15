@@ -309,6 +309,74 @@ describe("createGrowiApiAdapter", () => {
     expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
   });
 
+  it("returns PermissionDenied for page snapshot 403", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const snapshot = await adapter.fetchPageSnapshot(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    const read = await adapter.readPage(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(snapshot).toEqual({ ok: false, reason: "PermissionDenied" });
+    expect(read).toEqual({ ok: false, reason: "PermissionDenied" });
+  });
+
+  it("returns InvalidApiToken for page snapshot 401", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const snapshot = await adapter.fetchPageSnapshot(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    const read = await adapter.readPage(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(snapshot).toEqual({ ok: false, reason: "InvalidApiToken" });
+    expect(read).toEqual({ ok: false, reason: "InvalidApiToken" });
+  });
+
+  it("returns PermissionDenied for page lookup 403", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const resolved = await adapter.resolvePageId(
+      "0123456789abcdefabcdef01",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(resolved).toEqual({ ok: false, reason: "PermissionDenied" });
+  });
+
+  it("returns InvalidApiToken for page lookup 401", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const resolved = await adapter.resolvePageId(
+      "0123456789abcdefabcdef01",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(resolved).toEqual({ ok: false, reason: "InvalidApiToken" });
+  });
+
   it("returns ApiNotSupported for page snapshot non-json response", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response("ok", {
@@ -435,6 +503,82 @@ describe("createGrowiApiAdapter", () => {
     );
 
     expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it("returns InvalidApiToken and PermissionDenied for page list auth failures", async () => {
+    const invalidTokenFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", invalidTokenFetch);
+
+    const adapter = createGrowiApiAdapter();
+    const invalidToken = await adapter.listPages(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    expect(invalidToken).toEqual({ ok: false, reason: "InvalidApiToken" });
+
+    const permissionDeniedFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 403 }));
+    vi.stubGlobal("fetch", permissionDeniedFetch);
+    const permissionDenied = await adapter.listPages(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    expect(permissionDenied).toEqual({ ok: false, reason: "PermissionDenied" });
+  });
+
+  it("returns InvalidApiToken and PermissionDenied for revision auth failures", async () => {
+    const invalidTokenFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", invalidTokenFetch);
+
+    const adapter = createGrowiApiAdapter();
+    const invalidList = await adapter.listRevisions(
+      "page-123",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    expect(invalidList).toEqual({ ok: false, reason: "InvalidApiToken" });
+
+    const permissionDeniedFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 403 }));
+    vi.stubGlobal("fetch", permissionDeniedFetch);
+    const deniedList = await adapter.listRevisions(
+      "page-123",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    expect(deniedList).toEqual({ ok: false, reason: "PermissionDenied" });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 401 })),
+    );
+    const invalidRead = await adapter.readRevision(
+      "page-123",
+      "revision-001",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    expect(invalidRead).toEqual({ ok: false, reason: "InvalidApiToken" });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 403 })),
+    );
+    const deniedRead = await adapter.readRevision(
+      "page-123",
+      "revision-001",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    expect(deniedRead).toEqual({ ok: false, reason: "PermissionDenied" });
   });
 
   it("returns ConnectionFailed when page list fetch rejects", async () => {
@@ -696,6 +840,23 @@ describe("createGrowiApiAdapter", () => {
     );
 
     expect(result).toEqual({ ok: false, reason: "PermissionDenied" });
+  });
+
+  it("returns InvalidApiToken when write API responds 401", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.writePage(
+      "# body",
+      testEditSession,
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "InvalidApiToken" });
   });
 
   it("returns ApiNotSupported for write page non-json response", async () => {

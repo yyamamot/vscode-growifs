@@ -114,7 +114,16 @@ function createDeps() {
         _canonicalPrefixPath: string,
       ): Promise<
         | { ok: true; paths: string[] }
-        | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" }
+        | {
+            ok: false;
+            reason:
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed";
+          }
       > => ({ ok: true, paths: [] }),
     ),
     listRevisions: vi.fn(
@@ -166,7 +175,14 @@ function createDeps() {
         | { ok: true; body: string }
         | {
             ok: false;
-            reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed";
+            reason:
+              | "NotFound"
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed";
           }
       > => ({ ok: true, body: "" }),
     ),
@@ -232,6 +248,7 @@ function createDeps() {
     ),
     setEditSession: vi.fn(),
     updateBaseUrl: vi.fn(async (_value: string): Promise<void> => {}),
+    deleteLocalPath: vi.fn(async (_path: string): Promise<void> => {}),
     writeLocalFile: vi.fn(
       async (_path: string, _content: string): Promise<void> => {},
     ),
@@ -249,12 +266,43 @@ function createUri(scheme: string, path: string) {
   return { scheme, path, fsPath: path };
 }
 
-function createBundleRelativePath(canonicalPath: string) {
-  if (canonicalPath === "/") {
-    return "__root__.md";
+function createMirrorRelativePath(
+  rootCanonicalPath: string,
+  canonicalPath: string,
+  allCanonicalPaths: readonly string[] = [canonicalPath],
+) {
+  const basename = canonicalPath.split("/").filter(Boolean).at(-1);
+  const reservedName = basename ? `__${basename}__.md` : "__root__.md";
+  const hasDescendants = allCanonicalPaths.some(
+    (candidate) =>
+      candidate !== canonicalPath && candidate.startsWith(`${canonicalPath}/`),
+  );
+
+  if (canonicalPath === rootCanonicalPath) {
+    return reservedName;
   }
 
-  return `${canonicalPath.slice(1)}.md`;
+  if (rootCanonicalPath === "/") {
+    const relative = canonicalPath.slice(1);
+    if (hasDescendants) {
+      return `${relative}/${reservedName}`;
+    }
+    return `${relative}.md`;
+  }
+
+  const relative = canonicalPath.slice(rootCanonicalPath.length + 1);
+  if (hasDescendants) {
+    return `${relative}/${reservedName}`;
+  }
+  return `${relative}.md`;
+}
+
+function createMirrorRootPath(rootCanonicalPath: string) {
+  return `/workspace/.growi-workspaces/growi.example.com${rootCanonicalPath}`;
+}
+
+function createLegacyMirrorRootPath(rootCanonicalPath: string) {
+  return `/workspace/.growi-workspaces/https___growi.example.com${rootCanonicalPath}`;
 }
 
 function hashBodyForTest(body: string) {
@@ -276,18 +324,22 @@ function createBundleManifest(
   },
 ) {
   const exportedAt = options?.exportedAt ?? "2026-03-09T00:00:00.000Z";
+  const rootCanonicalPath =
+    options?.rootCanonicalPath ?? pages[0]?.canonicalPath ?? "/";
   return `${JSON.stringify(
     {
       version: 1,
-      kind: "growi-current-set",
-      bundleName: "growi-current-set",
       baseUrl: options?.baseUrl ?? "https://growi.example.com/",
-      rootCanonicalPath:
-        options?.rootCanonicalPath ?? pages[0]?.canonicalPath ?? "/",
+      rootCanonicalPath,
+      mode: pages.length === 1 ? "page" : "prefix",
       exportedAt,
       pages: pages.map((page) => ({
         canonicalPath: page.canonicalPath,
-        relativeFilePath: createBundleRelativePath(page.canonicalPath),
+        relativeFilePath: createMirrorRelativePath(
+          rootCanonicalPath,
+          page.canonicalPath,
+          pages.map((candidate) => candidate.canonicalPath),
+        ),
         pageId: page.pageId ?? `page:${page.canonicalPath}`,
         baseRevisionId:
           page.baseRevisionId ?? `revision:${page.canonicalPath}:001`,
@@ -404,101 +456,184 @@ describe("createConfigureApiTokenCommand", () => {
 });
 
 describe("createCompareLocalWorkFileWithCurrentPageCommand", () => {
-  it("opens vscode diff from local work file metadata", async () => {
+  it("opens vscode changes for the current page mirror", async () => {
     const deps = createDeps();
+    const relativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
+    );
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.getActiveEditorUri.mockReturnValue(
-      createUri("file", "/workspace/growi-current.md"),
+      createUri("growi", "/team/dev/spec.md"),
     );
-    deps.getActiveEditorText.mockReturnValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# local body\n',
-    );
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote old\n",
+            baseRevisionId: "revision-001",
+          },
+        ]);
+      }
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`
+      ) {
+        return "# local body\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/team/dev/spec",
+        baseRevisionId: "revision-001",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# remote old\n",
+      },
+    });
 
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
-    expect(deps.openDiff).toHaveBeenCalledWith(
-      { scheme: "growi", path: "/team/dev/spec.md" },
-      {
-        scheme: "file",
-        path: "/workspace/growi-current.md",
-        fsPath: "/workspace/growi-current.md",
-      },
-      "GROWI Diff: /team/dev/spec <-> growi-current.md",
+    expect(deps.openChanges).toHaveBeenCalledWith(
+      "GROWI Mirror Diff: /team/dev/spec",
+      [
+        [
+          {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`,
+          },
+          { scheme: "growi", path: "/team/dev/spec.md" },
+          {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`,
+          },
+        ],
+      ],
     );
   });
 
-  it("rejects compare when active editor is not growi-current.md", async () => {
+  it("rejects compare when active editor is not growi page", async () => {
     const deps = createDeps();
     deps.getActiveEditorUri.mockReturnValue(
       createUri("file", "/workspace/other.md"),
     );
-    deps.getActiveEditorText.mockReturnValue("# local body\n");
 
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "growi-current.md を開いた状態で Compare Local Work File with Current Page を実行してください。",
+      "Compare Local Mirror with GROWI は growi: ページでのみ実行できます。",
     );
-    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.openChanges).not.toHaveBeenCalled();
   });
 
   it("rejects compare when no local workspace folder is open", async () => {
     const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
     deps.getLocalWorkspaceRoot.mockReturnValue(undefined);
 
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル folder が開かれていないため Compare Local Work File with Current Page を実行できません。先に file: workspace を開いてください。",
+      "ローカル folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace を開いてください。",
     );
   });
 
-  it("rejects invalid metadata in local work file", async () => {
+  it("rejects invalid mirror manifest", async () => {
     const deps = createDeps();
     deps.getActiveEditorUri.mockReturnValue(
-      createUri("file", "/workspace/growi-current.md"),
+      createUri("growi", "/team/dev/spec.md"),
     );
-    deps.getActiveEditorText.mockReturnValue("# local body\n");
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockResolvedValueOnce("{invalid");
 
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "growi-current.md の GROWI metadata を読み取れないため Compare Local Work File with Current Page を実行できません。再度 download してください。",
+      ".growi-mirror.json の GROWI metadata を読み取れないため Compare Local Mirror with GROWI を実行できません。再度 Sync Local Mirror を実行してください。",
     );
-    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.openChanges).not.toHaveBeenCalled();
   });
 
   it("rejects base URL mismatch before opening diff", async () => {
     const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://other.example.com/");
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.getActiveEditorUri.mockReturnValue(
-      createUri("file", "/workspace/growi-current.md"),
+      createUri("growi", "/team/dev/spec.md"),
     );
-    deps.getActiveEditorText.mockReturnValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# local body\n',
+    deps.readLocalFile.mockResolvedValueOnce(
+      createBundleManifest(
+        [
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote old\n",
+            baseRevisionId: "revision-001",
+          },
+        ],
+        { baseUrl: "https://other.example.com/" },
+      ),
     );
 
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "export 元の GROWI base URL が現在設定と一致しないため Compare Local Work File with Current Page を実行できません。接続先を確認してください。",
+      "mirror の GROWI base URL が現在設定と一致しないため Compare Local Mirror with GROWI を実行できません。接続先を確認してください。",
     );
-    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.openChanges).not.toHaveBeenCalled();
   });
 
-  it("allows compare even when local work file has unsaved changes", async () => {
+  it("allows compare even when mirror file has unsaved changes", async () => {
     const deps = createDeps();
+    const relativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
+    );
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.getActiveEditorUri.mockReturnValue(
-      createUri("file", "/workspace/growi-current.md"),
+      createUri("growi", "/team/dev/spec.md"),
     );
-    deps.getActiveEditorText.mockReturnValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# unsaved body\n',
-    );
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote old\n",
+            baseRevisionId: "revision-001",
+          },
+        ]);
+      }
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`
+      ) {
+        return "# unsaved body\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/team/dev/spec",
+        baseRevisionId: "revision-001",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# remote old\n",
+      },
+    });
 
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
-    expect(deps.openDiff).toHaveBeenCalledTimes(1);
+    expect(deps.openChanges).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -643,6 +778,48 @@ describe("createAddPrefixCommand", () => {
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
       "指定した idurl に対応するページが見つかりませんでした。",
     );
+    expect(deps.addPrefix).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "BaseUrlNotConfigured",
+      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+    ],
+    [
+      "ApiTokenNotConfigured",
+      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効です。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+    ],
+    [
+      "ApiNotSupported",
+      "pageId 解決 API が未対応のため Prefix を追加できませんでした。",
+    ],
+    [
+      "ConnectionFailed",
+      "GROWI への接続に失敗したため Prefix を追加できませんでした。",
+    ],
+  ] as const)("shows an error when idurl resolution fails: %s", async (reason, message) => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/wiki/");
+    deps.showInputBox.mockResolvedValue(
+      "https://growi.example.com/wiki/0123456789abcdefabcdef01",
+    );
+    deps.resolvePageReference.mockResolvedValue({
+      ok: false,
+      reason,
+    } as const);
+
+    await createAddPrefixCommand(deps)();
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(message);
     expect(deps.addPrefix).not.toHaveBeenCalled();
   });
 
@@ -835,6 +1012,22 @@ describe("createOpenPageCommand", () => {
       "対象ページが見つからないため GROWI ページを開けませんでした。",
     ],
     [
+      "BaseUrlNotConfigured",
+      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+    ],
+    [
+      "ApiTokenNotConfigured",
+      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効なため GROWI ページを開けませんでした。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否したため GROWI ページを開けませんでした。権限設定と API Token を確認してください。",
+    ],
+    [
       "ApiNotSupported",
       "本文取得 API が未対応のため GROWI ページを開けませんでした。",
     ],
@@ -972,6 +1165,21 @@ describe("Explorer context wrapper commands", () => {
     });
   });
 
+  it("opens synthetic directory page items through vscode.open", async () => {
+    const deps = createDeps();
+
+    await createExplorerOpenPageItemCommand(deps)({
+      uri: createUri("growi", "/team/dev.md"),
+      contextValue: "growi.directoryPage",
+    });
+
+    expect(deps.executeCommand).toHaveBeenCalledWith("vscode.open", {
+      scheme: "growi",
+      path: "/team/dev.md",
+      fsPath: "/team/dev.md",
+    });
+  });
+
   it("delegates current-page actions with a page URI as-is", async () => {
     const deps = createDeps();
 
@@ -986,17 +1194,17 @@ describe("Explorer context wrapper commands", () => {
     );
   });
 
-  it("maps directory items to their paired page URI", async () => {
+  it("delegates current-page actions with a synthetic directory page URI as-is", async () => {
     const deps = createDeps();
 
     await createExplorerDownloadCurrentPageSetToLocalBundleCommand(deps)({
-      uri: createUri("growi", "/team/dev/"),
-      contextValue: "growi.directoryWithPage",
+      uri: createUri("growi", "/team/dev.md"),
+      contextValue: "growi.directoryPage",
     });
 
     expect(deps.executeCommand).toHaveBeenCalledWith(
       GROWI_COMMANDS.downloadCurrentPageSetToLocalBundle,
-      { scheme: "growi", path: "/team/dev.md" },
+      createUri("growi", "/team/dev.md"),
     );
   });
 
@@ -1024,7 +1232,7 @@ describe("Explorer context wrapper commands", () => {
     expect(deps.executeCommand).not.toHaveBeenCalled();
   });
 
-  it("forwards local round trip wrappers without a target URI", async () => {
+  it("maps local round trip wrappers to the resolved page URI", async () => {
     const deps = createDeps();
 
     await createExplorerCompareLocalWorkFileWithCurrentPageCommand(deps)({
@@ -1037,7 +1245,7 @@ describe("Explorer context wrapper commands", () => {
     });
     await createExplorerCompareLocalBundleWithGrowiCommand(deps)({
       uri: createUri("growi", "/team/dev/"),
-      contextValue: "growi.directoryWithPage",
+      contextValue: "growi.directory",
     });
     await createExplorerUploadLocalBundleToGrowiCommand(deps)({
       uri: createUri("growi", "/team/"),
@@ -1047,19 +1255,36 @@ describe("Explorer context wrapper commands", () => {
     expect(deps.executeCommand).toHaveBeenNthCalledWith(
       1,
       GROWI_COMMANDS.compareLocalWorkFileWithCurrentPage,
+      { uri: createUri("growi", "/team/dev/spec.md"), scope: "page" },
     );
     expect(deps.executeCommand).toHaveBeenNthCalledWith(
       2,
       GROWI_COMMANDS.uploadExportedLocalFileToGrowi,
+      { uri: createUri("growi", "/team/dev/spec.md"), scope: "page" },
     );
     expect(deps.executeCommand).toHaveBeenNthCalledWith(
       3,
       GROWI_COMMANDS.compareLocalBundleWithGrowi,
+      { scheme: "growi", path: "/team/dev.md" },
     );
     expect(deps.executeCommand).toHaveBeenNthCalledWith(
       4,
       GROWI_COMMANDS.uploadLocalBundleToGrowi,
+      { scheme: "growi", path: "/team.md" },
     );
+  });
+
+  it("ignores invalid Explorer targets for local round trip wrappers", async () => {
+    const deps = createDeps();
+
+    await createExplorerCompareLocalBundleWithGrowiCommand(deps)({
+      uri: createUri("file", "/tmp/current.md"),
+    });
+    await createExplorerUploadLocalBundleToGrowiCommand(deps)({
+      uri: createUri("file", "/tmp/current.md"),
+    });
+
+    expect(deps.executeCommand).not.toHaveBeenCalled();
   });
 
   it("delegates revision history diff from string canonical paths", async () => {
@@ -1240,6 +1465,22 @@ describe("createStartEditCommand", () => {
   });
 
   it.each([
+    [
+      "BaseUrlNotConfigured",
+      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+    ],
+    [
+      "ApiTokenNotConfigured",
+      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効です。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+    ],
     [
       "ApiNotSupported",
       "編集開始 API が未対応のため Start Edit を実行できません。",
@@ -1466,15 +1707,15 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       1,
-      "Download Current Page to Local Work File は growi: ページでのみ実行できます。",
+      "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       2,
-      "Download Current Page to Local Work File は growi: ページでのみ実行できます。",
+      "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       3,
-      "Download Current Page to Local Work File は growi: ページでのみ実行できます。",
+      "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。",
     );
   });
 
@@ -1495,7 +1736,7 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "未保存の変更があるため Download Current Page to Local Work File を実行できません。先に保存または End Edit を実行してください。",
+      "未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存または End Edit を実行してください。",
     );
   });
 
@@ -1509,26 +1750,16 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル folder が開かれていないため Download Current Page to Local Work File を実行できません。先に file: workspace を開いてください。",
+      "ローカル folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace を開いてください。",
     );
   });
 
-  it("rejects download when local work file is dirty in an open editor", async () => {
+  it("writes the page mirror and manifest, then opens the reserved page file", async () => {
     const deps = createDeps();
-    deps.findOpenTextDocument.mockReturnValue({ isDirty: true });
-
-    await createDownloadCurrentPageToLocalFileCommand(deps)(
-      createUri("growi", "/team/dev/spec.md"),
+    const relativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
     );
-
-    expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
-    expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "growi-current.md に未保存の変更があるため Download Current Page to Local Work File を実行できません。先に保存、Upload Local Work File to GROWI、または退避してください。",
-    );
-  });
-
-  it("writes the local work file with embedded metadata, then opens it", async () => {
-    const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.bootstrapEditSession.mockResolvedValue({
       ok: true,
@@ -1545,31 +1776,364 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     );
 
     expect(deps.writeLocalFile).toHaveBeenCalledWith(
-      "/workspace/growi-current.md",
-      expect.stringMatching(
-        /^<!-- GROWI-ROUNDTRIP \{"version":1,"baseUrl":"https:\/\/growi\.example\.com\/","canonicalPath":"\/team\/dev\/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"[^"]+"\} -->\n\n# exported body\n$/u,
-      ),
+      `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`,
+      "# exported body\n",
     );
     expect(deps.openLocalFile).toHaveBeenCalledWith(
-      "/workspace/growi-current.md",
+      `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`,
     );
+    const manifestWrite = deps.writeLocalFile.mock.calls.find(
+      ([filePath]) =>
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`,
+    );
+    expect(manifestWrite).toBeDefined();
+    expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
+      version: 1,
+      baseUrl: "https://growi.example.com/",
+      rootCanonicalPath: "/team/dev/spec",
+      mode: "page",
+      pages: [
+        {
+          canonicalPath: "/team/dev/spec",
+          relativeFilePath,
+          pageId: "page-123",
+          baseRevisionId: "revision-001",
+          contentHash: hashBodyForTest("# exported body\n"),
+        },
+      ],
+    });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページを growi-current.md へ保存しました。",
+      "現在ページのローカルミラーを同期しました。",
+    );
+  });
+
+  it("reuses the nearest ancestor prefix mirror for current page export", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/hello", body: "# old hello\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/sample/hello",
+        baseRevisionId: "revision:/sample/hello:002",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# refreshed hello\n",
+      },
+    });
+
+    await createDownloadCurrentPageToLocalFileCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/hello.md`,
+      "# refreshed hello\n",
+    );
+    expect(deps.writeLocalFile).not.toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample/hello")}/__hello__.md`,
+      "# refreshed hello\n",
+    );
+    expect(deps.openLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/hello.md`,
+    );
+    const manifestWrite = deps.writeLocalFile.mock.calls.find(
+      ([filePath]) => filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+    );
+    expect(manifestWrite).toBeDefined();
+    expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
+      rootCanonicalPath: "/sample",
+      mode: "prefix",
+      pages: expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: "/sample/hello",
+          relativeFilePath: "hello.md",
+          baseRevisionId: "revision:/sample/hello:002",
+          contentHash: hashBodyForTest("# refreshed hello\n"),
+        }),
+      ]),
+    });
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "既存 prefix mirror 内の現在ページローカルミラーを同期しました。",
+    );
+  });
+
+  it("prefers the nearest ancestor prefix mirror when multiple exist", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample/test", body: "# test\n" },
+            { canonicalPath: "/sample/test/hello", body: "# old hello\n" },
+          ],
+          { rootCanonicalPath: "/sample/test" },
+        );
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/test/hello", body: "# older hello\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/sample/test/hello",
+        baseRevisionId: "revision:/sample/test/hello:002",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# refreshed hello\n",
+      },
+    });
+
+    await createDownloadCurrentPageToLocalFileCommand(deps)(
+      createUri("growi", "/sample/test/hello.md"),
+    );
+
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample/test")}/hello.md`,
+      "# refreshed hello\n",
+    );
+    const manifestWrite = deps.writeLocalFile.mock.calls.find(
+      ([filePath]) =>
+        filePath === `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`,
+    );
+    expect(manifestWrite).toBeDefined();
+    expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
+      rootCanonicalPath: "/sample/test",
+      pages: expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: "/sample/test/hello",
+          relativeFilePath: "hello.md",
+        }),
+      ]),
+    });
+  });
+
+  it("falls back to a standalone page mirror when ancestor manifests are not reusable prefix mirrors", async () => {
+    const deps = createDeps();
+    const relativeFilePath = createMirrorRelativePath(
+      "/sample/hello",
+      "/sample/hello",
+    );
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return `${JSON.stringify(
+          {
+            version: 1,
+            baseUrl: "https://growi.example.com/",
+            rootCanonicalPath: "/sample",
+            mode: "page",
+            exportedAt: "2026-03-08T00:00:00.000Z",
+            pages: [
+              {
+                canonicalPath: "/sample/hello",
+                relativeFilePath: "hello.md",
+                pageId: "page:/sample/hello",
+                baseRevisionId: "revision:/sample/hello:001",
+                exportedAt: "2026-03-08T00:00:00.000Z",
+                contentHash: hashBodyForTest("# old hello\n"),
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`;
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/sample/hello",
+        baseRevisionId: "revision:/sample/hello:002",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# refreshed hello\n",
+      },
+    });
+
+    await createDownloadCurrentPageToLocalFileCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample/hello")}/${relativeFilePath}`,
+      "# refreshed hello\n",
+    );
+  });
+
+  it("rejects reuse when the ancestor prefix mirror tracks the page as skipped", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return `${JSON.stringify(
+          {
+            version: 1,
+            baseUrl: "https://growi.example.com/",
+            rootCanonicalPath: "/sample",
+            mode: "prefix",
+            exportedAt: "2026-03-08T00:00:00.000Z",
+            pages: [
+              {
+                canonicalPath: "/sample",
+                relativeFilePath: "__sample__.md",
+                pageId: "page:/sample",
+                baseRevisionId: "revision:/sample:001",
+                exportedAt: "2026-03-08T00:00:00.000Z",
+                contentHash: hashBodyForTest("# sample\n"),
+              },
+            ],
+            skippedPages: [
+              {
+                canonicalPath: "/sample/hello",
+                relativeFilePath: "hello.md",
+                reason: "ReservedFileNameCollision",
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`;
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+
+    await createDownloadCurrentPageToLocalFileCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
+    expect(deps.writeLocalFile).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "既存 prefix mirror で対象ページが衝突により skip されているため Sync Local Mirror for Current Page を実行できません。prefix mirror を見直してください。",
+    );
+  });
+
+  it("rejects reuse when the ancestor prefix mirror file is dirty", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/hello", body: "# old hello\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.findOpenTextDocument.mockReturnValue({ isDirty: true });
+
+    await createDownloadCurrentPageToLocalFileCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存してください。",
+    );
+  });
+
+  it("removes stale tracked mirror files when reserved filenames change", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return `${JSON.stringify(
+          {
+            version: 1,
+            baseUrl: "https://growi.example.com/",
+            rootCanonicalPath: "/team/dev/spec",
+            mode: "page",
+            exportedAt: "2026-03-08T00:00:00.000Z",
+            pages: [
+              {
+                canonicalPath: "/team/dev/spec",
+                relativeFilePath: "__root__.md",
+                pageId: "page-123",
+                baseRevisionId: "revision-001",
+                exportedAt: "2026-03-08T00:00:00.000Z",
+                contentHash: hashBodyForTest("# old body\n"),
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`;
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page-123",
+        baseRevisionId: "revision-002",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# exported body\n",
+      },
+    });
+
+    await createDownloadCurrentPageToLocalFileCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.deleteLocalPath).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/team/dev/spec")}/__root__.md`,
     );
   });
 
   it.each([
     [
+      "BaseUrlNotConfigured",
+      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+    ],
+    [
+      "ApiTokenNotConfigured",
+      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効です。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+    ],
+    [
       "ApiNotSupported",
-      "本文取得 API が未対応のため Download Current Page to Local Work File を実行できませんでした。",
+      "本文取得 API が未対応のため Sync Local Mirror for Current Page を実行できませんでした。",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Download Current Page to Local Work File を実行できませんでした。",
+      "GROWI への接続に失敗したため Sync Local Mirror for Current Page を実行できませんでした。",
     ],
     [
       "NotFound",
-      "対象ページが見つからないため Download Current Page to Local Work File を実行できませんでした。",
+      "対象ページが見つからないため Sync Local Mirror for Current Page を実行できませんでした。",
     ],
   ] as const)("maps snapshot failure to message: %s", async (reason, message) => {
     const deps = createDeps();
@@ -1586,13 +2150,39 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
 });
 
 describe("createUploadExportedLocalFileToGrowiCommand", () => {
-  it("uploads the local work file and refreshes embedded metadata", async () => {
+  it("uploads the current page mirror and refreshes manifest metadata", async () => {
     const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
-    deps.refreshOpenGrowiPage.mockResolvedValue("reopened");
-    deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
+    const relativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
     );
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.refreshOpenGrowiPage.mockResolvedValue("reopened");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote body\n",
+            pageId: "page-123",
+            baseRevisionId: "revision-001",
+          },
+        ]);
+      }
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`
+      ) {
+        return "# uploaded body\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
     deps.bootstrapEditSession
       .mockResolvedValueOnce({
         ok: true,
@@ -1626,72 +2216,131 @@ describe("createUploadExportedLocalFileToGrowiCommand", () => {
     );
     expect(deps.invalidateReadFileCache).toHaveBeenCalledWith("/team/dev/spec");
     expect(deps.refreshOpenGrowiPage).toHaveBeenCalledWith("/team/dev/spec");
-    expect(deps.writeLocalFile).toHaveBeenCalledWith(
-      "/workspace/growi-current.md",
-      expect.stringContaining('"baseRevisionId":"revision-002"'),
+    const manifestWrite = deps.writeLocalFile.mock.calls.find(
+      ([filePath]) =>
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`,
     );
+    expect(manifestWrite).toBeDefined();
+    expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
+      pages: [
+        {
+          canonicalPath: "/team/dev/spec",
+          baseRevisionId: "revision-002",
+          contentHash: hashBodyForTest("# uploaded body\n"),
+        },
+      ],
+    });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "growi-current.md の内容を GROWI へ反映しました。",
+      "Upload Local Mirror to GROWI を完了しました。\nUploaded: /team/dev/spec",
     );
   });
 
   it("rejects upload when no local workspace folder is open", async () => {
     const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
     deps.getLocalWorkspaceRoot.mockReturnValue(undefined);
 
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル folder が開かれていないため Upload Local Work File to GROWI を実行できません。先に file: workspace を開いてください。",
+      "ローカル folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace を開いてください。",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
 
-  it("rejects upload when local work file is missing", async () => {
+  it("rejects upload when manifest is missing", async () => {
     const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
     deps.readLocalFile.mockRejectedValue(new Error("ENOENT"));
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
 
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "growi-current.md の読み込みに失敗したため Upload Local Work File to GROWI を実行できませんでした。先に Download Current Page to Local Work File を実行してください。",
+      "対象の local mirror が見つからないため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid embedded metadata", async () => {
+  it("rejects invalid mirror manifest", async () => {
     const deps = createDeps();
-    deps.readLocalFile.mockResolvedValue("# uploaded body\n");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockResolvedValue("{invalid");
 
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "growi-current.md の GROWI metadata を読み取れませんでした。再度 download してください。",
+      ".growi-mirror.json の GROWI metadata を読み取れませんでした。再度 Sync Local Mirror を実行してください。",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
 
   it("rejects base URL mismatch", async () => {
     const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://other.example.com/");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
+      createBundleManifest(
+        [
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote body\n",
+          },
+        ],
+        { baseUrl: "https://other.example.com/" },
+      ),
     );
 
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "export 元の GROWI base URL が現在設定と一致しません。接続先を確認してください。",
+      "mirror の GROWI base URL が現在設定と一致しません。接続先を確認してください。",
     );
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
   });
 
   it("rejects revision mismatch as conflict", async () => {
     const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
-    deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
+    const relativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
     );
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote body\n",
+            pageId: "page-123",
+            baseRevisionId: "revision-001",
+          },
+        ]);
+      }
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`
+      ) {
+        return "# uploaded body\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
     deps.bootstrapEditSession.mockResolvedValue({
       ok: true,
       value: {
@@ -1704,19 +2353,45 @@ describe("createUploadExportedLocalFileToGrowiCommand", () => {
 
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
-    expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "download 後に GROWI 側が更新されたため Upload Local Work File to GROWI を中止しました。再度 download してやり直してください。",
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "Upload Local Mirror to GROWI を完了しました。\nConflict: /team/dev/spec",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
 
-  it("shows warning when metadata refresh fails after upload", async () => {
+  it("shows warning when manifest refresh and reopen fail after upload", async () => {
     const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
-    deps.refreshOpenGrowiPage.mockResolvedValue("not-open");
-    deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
+    const relativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
     );
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.refreshOpenGrowiPage.mockResolvedValue("failed");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote body\n",
+            pageId: "page-123",
+            baseRevisionId: "revision-001",
+          },
+        ]);
+      }
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/${relativeFilePath}`
+      ) {
+        return "# uploaded body\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
     deps.bootstrapEditSession
       .mockResolvedValueOnce({
         ok: true,
@@ -1732,109 +2407,18 @@ describe("createUploadExportedLocalFileToGrowiCommand", () => {
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "GROWI への upload は成功しましたが metadata の更新に失敗しました。次回 upload 前に再度 download してください。",
-    );
-  });
-
-  it("shows warning when open growi page is dirty after upload", async () => {
-    const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
-    deps.refreshOpenGrowiPage.mockResolvedValue("dirty");
-    deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
-    );
-    deps.bootstrapEditSession
-      .mockResolvedValueOnce({
-        ok: true,
-        value: {
-          pageId: "page-123",
-          baseRevisionId: "revision-001",
-          baseUpdatedAt: "2026-03-08T00:00:00.000Z",
-          baseBody: "# remote body\n",
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        value: {
-          pageId: "page-123",
-          baseRevisionId: "revision-002",
-          baseUpdatedAt: "2026-03-09T00:10:00.000Z",
-          baseBody: "# uploaded body\n",
-        },
-      });
-
-    await createUploadExportedLocalFileToGrowiCommand(deps)();
-
-    expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "GROWI への upload は成功しましたが、表示中の growi: ページは未保存変更があるため自動再読込しませんでした。",
-    );
-    expect(deps.showInformationMessage).not.toHaveBeenCalled();
-  });
-
-  it("shows warning when reopen fails after upload", async () => {
-    const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
-    deps.refreshOpenGrowiPage.mockResolvedValue("failed");
-    deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
-    );
-    deps.bootstrapEditSession
-      .mockResolvedValueOnce({
-        ok: true,
-        value: {
-          pageId: "page-123",
-          baseRevisionId: "revision-001",
-          baseUpdatedAt: "2026-03-08T00:00:00.000Z",
-          baseBody: "# remote body\n",
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        value: {
-          pageId: "page-123",
-          baseRevisionId: "revision-002",
-          baseUpdatedAt: "2026-03-09T00:10:00.000Z",
-          baseBody: "# uploaded body\n",
-        },
-      });
-
-    await createUploadExportedLocalFileToGrowiCommand(deps)();
-
-    expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。",
-    );
-    expect(deps.showInformationMessage).not.toHaveBeenCalled();
-  });
-
-  it("combines metadata and reopen warnings after upload", async () => {
-    const deps = createDeps();
-    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
-    deps.refreshOpenGrowiPage.mockResolvedValue("failed");
-    deps.readLocalFile.mockResolvedValue(
-      '<!-- GROWI-ROUNDTRIP {"version":1,"baseUrl":"https://growi.example.com/","canonicalPath":"/team/dev/spec","pageId":"page-123","baseRevisionId":"revision-001","exportedAt":"2026-03-09T00:00:00.000Z"} -->\n\n# uploaded body\n',
-    );
-    deps.bootstrapEditSession
-      .mockResolvedValueOnce({
-        ok: true,
-        value: {
-          pageId: "page-123",
-          baseRevisionId: "revision-001",
-          baseUpdatedAt: "2026-03-08T00:00:00.000Z",
-          baseBody: "# remote body\n",
-        },
-      })
-      .mockResolvedValueOnce({ ok: false, reason: "ConnectionFailed" });
-
-    await createUploadExportedLocalFileToGrowiCommand(deps)();
-
-    expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "GROWI への upload は成功しましたが metadata の更新に失敗しました。次回 upload 前に再度 download してください。 GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。",
+      [
+        "Upload Local Mirror to GROWI を完了しました。",
+        "Uploaded: /team/dev/spec",
+        "GROWI への mirror upload は成功しましたが manifest の更新に一部失敗しました。次回 upload 前に再度 Sync Local Mirror を実行してください。",
+        "/team/dev/spec: GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。",
+      ].join("\n"),
     );
   });
 });
 
 describe("bundle commands", () => {
-  it("downloads the active page set into growi-current-set with manifest metadata", async () => {
+  it("downloads the active page set into workspace mirror with manifest metadata", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.listPages.mockResolvedValue({
@@ -1856,39 +2440,44 @@ describe("bundle commands", () => {
     )(createUri("growi", "/team/dev/spec.md"));
 
     expect(manifest).toMatchObject({
-      kind: "growi-current-set",
-      bundleName: "growi-current-set",
       baseUrl: "https://growi.example.com/",
       rootCanonicalPath: "/team/dev/spec",
+      mode: "prefix",
     });
+    const rootRelativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
+      ["/team/dev/spec", "/team/dev/spec/child"],
+    );
     expect(deps.writeLocalFile).toHaveBeenCalledWith(
-      "/workspace/growi-current-set/team/dev/spec.md",
+      `${createMirrorRootPath("/team/dev/spec")}/${rootRelativeFilePath}`,
       "# /team/dev/spec\n",
     );
     expect(deps.writeLocalFile).toHaveBeenCalledWith(
-      "/workspace/growi-current-set/team/dev/spec/child.md",
+      `${createMirrorRootPath("/team/dev/spec")}/child.md`,
       "# /team/dev/spec/child\n",
     );
 
     const manifestCall = deps.writeLocalFile.mock.calls.find(
-      ([filePath]) => filePath === "/workspace/growi-current-set/manifest.json",
+      ([filePath]) =>
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`,
     );
     expect(manifestCall).toBeDefined();
     expect(JSON.parse(manifestCall?.[1] as string)).toMatchObject({
-      kind: "growi-current-set",
-      bundleName: "growi-current-set",
       rootCanonicalPath: "/team/dev/spec",
+      mode: "prefix",
       pages: [
         {
           canonicalPath: "/team/dev/spec",
-          relativeFilePath: "team/dev/spec.md",
+          relativeFilePath: rootRelativeFilePath,
           pageId: "page:/team/dev/spec",
           baseRevisionId: "revision:/team/dev/spec:001",
           contentHash: hashBodyForTest("# /team/dev/spec\n"),
         },
         {
           canonicalPath: "/team/dev/spec/child",
-          relativeFilePath: "team/dev/spec/child.md",
+          relativeFilePath: "child.md",
           pageId: "page:/team/dev/spec/child",
           baseRevisionId: "revision:/team/dev/spec/child:001",
           contentHash: hashBodyForTest("# /team/dev/spec/child\n"),
@@ -1896,10 +2485,236 @@ describe("bundle commands", () => {
       ],
     });
     expect(deps.openLocalFile).toHaveBeenCalledWith(
-      "/workspace/growi-current-set/manifest.json",
+      `${createMirrorRootPath("/team/dev/spec")}/${rootRelativeFilePath}`,
     );
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページ配下を growi-current-set/ に保存しました。",
+      "現在ページ配下のローカルミラーを同期しました。",
+    );
+  });
+
+  it("exports directory pages to reserved filenames inside their directories", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/team/dev/spec/guide", "/team/dev/spec/guide/advanced"],
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId: `revision:${canonicalPath}:001`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: `# ${canonicalPath}\n`,
+      },
+    }));
+
+    const manifest = await createDownloadCurrentPageSetToLocalBundleCommand(
+      deps,
+    )(createUri("growi", "/team/dev/spec.md"));
+
+    expect(manifest?.pages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: "/team/dev/spec",
+          relativeFilePath: "__spec__.md",
+        }),
+        expect.objectContaining({
+          canonicalPath: "/team/dev/spec/guide",
+          relativeFilePath: "guide/__guide__.md",
+        }),
+        expect.objectContaining({
+          canonicalPath: "/team/dev/spec/guide/advanced",
+          relativeFilePath: "guide/advanced.md",
+        }),
+      ]),
+    );
+  });
+
+  it("reuses the nearest ancestor prefix mirror for current prefix export", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/test", body: "# old test\n" },
+            { canonicalPath: "/sample/test/hello", body: "# old hello\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/sample/test/hello"],
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId: `revision:${canonicalPath}:002`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody:
+          canonicalPath === "/sample/test"
+            ? "# refreshed test\n"
+            : "# refreshed hello\n",
+      },
+    }));
+
+    await createDownloadCurrentPageSetToLocalBundleCommand(deps)(
+      createUri("growi", "/sample/test.md"),
+    );
+
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/test/__test__.md`,
+      "# refreshed test\n",
+    );
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/test/hello.md`,
+      "# refreshed hello\n",
+    );
+    expect(deps.writeLocalFile).not.toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`,
+      expect.any(String),
+    );
+    const manifestWrite = deps.writeLocalFile.mock.calls.find(
+      ([filePath]) => filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+    );
+    expect(manifestWrite).toBeDefined();
+    expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
+      rootCanonicalPath: "/sample",
+      mode: "prefix",
+      pages: expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: "/sample/test",
+          relativeFilePath: "test/__test__.md",
+          baseRevisionId: "revision:/sample/test:002",
+        }),
+        expect.objectContaining({
+          canonicalPath: "/sample/test/hello",
+          relativeFilePath: "test/hello.md",
+          baseRevisionId: "revision:/sample/test/hello:002",
+        }),
+      ]),
+    });
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "既存 prefix mirror 内の現在ページ配下ローカルミラーを同期しました。",
+    );
+  });
+
+  it("rejects ancestor prefix reuse when a tracked subtree file is dirty", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/test", body: "# old test\n" },
+            { canonicalPath: "/sample/test/hello", body: "# old hello\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/sample/test/hello"],
+    });
+    deps.findOpenTextDocument.mockImplementation((filePath: string) =>
+      filePath.endsWith("/test/hello.md") ? { isDirty: true } : undefined,
+    );
+
+    await createDownloadCurrentPageSetToLocalBundleCommand(deps)(
+      createUri("growi", "/sample/test.md"),
+    );
+
+    expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存してください。",
+    );
+  });
+
+  it("exports Japanese page names without replacing them with underscores", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/sample/test/無題のページ-1"],
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId: `revision:${canonicalPath}:001`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: `# ${canonicalPath}\n`,
+      },
+    }));
+
+    const manifest = await createDownloadCurrentPageSetToLocalBundleCommand(
+      deps,
+    )(createUri("growi", "/sample.md"));
+
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/test/無題のページ-1.md`,
+      "# /sample/test/無題のページ-1\n",
+    );
+    expect(manifest?.pages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: "/sample/test/無題のページ-1",
+          relativeFilePath: "test/無題のページ-1.md",
+        }),
+      ]),
+    );
+  });
+
+  it("skips pages that collide with reserved directory filenames", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/sample/test", "/sample/test/__test__"],
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId: `revision:${canonicalPath}:001`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: `# ${canonicalPath}\n`,
+      },
+    }));
+
+    const manifest = await createDownloadCurrentPageSetToLocalBundleCommand(
+      deps,
+    )(createUri("growi", "/sample.md"));
+
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/test/__test__.md`,
+      "# /sample/test\n",
+    );
+    expect(deps.bootstrapEditSession).not.toHaveBeenCalledWith(
+      "/sample/test/__test__",
+    );
+    expect(manifest?.skippedPages).toEqual([
+      {
+        canonicalPath: "/sample/test/__test__",
+        relativeFilePath: "test/__test__.md",
+        reason: "ReservedFileNameCollision",
+      },
+    ]);
+    expect(deps.showWarningMessage).toHaveBeenCalledWith(
+      [
+        "現在ページ配下のローカルミラーを同期しました。",
+        "Local Mirror では一部ページを保存しませんでした。",
+        "ReservedFileNameCollision: /sample/test/__test__ -> test/__test__.md",
+      ].join("\n"),
     );
   });
 
@@ -1921,15 +2736,32 @@ describe("bundle commands", () => {
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.writeLocalFile).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "active page 配下が 50 pages を超えるため Download Current Page Set to Local Bundle を実行できません。",
+      "active page 配下が 50 pages を超えるため Sync Local Mirror for Current Prefix を実行できません。",
     );
   });
 
   it("compares the local bundle against GROWI and returns page-level statuses", async () => {
     const deps = createDeps();
+    const rootRelativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
+      [
+        "/team/dev/spec",
+        "/team/dev/spec/local-only",
+        "/team/dev/spec/conflict",
+        "/team/dev/spec/remote-only",
+        "/team/dev/spec/missing",
+      ],
+    );
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === "/workspace/growi-current-set/manifest.json") {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
         return createBundleManifest([
           {
             canonicalPath: "/team/dev/spec",
@@ -1958,16 +2790,16 @@ describe("bundle commands", () => {
           },
         ]);
       }
-      if (filePath.endsWith("team/dev/spec.md")) {
+      if (filePath.endsWith(rootRelativeFilePath)) {
         return "# remote same\n";
       }
-      if (filePath.endsWith("team/dev/spec/local-only.md")) {
+      if (filePath.endsWith("local-only.md")) {
         return "# local changed\n";
       }
-      if (filePath.endsWith("team/dev/spec/conflict.md")) {
+      if (filePath.endsWith("conflict.md")) {
         return "# local conflict\n";
       }
-      if (filePath.endsWith("team/dev/spec/remote-only.md")) {
+      if (filePath.endsWith("remote-only.md")) {
         return "# remote old\n";
       }
       throw new Error("ENOENT");
@@ -2009,7 +2841,9 @@ describe("bundle commands", () => {
       };
     });
 
-    const results = await createCompareLocalBundleWithGrowiCommand(deps)();
+    const results = await createCompareLocalBundleWithGrowiCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
 
     expect(results).toEqual([
       { canonicalPath: "/team/dev/spec", status: "Unchanged" },
@@ -2019,45 +2853,45 @@ describe("bundle commands", () => {
       { canonicalPath: "/team/dev/spec/missing", status: "MissingLocal" },
     ]);
     expect(deps.openChanges).toHaveBeenCalledWith(
-      "GROWI Bundle Diff: /team/dev/spec",
+      "GROWI Mirror Diff: /team/dev/spec",
       [
         [
           {
             scheme: "file",
-            path: "/workspace/growi-current-set/team/dev/spec/local-only.md",
-            fsPath: "/workspace/growi-current-set/team/dev/spec/local-only.md",
+            path: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
           },
           { scheme: "growi", path: "/team/dev/spec/local-only.md" },
           {
             scheme: "file",
-            path: "/workspace/growi-current-set/team/dev/spec/local-only.md",
-            fsPath: "/workspace/growi-current-set/team/dev/spec/local-only.md",
+            path: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
           },
         ],
         [
           {
             scheme: "file",
-            path: "/workspace/growi-current-set/team/dev/spec/conflict.md",
-            fsPath: "/workspace/growi-current-set/team/dev/spec/conflict.md",
+            path: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
           },
           { scheme: "growi", path: "/team/dev/spec/conflict.md" },
           {
             scheme: "file",
-            path: "/workspace/growi-current-set/team/dev/spec/conflict.md",
-            fsPath: "/workspace/growi-current-set/team/dev/spec/conflict.md",
+            path: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
           },
         ],
         [
           {
             scheme: "file",
-            path: "/workspace/growi-current-set/team/dev/spec/remote-only.md",
-            fsPath: "/workspace/growi-current-set/team/dev/spec/remote-only.md",
+            path: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
           },
           { scheme: "growi", path: "/team/dev/spec/remote-only.md" },
           {
             scheme: "file",
-            path: "/workspace/growi-current-set/team/dev/spec/remote-only.md",
-            fsPath: "/workspace/growi-current-set/team/dev/spec/remote-only.md",
+            path: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
           },
         ],
       ],
@@ -2065,7 +2899,7 @@ describe("bundle commands", () => {
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
       [
-        "Compare Local Bundle with GROWI では一部ページを changes editor に含めませんでした。",
+        "Compare Local Mirror with GROWI では一部ページを changes editor に含めませんでした。",
         "MissingLocal: /team/dev/spec/missing",
       ].join("\n"),
     );
@@ -2074,7 +2908,14 @@ describe("bundle commands", () => {
 
   it("does not open changes editor when the bundle has no diff targets", async () => {
     const deps = createDeps();
+    const rootRelativeFilePath = createMirrorRelativePath(
+      "/team/dev/spec",
+      "/team/dev/spec",
+    );
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
     deps.bootstrapEditSession.mockResolvedValue({
       ok: true,
       value: {
@@ -2085,7 +2926,10 @@ describe("bundle commands", () => {
       },
     });
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === "/workspace/growi-current-set/manifest.json") {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
         return createBundleManifest([
           {
             canonicalPath: "/team/dev/spec",
@@ -2094,13 +2938,15 @@ describe("bundle commands", () => {
           },
         ]);
       }
-      if (filePath.endsWith("team/dev/spec.md")) {
+      if (filePath.endsWith(rootRelativeFilePath)) {
         return "# remote same\n";
       }
       throw new Error(`unexpected file: ${filePath}`);
     });
 
-    const results = await createCompareLocalBundleWithGrowiCommand(deps)();
+    const results = await createCompareLocalBundleWithGrowiCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
 
     expect(results).toEqual([
       { canonicalPath: "/team/dev/spec", status: "Unchanged" },
@@ -2108,48 +2954,309 @@ describe("bundle commands", () => {
     expect(deps.openChanges).not.toHaveBeenCalled();
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "Compare Local Bundle with GROWI で changes editor の対象はありませんでした。",
+      "Compare Local Mirror with GROWI で changes editor の対象はありませんでした。",
+    );
+  });
+
+  it("reuses an ancestor prefix mirror for page compare and limits the scope to the selected page", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        throw new Error("missing exact manifest");
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/hello", body: "# old hello\n" },
+            { canonicalPath: "/sample/test", body: "# test\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/hello.md`) {
+        return "# local hello\n";
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/test.md`) {
+        return "# test\n";
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/__sample__.md`) {
+        return "# sample\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId:
+          canonicalPath === "/sample/hello"
+            ? "revision:/sample/hello:001"
+            : `revision:${canonicalPath}:001`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: canonicalPath === "/sample/hello" ? "# remote hello\n" : "# unchanged\n",
+      },
+    }));
+
+    await createCompareLocalWorkFileWithCurrentPageCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.bootstrapEditSession).toHaveBeenCalledTimes(1);
+    expect(deps.bootstrapEditSession).toHaveBeenCalledWith("/sample/hello");
+    expect(deps.openChanges).toHaveBeenCalledWith("GROWI Mirror Diff: /sample/hello", [
+      [
+        {
+          scheme: "file",
+          path: `${createMirrorRootPath("/sample")}/hello.md`,
+          fsPath: `${createMirrorRootPath("/sample")}/hello.md`,
+        },
+        { scheme: "growi", path: "/sample/hello.md" },
+        {
+          scheme: "file",
+          path: `${createMirrorRootPath("/sample")}/hello.md`,
+          fsPath: `${createMirrorRootPath("/sample")}/hello.md`,
+        },
+      ],
+    ]);
+  });
+
+  it("reuses an ancestor prefix mirror for subtree compare and limits the scope to the selected subtree", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`) {
+        throw new Error("missing exact manifest");
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            { canonicalPath: "/sample", body: "# sample\n" },
+            { canonicalPath: "/sample/hello", body: "# hello\n" },
+            { canonicalPath: "/sample/test", body: "# test\n" },
+            { canonicalPath: "/sample/test/child", body: "# old child\n" },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/test/__test__.md`) {
+        return "# test\n";
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/test/child.md`) {
+        return "# local child\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId:
+          canonicalPath === "/sample/test/child"
+            ? "revision:/sample/test/child:001"
+            : `revision:${canonicalPath}:001`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody:
+          canonicalPath === "/sample/test/child" ? "# remote child\n" : "# same\n",
+      },
+    }));
+
+    const results = await createCompareLocalBundleWithGrowiCommand(deps)({
+      uri: createUri("growi", "/sample/test.md"),
+      scope: "subtree",
+    });
+
+    expect(results).toEqual([
+      { canonicalPath: "/sample/test", status: "Unchanged" },
+      { canonicalPath: "/sample/test/child", status: "LocalChanged" },
+    ]);
+    expect(deps.bootstrapEditSession).toHaveBeenCalledTimes(2);
+    expect(deps.bootstrapEditSession).not.toHaveBeenCalledWith("/sample/hello");
+    expect(deps.openChanges).toHaveBeenCalledWith(
+      "GROWI Mirror Diff: /sample/test/*",
+      expect.any(Array),
+    );
+  });
+
+  it("prefers the exact manifest over an ancestor prefix mirror for compare", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
+          { rootCanonicalPath: "/sample/hello" },
+        );
+      }
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/__hello__.md`) {
+        return "# local hello\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/sample/hello",
+        baseRevisionId: "revision:/sample/hello:001",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# remote hello\n",
+      },
+    });
+
+    await createCompareLocalWorkFileWithCurrentPageCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.readLocalFile).not.toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+    );
+    expect(deps.openChanges).toHaveBeenCalledWith(
+      "GROWI Mirror Diff: /sample/hello",
+      expect.any(Array),
+    );
+  });
+
+  it("reads an exact mirror manifest from the legacy instanceKey when the new key is missing", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        throw new Error("missing new manifest");
+      }
+      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
+          { rootCanonicalPath: "/sample/hello" },
+        );
+      }
+      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`) {
+        return "# local hello\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/sample/hello",
+        baseRevisionId: "revision:/sample/hello:001",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# remote hello\n",
+      },
+    });
+
+    const results = await createCompareLocalWorkFileWithCurrentPageCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(results).toEqual([
+      { canonicalPath: "/sample/hello", status: "LocalChanged" },
+    ]);
+    expect(deps.openChanges).toHaveBeenCalledWith(
+      "GROWI Mirror Diff: /sample/hello",
+      expect.any(Array),
+    );
+  });
+
+  it("shows a dedicated error when the ancestor prefix mirror only tracks the page as skipped", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        throw new Error("missing exact manifest");
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return `${JSON.stringify(
+          {
+            version: 1,
+            baseUrl: "https://growi.example.com/",
+            rootCanonicalPath: "/sample",
+            mode: "prefix",
+            exportedAt: "2026-03-09T00:00:00.000Z",
+            pages: [
+              {
+                canonicalPath: "/sample",
+                relativeFilePath: "__sample__.md",
+                pageId: "page:/sample",
+                baseRevisionId: "revision:/sample:001",
+                exportedAt: "2026-03-09T00:00:00.000Z",
+                contentHash: hashBodyForTest("# sample\n"),
+              },
+            ],
+            skippedPages: [
+              {
+                canonicalPath: "/sample/hello",
+                relativeFilePath: "hello.md",
+                reason: "ReservedFileNameCollision",
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`;
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+
+    const results = await createCompareLocalWorkFileWithCurrentPageCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(results).toBeUndefined();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Compare Local Mirror with GROWI を実行できません。prefix mirror を見直してください。",
     );
   });
 
   it("uploads only changed bundle pages and skips unchanged, conflict, and missing remote pages", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === "/workspace/growi-current-set/manifest.json") {
-        return createBundleManifest([
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest(
+          [
+            {
+              canonicalPath: "/team/dev/spec/changed",
+              body: "# remote old\n",
+              baseRevisionId: "revision:/team/dev/spec/changed:001",
+            },
+            {
+              canonicalPath: "/team/dev/spec/unchanged",
+              body: "# remote same\n",
+              baseRevisionId: "revision:/team/dev/spec/unchanged:001",
+            },
+            {
+              canonicalPath: "/team/dev/spec/conflict",
+              body: "# remote old\n",
+              baseRevisionId: "revision:/team/dev/spec/conflict:001",
+            },
+            {
+              canonicalPath: "/team/dev/spec/missing",
+              body: "# remote old\n",
+              baseRevisionId: "revision:/team/dev/spec/missing:001",
+            },
+          ],
           {
-            canonicalPath: "/team/dev/spec/changed",
-            body: "# remote old\n",
-            baseRevisionId: "revision:/team/dev/spec/changed:001",
+            rootCanonicalPath: "/team/dev/spec",
           },
-          {
-            canonicalPath: "/team/dev/spec/unchanged",
-            body: "# remote same\n",
-            baseRevisionId: "revision:/team/dev/spec/unchanged:001",
-          },
-          {
-            canonicalPath: "/team/dev/spec/conflict",
-            body: "# remote old\n",
-            baseRevisionId: "revision:/team/dev/spec/conflict:001",
-          },
-          {
-            canonicalPath: "/team/dev/spec/missing",
-            body: "# remote old\n",
-            baseRevisionId: "revision:/team/dev/spec/missing:001",
-          },
-        ]);
+        );
       }
-      if (filePath.endsWith("team/dev/spec/changed.md")) {
-        return "# local changed\n";
-      }
-      if (filePath.endsWith("team/dev/spec/unchanged.md")) {
+      if (filePath.endsWith("unchanged.md")) {
         return "# remote same\n";
       }
-      if (filePath.endsWith("team/dev/spec/conflict.md")) {
+      if (filePath.endsWith("changed.md")) {
+        return "# local changed\n";
+      }
+      if (filePath.endsWith("conflict.md")) {
         return "# local conflict\n";
       }
-      if (filePath.endsWith("team/dev/spec/missing.md")) {
+      if (filePath.endsWith("missing.md")) {
         return "# local missing\n";
       }
       throw new Error(`unexpected file: ${filePath}`);
@@ -2205,7 +3312,9 @@ describe("bundle commands", () => {
       };
     });
 
-    const results = await createUploadLocalBundleToGrowiCommand(deps)();
+    const results = await createUploadLocalBundleToGrowiCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
 
     expect(results).toEqual([
       { canonicalPath: "/team/dev/spec/changed", status: "Uploaded" },
@@ -2229,7 +3338,9 @@ describe("bundle commands", () => {
     );
 
     const manifestWrite = deps.writeLocalFile.mock.calls.find(
-      ([filePath]) => filePath === "/workspace/growi-current-set/manifest.json",
+      ([filePath]) =>
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`,
     );
     expect(manifestWrite).toBeDefined();
     expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
@@ -2249,13 +3360,163 @@ describe("bundle commands", () => {
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
       [
-        "Upload Local Bundle to GROWI を完了しました。",
+        "Upload Local Mirror to GROWI を完了しました。",
         "Uploaded: /team/dev/spec/changed",
         "Unchanged: /team/dev/spec/unchanged",
         "Conflict: /team/dev/spec/conflict",
         "MissingRemote: /team/dev/spec/missing",
       ].join("\n"),
     );
+  });
+
+  it("reuses an ancestor prefix mirror for page upload and updates only the selected page entry", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        throw new Error("missing exact manifest");
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [
+            {
+              canonicalPath: "/sample/hello",
+              body: "# old hello\n",
+              baseRevisionId: "revision:/sample/hello:001",
+            },
+            {
+              canonicalPath: "/sample/test",
+              body: "# old test\n",
+              baseRevisionId: "revision:/sample/test:001",
+            },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/hello.md`) {
+        return "# local hello\n";
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/test.md`) {
+        return "# old test\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => {
+      if (canonicalPath === "/sample/hello") {
+        const callCount = deps.bootstrapEditSession.mock.calls.filter(
+          ([path]) => path === canonicalPath,
+        ).length;
+        return {
+          ok: true,
+          value: {
+            pageId: "page:/sample/hello",
+            baseRevisionId:
+              callCount === 1
+                ? "revision:/sample/hello:001"
+                : "revision:/sample/hello:002",
+            baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+            baseBody:
+              callCount === 1 ? "# old hello\n" : "# local hello\n",
+          },
+        };
+      }
+      return {
+        ok: true,
+        value: {
+          pageId: `page:${canonicalPath}`,
+          baseRevisionId: `revision:${canonicalPath}:001`,
+          baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+          baseBody: "# old\n",
+        },
+      };
+    });
+
+    await createUploadExportedLocalFileToGrowiCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(deps.writePage).toHaveBeenCalledTimes(1);
+    expect(deps.writePage).toHaveBeenCalledWith(
+      "/sample/hello",
+      "# local hello\n",
+      expect.objectContaining({
+        baseRevisionId: "revision:/sample/hello:001",
+      }),
+    );
+    const manifestWrite = deps.writeLocalFile.mock.calls.find(
+      ([filePath]) => filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+    );
+    expect(manifestWrite).toBeDefined();
+    expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
+      pages: expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: "/sample/hello",
+          baseRevisionId: "revision:/sample/hello:002",
+          contentHash: hashBodyForTest("# local hello\n"),
+        }),
+        expect.objectContaining({
+          canonicalPath: "/sample/test",
+          baseRevisionId: "revision:/sample/test:001",
+          contentHash: hashBodyForTest("# old test\n"),
+        }),
+      ]),
+    });
+  });
+
+  it("migrates an exact legacy-key mirror to the new instanceKey on upload", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        throw new Error("missing new manifest");
+      }
+      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+        return createBundleManifest(
+          [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
+          { rootCanonicalPath: "/sample/hello" },
+        );
+      }
+      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`) {
+        return "# local hello\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockImplementation(async () => ({
+      ok: true,
+      value: {
+        pageId: "page:/sample/hello",
+        baseRevisionId:
+          deps.bootstrapEditSession.mock.calls.length === 1
+            ? "revision:/sample/hello:001"
+            : "revision:/sample/hello:002",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody:
+          deps.bootstrapEditSession.mock.calls.length === 1
+            ? "# old hello\n"
+            : "# local hello\n",
+      },
+    }));
+
+    const results = await createUploadExportedLocalFileToGrowiCommand(deps)(
+      createUri("growi", "/sample/hello.md"),
+    );
+
+    expect(results).toEqual([
+      { canonicalPath: "/sample/hello", status: "Uploaded" },
+    ]);
+    expect(
+      deps.writeLocalFile.mock.calls.some(
+        ([filePath]) =>
+          filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
+      ),
+    ).toBe(true);
+    expect(
+      deps.deleteLocalPath.mock.calls.some(
+        ([filePath]) =>
+          filePath ===
+          `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
+      ),
+    ).toBe(true);
   });
 });
 

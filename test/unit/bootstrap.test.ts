@@ -97,6 +97,14 @@ import { GROWI_REVISION_SCHEME } from "../../src/vscode/revisionModel";
 
 const API_NOT_SUPPORTED_MESSAGE =
   "編集開始 API が未対応のため Start Edit を実行できません。";
+const BASE_URL_NOT_CONFIGURED_MESSAGE =
+  "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
+const API_TOKEN_NOT_CONFIGURED_MESSAGE =
+  "GROWI API token が未設定です。先に Configure API Token を実行してください。";
+const INVALID_API_TOKEN_MESSAGE =
+  "GROWI API token が無効です。Configure API Token を確認してください。";
+const PERMISSION_DENIED_MESSAGE =
+  "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。";
 const CONNECTION_FAILED_MESSAGE =
   "GROWI への接続に失敗したため Start Edit を実行できませんでした。";
 const NOT_FOUND_MESSAGE =
@@ -269,7 +277,7 @@ describe("bootstrap extension entrypoint", () => {
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.showLocalRoundTripActions,
+      GROWI_COMMANDS.showLocalMirrorActions,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -549,38 +557,21 @@ describe("bootstrap extension entrypoint", () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
-  it("maps baseUrl missing, missing token, and malformed payload to ApiNotSupported", async () => {
+  it("maps baseUrl missing and missing token before calling API", async () => {
     const showErrorMessageMock = vi.mocked(vscode.window.showErrorMessage);
 
     const baseUrlMissing = createContext({ baseUrl: undefined });
     activate(baseUrlMissing.context);
     await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
     expect(showErrorMessageMock).toHaveBeenLastCalledWith(
-      API_NOT_SUPPORTED_MESSAGE,
+      BASE_URL_NOT_CONFIGURED_MESSAGE,
     );
 
     const tokenMissing = createContext({ apiToken: undefined });
     activate(tokenMissing.context);
     await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
     expect(showErrorMessageMock).toHaveBeenLastCalledWith(
-      API_NOT_SUPPORTED_MESSAGE,
-    );
-
-    const malformedPayload = createContext({
-      fetchMock: vi.fn().mockResolvedValueOnce(
-        createJsonResponse({
-          page: {
-            _id: "page-001",
-            revision: {},
-            updatedAt: "2026-03-08T09:00:00.000Z",
-          },
-        }),
-      ),
-    });
-    activate(malformedPayload.context);
-    await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
-    expect(showErrorMessageMock).toHaveBeenLastCalledWith(
-      API_NOT_SUPPORTED_MESSAGE,
+      API_TOKEN_NOT_CONFIGURED_MESSAGE,
     );
   });
 
@@ -637,6 +628,55 @@ describe("bootstrap extension entrypoint", () => {
         ),
     });
     activate(methodNotAllowed.context);
+    await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
+    expect(showErrorMessageMock).toHaveBeenLastCalledWith(
+      API_NOT_SUPPORTED_MESSAGE,
+    );
+  });
+
+  it("maps 401 and 403 to auth-specific messages", async () => {
+    const showErrorMessageMock = vi.mocked(vscode.window.showErrorMessage);
+
+    const invalidToken = createContext({
+      fetchMock: vi
+        .fn()
+        .mockResolvedValueOnce(
+          createJsonResponse({ error: "unauthorized" }, 401),
+        ),
+    });
+    activate(invalidToken.context);
+    await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
+    expect(showErrorMessageMock).toHaveBeenLastCalledWith(
+      INVALID_API_TOKEN_MESSAGE,
+    );
+
+    const permissionDenied = createContext({
+      fetchMock: vi
+        .fn()
+        .mockResolvedValueOnce(createJsonResponse({ error: "forbidden" }, 403)),
+    });
+    activate(permissionDenied.context);
+    await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
+    expect(showErrorMessageMock).toHaveBeenLastCalledWith(
+      PERMISSION_DENIED_MESSAGE,
+    );
+  });
+
+  it("maps malformed payload to ApiNotSupported", async () => {
+    const showErrorMessageMock = vi.mocked(vscode.window.showErrorMessage);
+
+    const malformedPayload = createContext({
+      fetchMock: vi.fn().mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-001",
+            revision: {},
+            updatedAt: "2026-03-08T09:00:00.000Z",
+          },
+        }),
+      ),
+    });
+    activate(malformedPayload.context);
     await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
     expect(showErrorMessageMock).toHaveBeenLastCalledWith(
       API_NOT_SUPPORTED_MESSAGE,
@@ -764,9 +804,9 @@ describe("bootstrap extension entrypoint", () => {
     activate(context);
 
     showQuickPickMock.mockResolvedValueOnce({
-      label: "配下ページをローカルへダウンロード",
-      description: "growi-current-set/ に保存",
-      command: GROWI_COMMANDS.downloadCurrentPageSetToLocalBundle,
+      label: "現在ページ配下の mirror を作成",
+      description: "prefix mirror を生成",
+      command: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
     } as never);
 
     await resolveRegisteredCommand(GROWI_COMMANDS.showCurrentPageActions)();
@@ -784,14 +824,14 @@ describe("bootstrap extension entrypoint", () => {
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
         {
-          label: "現在ページをローカルへダウンロード",
-          description: "growi-current.md に保存",
-          command: GROWI_COMMANDS.downloadCurrentPageToLocalFile,
+          label: "現在ページのローカルミラーを同期",
+          description: "__<page>__.md と .growi-mirror.json を作成または更新",
+          command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "配下ページをローカルへダウンロード",
-          description: "growi-current-set/ に保存",
-          command: GROWI_COMMANDS.downloadCurrentPageSetToLocalBundle,
+          label: "現在ページ配下をローカルミラーに同期",
+          description: "prefix mirror を作成または更新",
+          command: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
         },
       ],
       {
@@ -799,7 +839,7 @@ describe("bootstrap extension entrypoint", () => {
       },
     );
     expect(executeCommandMock).toHaveBeenLastCalledWith(
-      GROWI_COMMANDS.downloadCurrentPageSetToLocalBundle,
+      GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
       expect.objectContaining({
         scheme: "growi",
         path: "/team/dev/spec.md",
@@ -807,49 +847,44 @@ describe("bootstrap extension entrypoint", () => {
     );
   });
 
-  it("shows local round trip actions quick pick and delegates to existing commands", async () => {
+  it("shows local mirror actions quick pick and delegates to existing commands", async () => {
     const showQuickPickMock = vi.mocked(vscode.window.showQuickPick);
     const executeCommandMock = vi.mocked(vscode.commands.executeCommand);
     const { context } = createContext();
     activate(context);
 
     showQuickPickMock.mockResolvedValueOnce({
-      label: "ローカルを配下ページへ反映",
-      description: "growi-current-set/ を使用",
-      command: GROWI_COMMANDS.uploadLocalBundleToGrowi,
+      label: "ローカルミラーを反映",
+      description: "changed pages のみ送信",
+      command: GROWI_COMMANDS.uploadLocalMirrorToGrowi,
     } as never);
 
-    await resolveRegisteredCommand(GROWI_COMMANDS.showLocalRoundTripActions)();
+    await resolveRegisteredCommand(GROWI_COMMANDS.showLocalMirrorActions)();
 
     expect(showQuickPickMock).toHaveBeenCalledWith(
       [
         {
-          label: "ローカルと現在ページを比較",
-          description: "growi-current.md を使用",
-          command: GROWI_COMMANDS.compareLocalWorkFileWithCurrentPage,
+          label: "現在ページのローカルミラーを同期",
+          description: "mirror が無ければ作成、あれば更新",
+          command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "ローカルを現在ページへ反映",
-          description: "growi-current.md を使用",
-          command: GROWI_COMMANDS.uploadExportedLocalFileToGrowi,
+          label: "ローカルミラーを比較",
+          description: "mirror manifest を使用",
+          command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
         {
-          label: "ローカルと配下ページを比較",
-          description: "growi-current-set/ を使用",
-          command: GROWI_COMMANDS.compareLocalBundleWithGrowi,
-        },
-        {
-          label: "ローカルを配下ページへ反映",
-          description: "growi-current-set/ を使用",
-          command: GROWI_COMMANDS.uploadLocalBundleToGrowi,
+          label: "ローカルミラーを反映",
+          description: "changed pages のみ送信",
+          command: GROWI_COMMANDS.uploadLocalMirrorToGrowi,
         },
       ],
       {
-        placeHolder: "ローカルファイルに対して実行する操作を選択してください。",
+        placeHolder: "ローカルミラーに対して実行する操作を選択してください。",
       },
     );
     expect(executeCommandMock).toHaveBeenLastCalledWith(
-      GROWI_COMMANDS.uploadLocalBundleToGrowi,
+      GROWI_COMMANDS.uploadLocalMirrorToGrowi,
       expect.objectContaining({
         scheme: "growi",
         path: "/team/dev/spec.md",

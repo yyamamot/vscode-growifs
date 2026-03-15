@@ -1,3 +1,8 @@
+import type {
+  GrowiAccessFailureReason,
+  GrowiReadFailureReason,
+} from "./fsProvider";
+
 export const GROWI_REVISION_SCHEME = "growi-revision";
 
 export type GrowiRevisionSummary = {
@@ -8,11 +13,11 @@ export type GrowiRevisionSummary = {
 
 export type GrowiRevisionListResult =
   | { ok: true; revisions: readonly GrowiRevisionSummary[] }
-  | { ok: false; reason: "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiAccessFailureReason };
 
 export type GrowiRevisionReadResult =
   | { ok: true; body: string }
-  | { ok: false; reason: "NotFound" | "ApiNotSupported" | "ConnectionFailed" };
+  | { ok: false; reason: GrowiReadFailureReason };
 
 export type GrowiRevisionUriLike = {
   scheme: string;
