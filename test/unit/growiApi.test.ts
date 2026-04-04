@@ -131,6 +131,7 @@ describe("createGrowiApiAdapter", () => {
       body: "# body",
       pageInfo: {
         pageId: "page-1",
+        revisionId: "rev-1",
         url: "https://growi.example.com/team/dev/spec",
         path: "/team/dev/spec",
         lastUpdatedBy: "alice",
@@ -165,6 +166,7 @@ describe("createGrowiApiAdapter", () => {
       canonicalPath: "/team/dev/spec",
       pageInfo: {
         pageId: "0123456789abcdefabcdef01",
+        revisionId: "rev-1",
         url: "https://growi.example.com/team/dev/spec",
         path: "/team/dev/spec",
         lastUpdatedBy: "alice",
@@ -310,7 +312,9 @@ describe("createGrowiApiAdapter", () => {
   });
 
   it("returns PermissionDenied for page snapshot 403", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 403 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const adapter = createGrowiApiAdapter();
@@ -330,7 +334,9 @@ describe("createGrowiApiAdapter", () => {
   });
 
   it("returns InvalidApiToken for page snapshot 401", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const adapter = createGrowiApiAdapter();
@@ -350,7 +356,9 @@ describe("createGrowiApiAdapter", () => {
   });
 
   it("returns PermissionDenied for page lookup 403", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 403 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const adapter = createGrowiApiAdapter();
@@ -364,7 +372,9 @@ describe("createGrowiApiAdapter", () => {
   });
 
   it("returns InvalidApiToken for page lookup 401", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const adapter = createGrowiApiAdapter();
@@ -721,6 +731,459 @@ describe("createGrowiApiAdapter", () => {
     expect(result).toEqual({ ok: false });
   });
 
+  it("creates a page successfully with minimal response fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJsonResponse(
+        {
+          page: {
+            _id: "page-1",
+            path: "/team/dev/new-page",
+            updatedAt: "2026-03-08T10:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+            revision: {
+              _id: "rev-1",
+            },
+          },
+        },
+        201,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.createPage(
+      "/team/dev/new-page",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      pageInfo: {
+        pageId: "page-1",
+        revisionId: "rev-1",
+        url: "https://growi.example.com/team/dev/new-page",
+        path: "/team/dev/new-page",
+        lastUpdatedBy: "alice",
+        lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [requestUrl, requestInit] = fetchMock.mock.calls[0] as [
+      URL,
+      RequestInit,
+    ];
+    expect(requestUrl.pathname).toBe("/_api/v3/page");
+    expect(requestInit.method).toBe("POST");
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      body: "",
+      path: "/team/dev/new-page",
+    });
+  });
+
+  it.each([
+    [
+      401,
+      createJsonResponse({ error: "Unauthorized" }, 401),
+      "InvalidApiToken",
+    ],
+    [403, createJsonResponse({ error: "Forbidden" }, 403), "PermissionDenied"],
+    [404, createJsonResponse({ error: "ParentPageNotFound" }, 404), "NotFound"],
+    [
+      409,
+      createJsonResponse({ error: "PageAlreadyExists" }, 409),
+      "AlreadyExists",
+    ],
+    [405, new Response(null, { status: 405 }), "ApiNotSupported"],
+  ] as const)("classifies create page %s responses as %s", async (_status, response, reason) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.createPage(
+      "/team/dev/new-page",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toMatchObject({ ok: false, reason });
+  });
+
+  it("classifies create page 404 without parent-missing payload as ApiNotSupported", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse({ error: "NotFound" }, 404));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.createPage(
+      "/team/dev/new-page",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it("returns ApiNotSupported for create page login redirect", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, {
+        headers: { location: "/login" },
+        status: 302,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.createPage(
+      "/team/dev/new-page",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it("returns ConnectionFailed when create page fetch rejects", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.createPage(
+      "/team/dev/new-page",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
+  });
+
+  it("deletes a subtree page successfully with minimal payload", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse({ ok: true }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "subtree",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: true });
+    const [requestUrl, requestInit] = fetchMock.mock.calls[0] as [
+      URL,
+      RequestInit,
+    ];
+    expect(requestUrl.pathname).toBe("/_api/v3/pages/delete");
+    expect(requestInit.method).toBe("POST");
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      isRecursively: true,
+      pageIdToRevisionIdMap: {
+        "page-1": "revision-1",
+      },
+    });
+  });
+
+  it("omits false delete flags for single-page delete", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse({ ok: true }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: true });
+    const [, requestInit] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      pageIdToRevisionIdMap: {
+        "page-1": "revision-1",
+      },
+    });
+  });
+
+  it.each([
+    [
+      401,
+      createJsonResponse({ error: "Unauthorized" }, 401),
+      "InvalidApiToken",
+    ],
+    [403, createJsonResponse({ error: "Forbidden" }, 403), "PermissionDenied"],
+    [404, createJsonResponse({ error: "PageNotFound" }, 404), "NotFound"],
+    [405, new Response(null, { status: 405 }), "ApiNotSupported"],
+  ] as const)("classifies delete page %s responses as %s", async (_status, response, reason) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toMatchObject({ ok: false, reason });
+  });
+
+  it("maps child-page rejection to HasChildren", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse({ error: "PageHasChildren" }, 400));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "HasChildren" });
+  });
+
+  it("returns rejection detail for unexpected delete failure status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse({ error: "Invalid state" }, 400));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "Rejected",
+      message: "Delete Page request was rejected (HTTP 400: Invalid state).",
+    });
+  });
+
+  it("returns ConnectionFailed when delete page fetch rejects", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
+  });
+
+  it("renames a page successfully with minimal response fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJsonResponse(
+        {
+          page: {
+            _id: "page-1",
+            path: "/team/dev/renamed-page",
+            updatedAt: "2026-03-08T10:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+            revision: {
+              _id: "revision-1",
+            },
+          },
+        },
+        200,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "subtree",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      canonicalPath: "/team/dev/renamed-page",
+      pageInfo: {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        url: "https://growi.example.com/team/dev/renamed-page",
+        path: "/team/dev/renamed-page",
+        lastUpdatedBy: "alice",
+        lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+      },
+    });
+    const [requestUrl, requestInit] = fetchMock.mock.calls[0] as [
+      URL,
+      RequestInit,
+    ];
+    expect(requestUrl.pathname).toBe("/_api/v3/pages/rename");
+    expect(requestInit.method).toBe("PUT");
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      isRecursively: true,
+      isRenameRedirect: false,
+      newPagePath: "/team/dev/renamed-page",
+      pageId: "page-1",
+      path: "/team/dev/spec",
+      revisionId: "revision-1",
+      updateMetadata: true,
+    });
+  });
+
+  it.each([
+    [
+      401,
+      createJsonResponse({ error: "Unauthorized" }, 401),
+      "InvalidApiToken",
+    ],
+    [403, createJsonResponse({ error: "Forbidden" }, 403), "PermissionDenied"],
+    [
+      404,
+      createJsonResponse({ error: "ParentPageNotFound" }, 404),
+      "ParentNotFound",
+    ],
+    [
+      409,
+      createJsonResponse({ error: "PageAlreadyExists" }, 409),
+      "AlreadyExists",
+    ],
+    [405, new Response(null, { status: 405 }), "ApiNotSupported"],
+  ] as const)("classifies rename page %s responses as %s", async (_status, response, reason) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toMatchObject({ ok: false, reason });
+  });
+
+  it("returns rejection detail for unexpected rename failure status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse({ error: "Invalid path" }, 400));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "Rejected",
+      message: "Rename Page request was rejected (HTTP 400: Invalid path).",
+    });
+  });
+
+  it("returns detailed unsupported message for rename page 405", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 405 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "ApiNotSupported",
+      message:
+        "Rename Page endpoint returned HTTP 405. The connected GROWI may not support PUT /_api/v3/pages/rename.",
+    });
+  });
+
+  it("returns ConnectionFailed when rename page fetch rejects", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
+  });
+
   it("writes a page successfully with minimal response fields", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       createJsonResponse({
@@ -817,6 +1280,7 @@ describe("createGrowiApiAdapter", () => {
       ok: true,
       pageInfo: {
         pageId: "page-1",
+        revisionId: "rev-2",
         url: "https://growi.example.com/team/dev/spec",
         path: "/team/dev/spec",
         lastUpdatedBy: "bob",

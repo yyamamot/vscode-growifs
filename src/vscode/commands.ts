@@ -12,6 +12,9 @@ import {
 import type {
   GrowiAccessFailureReason,
   GrowiEditSession,
+  GrowiPageCreateResult,
+  GrowiPageDeleteResult,
+  GrowiPageRenameResult,
   GrowiPageWriteResult,
   GrowiReadFailureReason,
 } from "./fsProvider";
@@ -22,7 +25,6 @@ import {
   buildMirrorManifestPathWithInstanceKey,
   buildMirrorPageFilePath,
   buildMirrorPageFilePathWithInstanceKey,
-  buildMirrorRootPathWithInstanceKey,
   listMirrorInstanceKeys,
   type MirrorManifest,
   type MirrorManifestPage,
@@ -44,11 +46,17 @@ export const GROWI_COMMANDS = {
   configureApiToken: "growi.configureApiToken",
   openReadme: "growi.openReadme",
   addPrefix: "growi.addPrefix",
+  createPage: "growi.createPage",
+  deletePage: "growi.deletePage",
+  renamePage: "growi.renamePage",
   clearPrefixes: "growi.clearPrefixes",
   openPage: "growi.openPage",
   openPrefixRootPage: "growi.openPrefixRootPage",
   openDirectoryPage: "growi.openDirectoryPage",
   explorerOpenPageItem: "growi.explorerOpenPageItem",
+  explorerCreatePageHere: "growi.explorerCreatePageHere",
+  explorerRenamePage: "growi.explorerRenamePage",
+  explorerDeletePage: "growi.explorerDeletePage",
   explorerRefreshCurrentPage: "growi.explorerRefreshCurrentPage",
   explorerShowBacklinks: "growi.explorerShowBacklinks",
   explorerShowCurrentPageInfo: "growi.explorerShowCurrentPageInfo",
@@ -152,8 +160,23 @@ export interface CommandDeps {
     | { ok: true; paths: string[] }
     | { ok: false; reason: GrowiAccessFailureReason }
   >;
+  createPage(canonicalPath: string): Promise<GrowiPageCreateResult>;
+  deletePage(input: {
+    pageId: string;
+    revisionId: string;
+    canonicalPath: string;
+    mode: "page" | "subtree";
+  }): Promise<GrowiPageDeleteResult>;
+  renamePage(input: {
+    pageId: string;
+    revisionId: string;
+    currentCanonicalPath: string;
+    targetCanonicalPath: string;
+    mode: "page" | "subtree";
+  }): Promise<GrowiPageRenameResult>;
   listRevisions(pageId: string): Promise<GrowiRevisionListResult>;
   findOpenTextDocument(path: string): { isDirty: boolean } | undefined;
+  findOpenTextDocumentByUri(uri: UriLike): { isDirty: boolean } | undefined;
   openUri(uri: string): Promise<void>;
   openLocalFile(path: string): Promise<void>;
   openDiff(leftUri: UriLike, rightUri: UriLike, title: string): Promise<void>;
@@ -182,7 +205,16 @@ export interface CommandDeps {
     revisionId: string,
   ): Promise<GrowiRevisionReadResult>;
   readDirectory(uri: string): Promise<void>;
+  reopenRenamedPages(
+    oldCanonicalPath: string,
+    newCanonicalPath: string,
+  ): Promise<{ attempted: boolean; hasDirty: boolean; hasFailed: boolean }>;
+  closeDeletedPages(
+    canonicalPath: string,
+    mode: "page" | "subtree",
+  ): Promise<{ attempted: boolean; hasFailed: boolean }>;
   refreshPrefixTree(): void;
+  clearSubtreeState(canonicalPrefixPath: string): void;
   seedRevisionContent(uri: UriLike, body: string): void;
   showErrorMessage(message: string): void;
   showEndEditDiscardConfirmation(): Promise<
@@ -195,6 +227,16 @@ export interface CommandDeps {
   showClearPrefixesConfirmation(
     baseUrl: string,
     prefixes: readonly string[],
+  ): Promise<boolean>;
+  showRenameScopeConfirmation(
+    canonicalPath: string,
+  ): Promise<"single" | "subtree" | "cancel">;
+  showDeleteScopeConfirmation(
+    canonicalPath: string,
+  ): Promise<"single" | "subtree" | "cancel">;
+  showDeletePageConfirmation(
+    canonicalPath: string,
+    mode: "page" | "subtree",
   ): Promise<boolean>;
   showQuickPick(
     items: readonly (
@@ -230,6 +272,7 @@ export interface UriLike {
 
 export interface CurrentPageInfo {
   pageId: string;
+  revisionId?: string;
   url: string;
   path: string;
   lastUpdatedBy: string;
@@ -428,6 +471,58 @@ const ADD_PREFIX_API_NOT_SUPPORTED_MESSAGE =
   "pageId 解決 API が未対応のため Prefix を追加できませんでした。";
 const ADD_PREFIX_CONNECTION_FAILED_MESSAGE =
   "GROWI への接続に失敗したため Prefix を追加できませんでした。";
+const CREATE_PAGE_INVALID_PATH_MESSAGE =
+  "Create Page には先頭 / 付きのページパスを入力してください。";
+const CREATE_PAGE_ALREADY_EXISTS_MESSAGE =
+  "指定した path のページは既に存在します。";
+const CREATE_PAGE_PARENT_NOT_FOUND_MESSAGE =
+  "指定した親ページが見つからないため Create Page を実行できませんでした。";
+const CREATE_PAGE_API_NOT_SUPPORTED_MESSAGE =
+  "ページ作成 API が未対応のため Create Page を実行できませんでした。";
+const CREATE_PAGE_CONNECTION_FAILED_MESSAGE =
+  "GROWI への接続に失敗したため Create Page を実行できませんでした。";
+const DELETE_PAGE_INVALID_TARGET_MESSAGE =
+  "Delete Page は現在開いている growi: ページでのみ実行できます。";
+const DELETE_PAGE_UNAVAILABLE_MESSAGE =
+  "現在ページメタ情報を取得できないため Delete Page を実行できません。ページを開き直して再実行してください。";
+const DELETE_PAGE_DIRTY_MESSAGE =
+  "未保存の変更があるため Delete Page を実行できません。先に保存してください。";
+const DELETE_PAGE_HAS_CHILDREN_MESSAGE =
+  "子ページがあるためこのページのみは削除できません。配下も含めて削除してください。";
+const DELETE_PAGE_NOT_FOUND_MESSAGE =
+  "対象ページが見つからないため Delete Page を実行できませんでした。";
+const DELETE_PAGE_API_NOT_SUPPORTED_MESSAGE =
+  "ページ削除 API が未対応のため Delete Page を実行できませんでした。";
+const DELETE_PAGE_CONNECTION_FAILED_MESSAGE =
+  "GROWI への接続に失敗したため Delete Page を実行できませんでした。";
+const DELETE_PAGE_CLOSE_FAILED_WARNING_MESSAGE =
+  "Delete Page は成功しましたが、一部ページタブを閉じられませんでした。手動で閉じてください。";
+const RENAME_PAGE_INVALID_TARGET_MESSAGE =
+  "Rename Page は現在開いている growi: ページでのみ実行できます。";
+const RENAME_PAGE_UNAVAILABLE_MESSAGE =
+  "現在ページメタ情報を取得できないため Rename Page を実行できません。ページを開き直して再実行してください。";
+const RENAME_PAGE_DIRTY_MESSAGE =
+  "未保存の変更があるため Rename Page を実行できません。先に保存してください。";
+const RENAME_PAGE_INVALID_PATH_MESSAGE =
+  "Rename Page には先頭 / 付きのページパスを入力してください。";
+const RENAME_PAGE_SAME_PATH_MESSAGE =
+  "現在の path と同じため Rename Page は実行しませんでした。";
+const RENAME_PAGE_DESCENDANT_PATH_MESSAGE =
+  "現在ページ配下の path へは Rename Page を実行できません。別の path を入力してください。";
+const RENAME_PAGE_ALREADY_EXISTS_MESSAGE =
+  "同じ path のページが既に存在します。";
+const RENAME_PAGE_NOT_FOUND_MESSAGE =
+  "対象ページが見つからないため Rename Page を実行できませんでした。";
+const RENAME_PAGE_PARENT_NOT_FOUND_MESSAGE =
+  "指定した親ページが見つからないため Rename Page を実行できませんでした。";
+const RENAME_PAGE_API_NOT_SUPPORTED_MESSAGE =
+  "ページ名変更 API が未対応のため Rename Page を実行できませんでした。";
+const RENAME_PAGE_CONNECTION_FAILED_MESSAGE =
+  "GROWI への接続に失敗したため Rename Page を実行できませんでした。";
+const RENAME_PAGE_REOPEN_DIRTY_WARNING_MESSAGE =
+  "Rename Page は成功しましたが、未保存変更のあるページは自動で開き直しませんでした。新しい path を開き直してください。";
+const RENAME_PAGE_REOPEN_FAILED_WARNING_MESSAGE =
+  "Rename Page は成功しましたが、一部ページの開き直しに失敗しました。新しい path を開き直してください。";
 const CLEAR_PREFIXES_NO_TARGET_MESSAGE =
   "現在の接続先に削除対象の Prefix はありません。";
 const CLEAR_PREFIXES_SUCCESS_MESSAGE =
@@ -554,7 +649,8 @@ const REFRESH_LOCAL_MIRROR_BASE_URL_MISMATCH_MESSAGE =
 const REFRESH_LOCAL_MIRROR_LOCAL_CHANGES_MESSAGE =
   "local changed があるため Refresh Local Mirror を実行できません。Compare Local Mirror with GROWI または Upload Local Mirror to GROWI を先に実行してください。";
 const REFRESH_LOCAL_MIRROR_SUCCESS_MESSAGE = "Local Mirror を再取得しました。";
-const SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION = "mirror が無ければ作成、あれば更新";
+const SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION =
+  "mirror が無ければ作成、あれば更新";
 const COMPARE_LOCAL_MIRROR_DESCRIPTION = "mirror manifest を使用";
 const UPLOAD_LOCAL_MIRROR_DESCRIPTION = "changed pages のみ送信";
 
@@ -588,7 +684,7 @@ function buildPreferredMirrorInstanceKey(baseUrl: string): string {
   return buildInstanceKey(baseUrl);
 }
 
-function buildLegacyMirrorInstanceKey(baseUrl: string): string {
+function _buildLegacyMirrorInstanceKey(baseUrl: string): string {
   return buildLegacyInstanceKey(baseUrl);
 }
 
@@ -725,7 +821,9 @@ async function migrateMirrorRootIfNeeded(
 }
 
 function listAncestorCanonicalPaths(canonicalPath: string): string[] {
-  const segments = canonicalPath.split("/").filter((segment) => segment.length > 0);
+  const segments = canonicalPath
+    .split("/")
+    .filter((segment) => segment.length > 0);
   const ancestors: string[] = [];
   for (let length = segments.length - 1; length >= 1; length -= 1) {
     ancestors.push(`/${segments.slice(0, length).join("/")}`);
@@ -810,10 +908,7 @@ async function exportPageIntoExistingPrefixMirror(
     canonicalPath: string;
     writeFailedMessage: string;
   },
-): Promise<
-  | { handled: false }
-  | { handled: true; manifest?: MirrorManifest }
-> {
+): Promise<{ handled: false } | { handled: true; manifest?: MirrorManifest }> {
   const reusable = await findReusableAncestorPrefixMirror(deps, {
     workspaceRoot: input.workspaceRoot,
     baseUrl: input.baseUrl,
@@ -827,7 +922,7 @@ async function exportPageIntoExistingPrefixMirror(
     return { handled: true };
   }
 
-  const localFilePath = buildMirrorLocalFilePath(
+  const _localFilePath = buildMirrorLocalFilePath(
     input.workspaceRoot,
     input.baseUrl,
     reusable.manifest.rootCanonicalPath,
@@ -840,7 +935,9 @@ async function exportPageIntoExistingPrefixMirror(
     reusable.page.relativeFilePath,
   );
   if (deps.findOpenTextDocument(sourceLocalFilePath)?.isDirty) {
-    deps.showErrorMessage(DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE);
+    deps.showErrorMessage(
+      DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE,
+    );
     return { handled: true };
   }
 
@@ -889,9 +986,14 @@ async function exportPageIntoExistingPrefixMirror(
       sourceInstanceKey: reusable.instanceKey,
       manifest: updatedManifest,
     });
-    await deps.writeLocalFile(targetManifestPath, serializeMirrorManifest(updatedManifest));
+    await deps.writeLocalFile(
+      targetManifestPath,
+      serializeMirrorManifest(updatedManifest),
+    );
     await deps.openLocalFile(targetLocalFilePath);
-    deps.showInformationMessage(DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SUCCESS_MESSAGE);
+    deps.showInformationMessage(
+      DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SUCCESS_MESSAGE,
+    );
     return { handled: true, manifest: updatedManifest };
   } catch {
     deps.showErrorMessage(input.writeFailedMessage);
@@ -907,10 +1009,7 @@ async function exportPrefixIntoExistingPrefixMirror(
     canonicalPath: string;
     writeFailedMessage: string;
   },
-): Promise<
-  | { handled: false }
-  | { handled: true; manifest?: MirrorManifest }
-> {
+): Promise<{ handled: false } | { handled: true; manifest?: MirrorManifest }> {
   const reusable = await findReusableAncestorPrefixMirror(deps, {
     workspaceRoot: input.workspaceRoot,
     baseUrl: input.baseUrl,
@@ -967,7 +1066,9 @@ async function exportPrefixIntoExistingPrefixMirror(
 
   try {
     for (const plannedPage of plannedPages.pages) {
-      const snapshot = await deps.bootstrapEditSession(plannedPage.canonicalPath);
+      const snapshot = await deps.bootstrapEditSession(
+        plannedPage.canonicalPath,
+      );
       if (!snapshot.ok) {
         deps.showErrorMessage(mapBundleSnapshotFailureToMessage(snapshot));
         return { handled: true };
@@ -992,10 +1093,14 @@ async function exportPrefixIntoExistingPrefixMirror(
     const previousTrackedPaths = new Set(
       [
         ...reusable.manifest.pages
-          .filter((page) => isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath))
+          .filter((page) =>
+            isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+          )
           .map((page) => page.relativeFilePath),
         ...(reusable.manifest.skippedPages ?? [])
-          .filter((page) => isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath))
+          .filter((page) =>
+            isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+          )
           .map((page) => page.relativeFilePath),
       ].map((relativeFilePath) =>
         buildMirrorLocalFilePathWithInstanceKey(
@@ -1024,7 +1129,8 @@ async function exportPrefixIntoExistingPrefixMirror(
       exportedAt,
       pages: [
         ...reusable.manifest.pages.filter(
-          (page) => !isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+          (page) =>
+            !isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
         ),
         ...updatedSubtreePages,
       ],
@@ -1033,7 +1139,10 @@ async function exportPrefixIntoExistingPrefixMirror(
             skippedPages: [
               ...(reusable.manifest.skippedPages ?? []).filter(
                 (page) =>
-                  !isWithinCanonicalSubtree(page.canonicalPath, input.canonicalPath),
+                  !isWithinCanonicalSubtree(
+                    page.canonicalPath,
+                    input.canonicalPath,
+                  ),
               ),
               ...plannedPages.skippedPages,
             ],
@@ -1056,7 +1165,10 @@ async function exportPrefixIntoExistingPrefixMirror(
       await deps.deleteLocalPath(stalePath);
     }
 
-    await deps.writeLocalFile(targetManifestPath, serializeMirrorManifest(updatedManifest));
+    await deps.writeLocalFile(
+      targetManifestPath,
+      serializeMirrorManifest(updatedManifest),
+    );
     await deps.openLocalFile(
       buildMirrorLocalFilePath(
         input.workspaceRoot,
@@ -1110,7 +1222,8 @@ function formatSkippedMirrorPagesSummary(
   return [
     "Local Mirror では一部ページを保存しませんでした。",
     ...skippedPages.map(
-      (page) => `${page.reason}: ${page.canonicalPath} -> ${page.relativeFilePath}`,
+      (page) =>
+        `${page.reason}: ${page.canonicalPath} -> ${page.relativeFilePath}`,
     ),
   ].join("\n");
 }
@@ -1165,6 +1278,109 @@ function mapReadFailureReasonToMessage(
   return mapAccessFailureReasonToMessage(reason, messages);
 }
 
+type CreatePageFailureReason = Exclude<
+  Exclude<GrowiPageCreateResult, { ok: true }>["reason"],
+  undefined
+>;
+
+function mapCreatePageFailureReasonToMessage(
+  reason: CreatePageFailureReason,
+): string {
+  if (reason === "BaseUrlNotConfigured") {
+    return GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE;
+  }
+  if (reason === "ApiTokenNotConfigured") {
+    return GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE;
+  }
+  if (reason === "InvalidApiToken") {
+    return GENERIC_INVALID_API_TOKEN_MESSAGE;
+  }
+  if (reason === "PermissionDenied") {
+    return GENERIC_PERMISSION_DENIED_MESSAGE;
+  }
+  if (reason === "NotFound") {
+    return CREATE_PAGE_PARENT_NOT_FOUND_MESSAGE;
+  }
+  if (reason === "AlreadyExists") {
+    return CREATE_PAGE_ALREADY_EXISTS_MESSAGE;
+  }
+  if (reason === "ApiNotSupported") {
+    return CREATE_PAGE_API_NOT_SUPPORTED_MESSAGE;
+  }
+  return CREATE_PAGE_CONNECTION_FAILED_MESSAGE;
+}
+
+function mapDeletePageFailureReasonToMessage(
+  result: Exclude<GrowiPageDeleteResult, { ok: true }>,
+): string {
+  const { reason } = result;
+  if (reason === "BaseUrlNotConfigured") {
+    return GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE;
+  }
+  if (reason === "ApiTokenNotConfigured") {
+    return GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE;
+  }
+  if (reason === "InvalidApiToken") {
+    return GENERIC_INVALID_API_TOKEN_MESSAGE;
+  }
+  if (reason === "PermissionDenied") {
+    return GENERIC_PERMISSION_DENIED_MESSAGE;
+  }
+  if (reason === "NotFound") {
+    return DELETE_PAGE_NOT_FOUND_MESSAGE;
+  }
+  if (reason === "HasChildren") {
+    return DELETE_PAGE_HAS_CHILDREN_MESSAGE;
+  }
+  if (reason === "Rejected") {
+    return (
+      result.message ??
+      "Delete Page のリクエストが接続先 GROWI に拒否されました。"
+    );
+  }
+  if (reason === "ApiNotSupported") {
+    return result.message ?? DELETE_PAGE_API_NOT_SUPPORTED_MESSAGE;
+  }
+  return DELETE_PAGE_CONNECTION_FAILED_MESSAGE;
+}
+
+function mapRenamePageFailureReasonToMessage(
+  result: Exclude<GrowiPageRenameResult, { ok: true }>,
+): string {
+  const { reason } = result;
+  if (reason === "BaseUrlNotConfigured") {
+    return GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE;
+  }
+  if (reason === "ApiTokenNotConfigured") {
+    return GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE;
+  }
+  if (reason === "InvalidApiToken") {
+    return GENERIC_INVALID_API_TOKEN_MESSAGE;
+  }
+  if (reason === "PermissionDenied") {
+    return GENERIC_PERMISSION_DENIED_MESSAGE;
+  }
+  if (reason === "NotFound") {
+    return RENAME_PAGE_NOT_FOUND_MESSAGE;
+  }
+  if (reason === "ParentNotFound") {
+    return RENAME_PAGE_PARENT_NOT_FOUND_MESSAGE;
+  }
+  if (reason === "AlreadyExists") {
+    return RENAME_PAGE_ALREADY_EXISTS_MESSAGE;
+  }
+  if (reason === "Rejected") {
+    return (
+      result.message ??
+      "Rename Page のリクエストが接続先 GROWI に拒否されました。"
+    );
+  }
+  if (reason === "ApiNotSupported") {
+    return result.message ?? RENAME_PAGE_API_NOT_SUPPORTED_MESSAGE;
+  }
+  return RENAME_PAGE_CONNECTION_FAILED_MESSAGE;
+}
+
 function mapBundleListFailureToMessage(result: {
   ok: false;
   reason: GrowiAccessFailureReason;
@@ -1190,6 +1406,7 @@ function resolveCommandInput(
     | string
     | {
         input?: string;
+        initialValue?: string;
       }
     | undefined,
 ): string | undefined {
@@ -1198,6 +1415,24 @@ function resolveCommandInput(
   }
   if (typeof injected?.input === "string") {
     return injected.input;
+  }
+  return undefined;
+}
+
+function resolveCommandInitialValue(
+  injected:
+    | string
+    | {
+        input?: string;
+        initialValue?: string;
+      }
+    | undefined,
+): string | undefined {
+  if (
+    typeof injected === "object" &&
+    typeof injected?.initialValue === "string"
+  ) {
+    return injected.initialValue;
   }
   return undefined;
 }
@@ -1232,7 +1467,7 @@ async function openChangesEditor(
 async function openResolvedGrowiPage(
   deps: CommandDeps,
   reference: ParsedGrowiReference,
-): Promise<void> {
+): Promise<boolean> {
   const resolved = await deps.resolvePageReference(reference);
   if (!resolved.ok) {
     deps.showErrorMessage(
@@ -1246,7 +1481,7 @@ async function openResolvedGrowiPage(
         notFound: OPEN_PAGE_NOT_FOUND_MESSAGE,
       }),
     );
-    return;
+    return false;
   }
 
   const page = await deps.readPageBody(resolved.canonicalPath);
@@ -1262,13 +1497,15 @@ async function openResolvedGrowiPage(
         notFound: OPEN_PAGE_NOT_FOUND_MESSAGE,
       }),
     );
-    return;
+    return false;
   }
 
   try {
     await deps.openUri(resolved.uri);
+    return true;
   } catch {
     deps.showErrorMessage(OPEN_PAGE_UNEXPECTED_ERROR_MESSAGE);
+    return false;
   }
 }
 
@@ -1384,7 +1621,9 @@ function resolveExplorerTargetUri(
   return toGrowiPageUri(canonicalPath);
 }
 
-function resolveMirrorRequestScope(target: MirrorCommandTarget): MirrorRequestScope {
+function resolveMirrorRequestScope(
+  target: MirrorCommandTarget,
+): MirrorRequestScope {
   return typeof target === "object" &&
     target !== null &&
     "scope" in target &&
@@ -1393,12 +1632,10 @@ function resolveMirrorRequestScope(target: MirrorCommandTarget): MirrorRequestSc
     : "page";
 }
 
-function resolveMirrorTargetUri(target: MirrorCommandTarget): UriLike | undefined {
-  if (
-    typeof target === "object" &&
-    target !== null &&
-    "uri" in target
-  ) {
+function resolveMirrorTargetUri(
+  target: MirrorCommandTarget,
+): UriLike | undefined {
+  if (typeof target === "object" && target !== null && "uri" in target) {
     return target.uri;
   }
   if (
@@ -1479,7 +1716,7 @@ function createExplorerMirrorDelegatingCommand(
   };
 }
 
-function createExplorerPassthroughCommand(
+function _createExplorerPassthroughCommand(
   deps: CommandDeps,
   command: string,
 ): (_target?: ExplorerCommandTarget) => Promise<void> {
@@ -1761,6 +1998,363 @@ export function createOpenPageCommand(deps: CommandDeps) {
   };
 }
 
+export function createCreatePageCommand(deps: CommandDeps) {
+  return async function createPage(
+    injectedInput?:
+      | string
+      | {
+          input?: string;
+          initialValue?: string;
+        },
+  ): Promise<void> {
+    const inputFromCommand = resolveCommandInput(injectedInput);
+    const initialValue = resolveCommandInitialValue(injectedInput);
+    const input =
+      inputFromCommand ??
+      (await deps.showInputBox({
+        placeHolder: "/team/dev/new-page",
+        prompt: "作成する GROWI ページパスを入力してください",
+        title: "GROWI: Create Page",
+        value: initialValue,
+      }));
+
+    if (input === undefined) {
+      return;
+    }
+
+    const normalized = normalizeCanonicalPath(input);
+    if (!normalized.ok || normalized.value === "/") {
+      deps.showErrorMessage(CREATE_PAGE_INVALID_PATH_MESSAGE);
+      return;
+    }
+
+    const canonicalPath = normalized.value;
+    const created = await deps.createPage(canonicalPath);
+    if (!created.ok) {
+      deps.showErrorMessage(
+        mapCreatePageFailureReasonToMessage(created.reason),
+      );
+      return;
+    }
+
+    for (const ancestorPath of listAncestorCanonicalPaths(canonicalPath)) {
+      deps.invalidateReadDirectoryCache(ancestorPath);
+    }
+
+    const opened = await openResolvedGrowiPage(deps, {
+      kind: "canonicalPath",
+      canonicalPath,
+      uri: buildGrowiUri(canonicalPath),
+      source: "path",
+    });
+    if (!opened) {
+      return;
+    }
+
+    await createStartEditCommand(deps)({
+      scheme: "growi",
+      path: `${canonicalPath}.md`,
+    });
+    deps.refreshPrefixTree();
+  };
+}
+
+type DeleteCommandTarget = UriLike | { uri?: UriLike } | undefined;
+
+type RenameCommandTarget =
+  | string
+  | UriLike
+  | {
+      input?: string;
+      uri?: UriLike;
+    }
+  | undefined;
+
+function mapRenamedCanonicalPath(
+  oldCanonicalPath: string,
+  newCanonicalPath: string,
+  candidatePath: string,
+): string {
+  if (candidatePath === oldCanonicalPath) {
+    return newCanonicalPath;
+  }
+  return `${newCanonicalPath}${candidatePath.slice(oldCanonicalPath.length)}`;
+}
+
+export function createDeletePageCommand(deps: CommandDeps) {
+  return async function deletePage(
+    target?: DeleteCommandTarget,
+  ): Promise<void> {
+    const targetUri = resolveCommandUri(target) ?? deps.getActiveEditorUri();
+    if (!targetUri) {
+      deps.showErrorMessage(DELETE_PAGE_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    const canonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+    if (!canonicalPath) {
+      deps.showErrorMessage(DELETE_PAGE_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    if (deps.findOpenTextDocumentByUri(targetUri)?.isDirty) {
+      deps.showErrorMessage(DELETE_PAGE_DIRTY_MESSAGE);
+      return;
+    }
+
+    const pageInfo = deps.getCurrentPageInfo(canonicalPath);
+    const pageId =
+      pageInfo?.pageId ?? deps.getEditSession(canonicalPath)?.pageId;
+    const revisionId =
+      pageInfo?.revisionId ??
+      deps.getEditSession(canonicalPath)?.baseRevisionId;
+    if (!pageId || !revisionId) {
+      deps.showErrorMessage(DELETE_PAGE_UNAVAILABLE_MESSAGE);
+      return;
+    }
+
+    const listedPages = await deps.listPages(canonicalPath);
+    if (!listedPages.ok) {
+      deps.showErrorMessage(
+        mapAccessFailureReasonToMessage(listedPages.reason, {
+          apiNotSupported: DELETE_PAGE_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed: DELETE_PAGE_CONNECTION_FAILED_MESSAGE,
+        }),
+      );
+      return;
+    }
+
+    const descendantPaths = dedupeAndSortCanonicalPaths(
+      listedPages.paths.filter(
+        (path) =>
+          path !== canonicalPath &&
+          isWithinCanonicalSubtree(path, canonicalPath),
+      ),
+    );
+    const dirtyOpenPath = [canonicalPath, ...descendantPaths].find(
+      (path) => deps.findOpenTextDocumentByUri(toGrowiPageUri(path))?.isDirty,
+    );
+    if (dirtyOpenPath) {
+      deps.showErrorMessage(DELETE_PAGE_DIRTY_MESSAGE);
+      return;
+    }
+
+    let mode: "page" | "subtree" = "page";
+    if (descendantPaths.length > 0) {
+      const selectedMode =
+        await deps.showDeleteScopeConfirmation(canonicalPath);
+      if (selectedMode === "cancel") {
+        return;
+      }
+      mode = selectedMode === "subtree" ? "subtree" : "page";
+    }
+
+    const confirmed = await deps.showDeletePageConfirmation(
+      canonicalPath,
+      mode,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const deleted = await deps.deletePage({
+      pageId,
+      revisionId,
+      canonicalPath,
+      mode,
+    });
+    if (!deleted.ok) {
+      deps.showErrorMessage(mapDeletePageFailureReasonToMessage(deleted));
+      return;
+    }
+
+    deps.closeEditSession(canonicalPath);
+    deps.clearSubtreeState(canonicalPath);
+
+    const directoriesToInvalidate = dedupeAndSortCanonicalPaths([
+      canonicalPath,
+      ...listAncestorCanonicalPaths(canonicalPath),
+    ]);
+    for (const directoryPath of directoriesToInvalidate) {
+      deps.invalidateReadDirectoryCache(directoryPath);
+    }
+
+    deps.refreshPrefixTree();
+
+    const closeResult = await deps.closeDeletedPages(canonicalPath, mode);
+    if (closeResult.hasFailed) {
+      deps.showWarningMessage(DELETE_PAGE_CLOSE_FAILED_WARNING_MESSAGE);
+    }
+  };
+}
+
+export function createRenamePageCommand(deps: CommandDeps) {
+  return async function renamePage(
+    target?: RenameCommandTarget,
+  ): Promise<void> {
+    const targetWithInput =
+      typeof target === "object" && target !== null && "input" in target
+        ? target
+        : undefined;
+    const targetUri =
+      resolveCommandUri(
+        targetWithInput
+          ? { uri: targetWithInput.uri }
+          : (target as UriLike | { uri?: UriLike } | undefined),
+      ) ??
+      (typeof target === "object" &&
+      target !== null &&
+      "scheme" in target &&
+      "path" in target
+        ? (target as UriLike)
+        : deps.getActiveEditorUri());
+    if (!targetUri) {
+      deps.showErrorMessage(RENAME_PAGE_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    const canonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+    if (!canonicalPath) {
+      deps.showErrorMessage(RENAME_PAGE_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    if (deps.findOpenTextDocumentByUri(targetUri)?.isDirty) {
+      deps.showErrorMessage(RENAME_PAGE_DIRTY_MESSAGE);
+      return;
+    }
+
+    const pageInfo = deps.getCurrentPageInfo(canonicalPath);
+    const pageId =
+      pageInfo?.pageId ?? deps.getEditSession(canonicalPath)?.pageId;
+    const revisionId =
+      pageInfo?.revisionId ??
+      deps.getEditSession(canonicalPath)?.baseRevisionId;
+    if (!pageId || !revisionId) {
+      deps.showErrorMessage(RENAME_PAGE_UNAVAILABLE_MESSAGE);
+      return;
+    }
+
+    const injectedInput = resolveCommandInput(
+      typeof target === "string" || typeof targetWithInput?.input === "string"
+        ? (target as string | { input?: string })
+        : undefined,
+    );
+    const input =
+      injectedInput ??
+      (await deps.showInputBox({
+        placeHolder: "/team/dev/renamed-page",
+        prompt: "変更後の GROWI ページパスを入力してください",
+        title: "GROWI: Rename Page",
+        value: canonicalPath,
+      }));
+    if (input === undefined) {
+      return;
+    }
+
+    const normalized = normalizeCanonicalPath(input);
+    if (!normalized.ok || normalized.value === "/") {
+      deps.showErrorMessage(RENAME_PAGE_INVALID_PATH_MESSAGE);
+      return;
+    }
+
+    const targetCanonicalPath = normalized.value;
+    if (targetCanonicalPath === canonicalPath) {
+      deps.showErrorMessage(RENAME_PAGE_SAME_PATH_MESSAGE);
+      return;
+    }
+    if (isWithinCanonicalSubtree(targetCanonicalPath, canonicalPath)) {
+      deps.showErrorMessage(RENAME_PAGE_DESCENDANT_PATH_MESSAGE);
+      return;
+    }
+
+    const listedPages = await deps.listPages(canonicalPath);
+    if (!listedPages.ok) {
+      deps.showErrorMessage(
+        mapAccessFailureReasonToMessage(listedPages.reason, {
+          apiNotSupported: RENAME_PAGE_API_NOT_SUPPORTED_MESSAGE,
+          connectionFailed: RENAME_PAGE_CONNECTION_FAILED_MESSAGE,
+        }),
+      );
+      return;
+    }
+
+    const descendantPaths = dedupeAndSortCanonicalPaths(
+      listedPages.paths.filter(
+        (path) =>
+          path !== canonicalPath &&
+          isWithinCanonicalSubtree(path, canonicalPath),
+      ),
+    );
+    const dirtyOpenPath = [canonicalPath, ...descendantPaths].find(
+      (path) => deps.findOpenTextDocumentByUri(toGrowiPageUri(path))?.isDirty,
+    );
+    if (dirtyOpenPath) {
+      deps.showErrorMessage(RENAME_PAGE_DIRTY_MESSAGE);
+      return;
+    }
+
+    let mode: "page" | "subtree" = "page";
+    if (descendantPaths.length > 0) {
+      const selectedMode =
+        await deps.showRenameScopeConfirmation(canonicalPath);
+      if (selectedMode === "cancel") {
+        return;
+      }
+      mode = selectedMode === "subtree" ? "subtree" : "page";
+    }
+
+    const renamed = await deps.renamePage({
+      pageId,
+      revisionId,
+      currentCanonicalPath: canonicalPath,
+      targetCanonicalPath,
+      mode,
+    });
+    if (!renamed.ok) {
+      deps.showErrorMessage(mapRenamePageFailureReasonToMessage(renamed));
+      return;
+    }
+
+    const effectiveCanonicalPath = renamed.canonicalPath;
+    deps.closeEditSession(canonicalPath);
+    deps.clearSubtreeState(canonicalPath);
+
+    const directoriesToInvalidate = dedupeAndSortCanonicalPaths([
+      canonicalPath,
+      effectiveCanonicalPath,
+      ...listAncestorCanonicalPaths(canonicalPath),
+      ...listAncestorCanonicalPaths(effectiveCanonicalPath),
+      ...(mode === "subtree"
+        ? descendantPaths.map((path) =>
+            mapRenamedCanonicalPath(
+              canonicalPath,
+              effectiveCanonicalPath,
+              path,
+            ),
+          )
+        : []),
+    ]);
+    for (const directoryPath of directoriesToInvalidate) {
+      deps.invalidateReadDirectoryCache(directoryPath);
+    }
+
+    deps.refreshPrefixTree();
+
+    const reopenResult = await deps.reopenRenamedPages(
+      canonicalPath,
+      effectiveCanonicalPath,
+    );
+    if (reopenResult.hasFailed) {
+      deps.showWarningMessage(RENAME_PAGE_REOPEN_FAILED_WARNING_MESSAGE);
+      return;
+    }
+    if (reopenResult.hasDirty) {
+      deps.showWarningMessage(RENAME_PAGE_REOPEN_DIRTY_WARNING_MESSAGE);
+    }
+  };
+}
+
 export function createOpenPrefixRootPageCommand(deps: CommandDeps) {
   return async function openPrefixRootPage(
     target?:
@@ -1820,6 +2414,41 @@ export function createExplorerOpenPageItemCommand(deps: CommandDeps) {
 
     await deps.executeCommand?.("vscode.open", targetUri);
   };
+}
+
+function ensureDirectoryInitialValue(canonicalPath: string): string {
+  return canonicalPath === "/" ? canonicalPath : `${canonicalPath}/`;
+}
+
+export function createExplorerCreatePageHereCommand(deps: CommandDeps) {
+  return async function explorerCreatePageHere(
+    target?: ExplorerCommandTarget,
+  ): Promise<void> {
+    const commandUri =
+      typeof target === "string" ? undefined : resolveCommandUri(target);
+    if (!commandUri || commandUri.scheme !== "growi") {
+      return;
+    }
+
+    const initialCanonicalPath = isPageUri(commandUri)
+      ? resolveParentDirectoryCanonicalPathFromPageUri(commandUri)
+      : resolveDirectoryCanonicalPathFromDirectoryUri(commandUri);
+    if (!initialCanonicalPath) {
+      return;
+    }
+
+    await deps.executeCommand?.(GROWI_COMMANDS.createPage, {
+      initialValue: ensureDirectoryInitialValue(initialCanonicalPath),
+    });
+  };
+}
+
+export function createExplorerRenamePageCommand(deps: CommandDeps) {
+  return createExplorerDelegatingCommand(deps, GROWI_COMMANDS.renamePage);
+}
+
+export function createExplorerDeletePageCommand(deps: CommandDeps) {
+  return createExplorerDelegatingCommand(deps, GROWI_COMMANDS.deletePage);
 }
 
 export function createExplorerRefreshCurrentPageCommand(deps: CommandDeps) {
@@ -2360,6 +2989,14 @@ export function createShowCurrentPageActionsCommand(
           command: GROWI_COMMANDS.refreshCurrentPage,
         },
         {
+          label: "ページ名を変更",
+          command: GROWI_COMMANDS.renamePage,
+        },
+        {
+          label: "ページを削除",
+          command: GROWI_COMMANDS.deletePage,
+        },
+        {
           label: "被リンクを表示",
           command: GROWI_COMMANDS.showBacklinks,
         },
@@ -2528,7 +3165,10 @@ async function exportMirror(
     // Treat missing or unreadable previous manifests as a fresh export.
   }
 
-  const plannedPages = planMirrorRelativeFilePaths(input.rootCanonicalPath, pagePaths);
+  const plannedPages = planMirrorRelativeFilePaths(
+    input.rootCanonicalPath,
+    pagePaths,
+  );
 
   try {
     for (const plannedPage of plannedPages.pages) {
@@ -2619,7 +3259,10 @@ async function exportMirror(
       baseUrl,
       input.rootCanonicalPath,
     );
-    await deps.writeLocalFile(preferredManifestPath, serializeMirrorManifest(manifest));
+    await deps.writeLocalFile(
+      preferredManifestPath,
+      serializeMirrorManifest(manifest),
+    );
     if (
       previousManifest &&
       previousManifestInstanceKey &&
@@ -2646,9 +3289,10 @@ async function exportMirror(
     );
     if (plannedPages.skippedPages.length > 0) {
       deps.showWarningMessage(
-        [input.successMessage, formatSkippedMirrorPagesSummary(plannedPages.skippedPages)].join(
-          "\n",
-        ),
+        [
+          input.successMessage,
+          formatSkippedMirrorPagesSummary(plannedPages.skippedPages),
+        ].join("\n"),
       );
     } else {
       deps.showInformationMessage(input.successMessage);
@@ -2687,7 +3331,10 @@ async function loadMirrorManifest(
     return undefined;
   }
 
-  for (const { instanceKey, manifestPath: exactManifestPath } of listMirrorManifestCandidates(
+  for (const {
+    instanceKey,
+    manifestPath: exactManifestPath,
+  } of listMirrorManifestCandidates(
     workspaceRoot,
     baseUrl,
     input.requestedCanonicalPath,
@@ -2731,7 +3378,9 @@ async function loadMirrorManifest(
     return undefined;
   }
 
-  for (const ancestorPath of listAncestorCanonicalPaths(input.requestedCanonicalPath)) {
+  for (const ancestorPath of listAncestorCanonicalPaths(
+    input.requestedCanonicalPath,
+  )) {
     for (const { instanceKey, manifestPath } of listMirrorManifestCandidates(
       workspaceRoot,
       baseUrl,
@@ -2780,13 +3429,14 @@ async function loadMirrorManifest(
         };
       }
 
-      const skippedPages = (parsedManifest.value.skippedPages ?? []).filter((page) =>
-        input.requestedScope === "page"
-          ? page.canonicalPath === input.requestedCanonicalPath
-          : isWithinCanonicalSubtree(
-              page.canonicalPath,
-              input.requestedCanonicalPath,
-            ),
+      const skippedPages = (parsedManifest.value.skippedPages ?? []).filter(
+        (page) =>
+          input.requestedScope === "page"
+            ? page.canonicalPath === input.requestedCanonicalPath
+            : isWithinCanonicalSubtree(
+                page.canonicalPath,
+                input.requestedCanonicalPath,
+              ),
       );
       if (skippedPages.length > 0) {
         deps.showErrorMessage(input.reusedPrefixSkippedMessage);
@@ -2833,7 +3483,7 @@ async function compareMirror(
   const skippedDiffResults: BundleCompareResult[] = [];
   const diffResources: ChangesResourceTuple[] = [];
   for (const page of loaded.selectedPages) {
-    const localFilePath = buildMirrorLocalFilePath(
+    const _localFilePath = buildMirrorLocalFilePath(
       loaded.workspaceRoot,
       loaded.baseUrl,
       loaded.manifest.rootCanonicalPath,
@@ -2931,11 +3581,7 @@ async function compareMirror(
   }
 
   try {
-    await openChangesEditor(
-      deps,
-      buildMirrorDiffTitle(loaded),
-      diffResources,
-    );
+    await openChangesEditor(deps, buildMirrorDiffTitle(loaded), diffResources);
   } catch {
     deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE);
     return undefined;
@@ -2991,7 +3637,7 @@ async function uploadMirror(
     if (!selectedCanonicalPaths.has(page.canonicalPath)) {
       continue;
     }
-    const localFilePath = buildMirrorLocalFilePath(
+    const _localFilePath = buildMirrorLocalFilePath(
       loaded.workspaceRoot,
       loaded.baseUrl,
       loaded.manifest.rootCanonicalPath,
@@ -3286,10 +3932,11 @@ export function createCompareLocalBundleWithGrowiCommand(deps: CommandDeps) {
         target.scope !== undefined
         ? target
         : {
-            uri:
-              (typeof target === "object" && target !== null && "uri" in target
-                ? target.uri
-                : target) as UriLike | undefined,
+            uri: (typeof target === "object" &&
+            target !== null &&
+            "uri" in target
+              ? target.uri
+              : target) as UriLike | undefined,
             scope: "subtree",
           },
     );
@@ -3308,10 +3955,11 @@ export function createUploadLocalBundleToGrowiCommand(deps: CommandDeps) {
         target.scope !== undefined
         ? target
         : {
-            uri:
-              (typeof target === "object" && target !== null && "uri" in target
-                ? target.uri
-                : target) as UriLike | undefined,
+            uri: (typeof target === "object" &&
+            target !== null &&
+            "uri" in target
+              ? target.uri
+              : target) as UriLike | undefined,
             scope: "subtree",
           },
     );

@@ -301,6 +301,18 @@ describe("bootstrap extension entrypoint", () => {
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.explorerCreatePageHere,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.explorerRenamePage,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.explorerDeletePage,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.explorerRefreshCurrentPage,
       expect.any(Function),
     );
@@ -814,6 +826,8 @@ describe("bootstrap extension entrypoint", () => {
     expect(showQuickPickMock).toHaveBeenCalledWith(
       [
         { label: "ページを更新", command: GROWI_COMMANDS.refreshCurrentPage },
+        { label: "ページ名を変更", command: GROWI_COMMANDS.renamePage },
+        { label: "ページを削除", command: GROWI_COMMANDS.deletePage },
         { label: "被リンクを表示", command: GROWI_COMMANDS.showBacklinks },
         {
           label: "ページ情報を表示",

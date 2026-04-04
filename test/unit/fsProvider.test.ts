@@ -519,7 +519,9 @@ describe("GrowiFileSystemProvider", () => {
     const invalidToken = activateWithApiContext({
       fetchMock: vi
         .fn()
-        .mockResolvedValueOnce(createJsonResponse({ error: "unauthorized" }, 401)),
+        .mockResolvedValueOnce(
+          createJsonResponse({ error: "unauthorized" }, 401),
+        ),
     });
     await expect(invalidToken.provider.readFile(uri)).rejects.toThrow(
       /invalid API token/,
@@ -690,7 +692,9 @@ describe("GrowiFileSystemProvider", () => {
     const invalidToken = activateWithApiContext({
       fetchMock: vi
         .fn()
-        .mockResolvedValueOnce(createJsonResponse({ error: "unauthorized" }, 401)),
+        .mockResolvedValueOnce(
+          createJsonResponse({ error: "unauthorized" }, 401),
+        ),
     });
     await expect(invalidToken.provider.readDirectory(uri)).rejects.toThrow(
       /invalid API token/,

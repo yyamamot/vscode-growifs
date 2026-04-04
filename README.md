@@ -5,7 +5,7 @@
 `vscode-growifs` は、GROWI 上のページを VS Code から扱うための Desktop 向け VS Code 拡張です。  
 GROWI を OS レベルのファイルシステムとして mount するのではなく、`growi:` スキームの仮想ファイルとして参照、探索、保存できる体験を提供します。
 
-現行版では、VS Code 標準の Markdown 操作に寄せた閲覧体験と、既存ページを安全に更新する方法を重視しています。  
+現行版では、VS Code 標準の Markdown 操作に寄せた閲覧体験と、ページの作成・更新・名前変更・削除を安全に行う方法を重視しています。  
 加えて、`.growi-workspaces/<instanceKey>/<rootCanonicalPath>/` 配下へ workspace mirror を生成し、Codex 等の LLM でも local Markdown を参照・比較・反映しやすくする補助機能を提供しています。`instanceKey` は `host + port + basePath` を filesystem-safe に変換した識別子で、`http://localhost:3000/` は `localhost_3000` のように保存されます。
 
 <!-- screenshot: overview-explorer / GROWI Explorer overview with hybrid directory pages / dark theme -->
@@ -15,11 +15,12 @@ GROWI を OS レベルのファイルシステムとして mount するのでは
   </a>
 </p>
 
-Explorer の `GROWI` view では、prefix root、synthetic page item `__&lt;name&gt;__.md`、右クリックメニューからの主な操作をまとめて使えます。最初の操作は [Quick Start](#quick-start) から確認してください。
+Explorer の `GROWI` view では、prefix root、synthetic page item `__<name>__.md`、右クリックメニューからの主な操作をまとめて使えます。最初の操作は [Quick Start](#quick-start) から確認してください。
 
 ## 主な使い方
 
-- `growi:` は VS Code 上でページを開いて読むための使い方です。Explorer の `GROWI` view、`GROWI: Open Page`、`GROWI: Add Prefix` から探索します。
+- `growi:` は VS Code 上でページを開き、作成し、編集し、名前変更や削除を行うための使い方です。Explorer の `GROWI` view と Command Palette を中心に使います。
+- ページの作成・名前変更・削除は `GROWI: Create Page` / `Rename Page` / `Delete Page` に加え、current page actions や Explorer 右クリックからも実行できます。
 - local mirror はローカルファイルで作業する方法です。`Sync Local Mirror`、`Compare Local Mirror with GROWI`、`Upload Local Mirror to GROWI` で扱います。
 - Explorer の右クリックでは、ページに対して `ローカルミラーを同期 / 比較 / 反映`、directory / prefix root に対して `配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映` を使えます。
 - wiki 内リンク移動は、Markdown の絶対ページパス形式リンクと same-instance URL に限定して扱います。
@@ -56,11 +57,12 @@ Command Palette で `GROWI: Configure API Token` を実行し、GROWI の API to
 | 保存先 | VS Code の Secret Storage |
 | 注意点 | 設定画面の公開設定には保存されません |
 
-### 3. ページを開くか prefix を追加する
+### 3. ページを開く、作成する、または prefix を追加する
 
 最初のページ確認は、次のどちらかから始めます。
 
 - `GROWI: Open Page`: URL、path、same-instance permalink、root-relative permalink から直接開く
+- `GROWI: Create Page`: 先頭 `/` 付き canonical path を入力して空本文の新規ページを作成する
 - `GROWI: Add Prefix`: Explorer で辿りたい prefix または same-instance idurl を登録する
 
 `GROWI: Add Prefix` では、idurl を入力した場合は canonical path に解決して登録します。
@@ -72,7 +74,7 @@ Command Palette で `GROWI: Configure API Token` を実行し、GROWI の API to
 | 注意点 | prefix は先頭 `/` が必須です |
 | 追加後の表示先 | Explorer 配下の `GROWI` view |
 
-Explorer の `GROWI` view では、welcome から `Open Page` / `Add Prefix` / `Open README` を実行できます。登録後は view title の `Refresh Listing` / `Clear Prefixes` に加え、prefix root の `Open Prefix Root Page` や synthetic page item `__name__.md` からページ操作を実行できます。
+Explorer の `GROWI` view では、welcome から `Open Page` / `Add Prefix` / `Open README` を実行できます。登録後は view title の `Add Prefix` / `Refresh Listing` / `Clear Prefixes` に加え、Explorer 右クリックの `ここに作成` から新規ページ作成を始められます。
 
 <!-- screenshot: explorer-prefix-root / Prefix root and context actions in growi explorer / dark theme -->
 <p align="center">
@@ -81,11 +83,13 @@ Explorer の `GROWI` view では、welcome から `Open Page` / `Add Prefix` / `
   </a>
 </p>
 
-prefix root では `/sample` のような directory 行を残したまま、配下に `__sample__.md` を表示します。ページ行では `ローカルミラーを同期 / 比較 / 反映`、directory 行では `配下をローカルミラーに同期 / 比較 / 反映` を使います。
+prefix root では `/sample` のような directory 行を残したまま、配下に `__sample__.md` を表示します。ページ行では `ここに作成`、`ページ名を変更`、`ページを削除`、`ローカルミラーを同期 / 比較 / 反映` を使えます。directory 行では `配下をローカルミラーに同期 / 比較 / 反映` を使います。
+
+`GROWI: Create Page` は、新規ページを作成してそのまま編集を始めるときの入口です。
 
 ### 4. 編集する
 
-既存ページ本文を更新するときは、対象ページを開いて画面左下の `閲覧中` ボタンを押すか、`GROWI: Start Edit` を実行します。保存後は `GROWI: End Edit` で通常状態へ戻します。
+既存ページ本文を更新するときは、対象ページを開いて画面左下の `閲覧中` ボタンを押すか、`GROWI: Start Edit` を実行します。ページの rename / delete は Command Palette、current page actions、Explorer 右クリックから使えます。保存後は `GROWI: End Edit` で通常状態へ戻します。
 
 ### 5. Workspace mirror で作業する
 
@@ -125,6 +129,9 @@ mirror を作ると、`.growi-workspaces/<instanceKey>/...` 配下に `__sample_
 | ページ閲覧 | GROWI ページを VS Code 上で `.md` ファイルとして開く | `growi:` スキーム上の Markdown として扱います |
 | ツリー探索 | 指定 prefix 配下を Explorer の `GROWI` view で辿る | welcome、view title、context actions から主な操作を実行できます |
 | ページオープン | URL、path、same-instance permalink、root-relative permalink からページを開く | same-instance 前提です |
+| ページ作成 | 新規ページを作成して、そのまま編集を始める | Command Palette と Explorer 右クリックから使えます |
+| ページ rename | 現在ページの canonical path を変更する | Command Palette、current page actions、Explorer 右クリックから使えます |
+| ページ削除 | 現在ページを Trash Only で削除する | Command Palette、current page actions、Explorer 右クリックから使えます |
 | 既存ページ編集 | 既存ページ本文を更新する | `Start Edit` / `End Edit` が必要です |
 | Workspace mirror | `.growi-workspaces/<instanceKey>/<rootCanonicalPath>/` へ canonical path を保った `.md` を export し、`.growi-mirror.json` manifest で state を記録する | `Sync Local Mirror for Current Page/Prefix` で mirror を構築または更新し、local Markdown を Codex や standard diff へ供給できます |
 | Mirror compare / upload | mirror manifest に基づき `unchanged` / `modified locally` / `remote changed` / `conflict` / `missing locally` / `missing remote` を判定し、changes editor + changed-only upload で反映する | `Compare Local Mirror with GROWI` / `Upload Local Mirror to GROWI` で updated-only 反映を持ちます |
@@ -142,9 +149,11 @@ mirror を作ると、`.growi-workspaces/<instanceKey>/...` 配下に `__sample_
 | --- | --- | --- | --- |
 | README を開く | `GROWI: Open README` | 使い方を拡張内から確認したいとき | Explorer welcome からも開けます |
 | ページを開く | `GROWI: Open Page` | URL や path からページを直接開きたいとき | same-instance 前提です |
+| ページを作成する | `GROWI: Create Page` | 新規ページを作ってすぐ編集を始めたいとき | Explorer 右クリックの `ここに作成` からも使えます |
+| ページ名を変更する | `GROWI: Rename Page` | 現在ページの canonical path を変更したいとき | current page actions と Explorer 右クリックからも使えます |
+| ページを削除する | `GROWI: Delete Page` | 現在ページをゴミ箱へ移動したいとき | current page actions と Explorer 右クリックからも使えます |
 | prefix を追加する | `GROWI: Add Prefix` | 特定配下を Explorer で辿りたいとき | prefix または same-instance idurl を受け付けます |
 | prefix root を開く | `GROWI: Open Prefix Root Page` | 登録済み prefix root のページを開きたいとき | Explorer の prefix root context action です |
-| ディレクトリページを開く | `GROWI: Open Directory Page` | synthetic page item 導入前提の後方互換用コマンドとして使いたいとき | 通常は Explorer 上の `__<name>__.md` から開けます |
 | 一覧を更新する | `GROWI: Refresh Listing` | prefix 配下の一覧を最新化したいとき | Explorer 表示を更新します |
 | prefix を消す | `GROWI: Clear Prefixes` | 現在接続先の prefix 登録を消したいとき | Explorer view title から実行します |
 
@@ -179,8 +188,8 @@ mirror を作ると、`.growi-workspaces/<instanceKey>/...` 配下に `__sample_
 | --- | --- |
 | OS レベルの mount | FUSE のようにローカルドライブとして扱うことはしません |
 | VS Code 以外の利用 | Desktop 版 VS Code 拡張として使う前提です |
-| 新規ページ作成、削除、リネーム | 現行版は既存ページ本文の更新だけを対象にします |
-| 複数ページの自動同期やローカル mirror | 明示操作での閲覧・更新を前提にします |
+| 複数ページの自動同期 | 明示操作での閲覧・更新を前提にします |
+| 完全削除や復元 | 現行版の削除は Trash Only です |
 | 添付ファイルのアップロードや削除 | 添付管理機能は現行版対象外です |
 | 画像以外の添付プレビュー | 画像以外の添付は現行版対象外です。高度なプレビューは扱いません |
 | 相対リンクや外部 URL の汎用解決 | 何でも自動解決する挙動は提供しません |
@@ -192,10 +201,10 @@ mirror を作ると、`.growi-workspaces/<instanceKey>/...` 配下に `__sample_
 | --- | --- | --- |
 | VS Code | Desktop 版 VS Code `1.105+` | 拡張の動作対象です |
 | 対象 GROWI | GROWI `7.x` | GROWI 6 系以下は非サポートです |
-| 認証前提 | bearer token で `/_api/v3` を使える構成 | token-only で成立しない構成は現行版未対応です |
-| 必須 API | `GET /_api/v3/page`, `GET /_api/v3/revisions/{revisionId}`, `GET /_api/v3/revisions/list`, `GET /_api/v3/pages/list`, `PUT /_api/v3/page` | `revisions/list` または `pages/list` 非対応環境では一部機能が使えません |
-| 添付 Preview | Markdown Preview 上で画像添付を表示する | 画像以外の添付は現行版対象外です |
-| 添付 URL 制約 | same-host absolute URL と root-relative path を前提にします | `/attachment/{attachmentId}` は Preview / token-only 取得の対象外ですが、通常リンクからは GROWI Web を開けます |
+| 認証前提 | GROWI API token で接続できること | token-only で成立しない構成は現行版対象外です |
+| API 前提 | GROWI 7.x のページ取得、一覧取得、保存、作成、名前変更、削除 API が利用できること | 一部 API が使えない環境では、対応する機能が利用できません |
+| 画像 Preview | Markdown Preview 上で画像添付を表示します | 画像以外の添付は現行版対象外です |
+| 添付 URL | same-host absolute URL と root-relative path を前提にします | 一部の添付 URL はブラウザで GROWI Web を開いて確認してください |
 
 ## よくあるつまずき
 

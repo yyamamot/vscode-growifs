@@ -23,7 +23,9 @@ export interface FindBacklinksInput {
   prefixes: string[];
   listPages(canonicalPrefixPath: string): Promise<ListPagesResult>;
   readPageBody(canonicalPath: string): Promise<ReadPageBodyResult>;
-  resolvePageReference(reference: ParsedGrowiReference): Promise<
+  resolvePageReference(
+    reference: ParsedGrowiReference,
+  ): Promise<
     | { ok: true; canonicalPath: string; uri: string }
     | { ok: false; reason: GrowiReadFailureReason }
   >;

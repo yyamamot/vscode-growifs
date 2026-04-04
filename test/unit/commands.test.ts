@@ -10,15 +10,20 @@ import {
   createCompareLocalWorkFileWithCurrentPageCommand,
   createConfigureApiTokenCommand,
   createConfigureBaseUrlCommand,
+  createCreatePageCommand,
+  createDeletePageCommand,
   createDownloadCurrentPageSetToLocalBundleCommand,
   createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
   createExplorerCompareLocalBundleWithGrowiCommand,
   createExplorerCompareLocalWorkFileWithCurrentPageCommand,
+  createExplorerCreatePageHereCommand,
+  createExplorerDeletePageCommand,
   createExplorerDownloadCurrentPageSetToLocalBundleCommand,
   createExplorerDownloadCurrentPageToLocalFileCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
+  createExplorerRenamePageCommand,
   createExplorerShowBacklinksCommand,
   createExplorerShowCurrentPageInfoCommand,
   createExplorerShowRevisionHistoryDiffCommand,
@@ -29,6 +34,7 @@ import {
   createOpenPrefixRootPageCommand,
   createRefreshCurrentPageCommand,
   createRefreshListingCommand,
+  createRenamePageCommand,
   createShowBacklinksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageInfoCommand,
@@ -67,6 +73,75 @@ function createDeps() {
           }
       > => ({ ok: true, value: [], added: true }),
     ),
+    createPage: vi.fn(
+      async (
+        _canonicalPath: string,
+      ): Promise<
+        | { ok: true; pageInfo?: undefined }
+        | {
+            ok: false;
+            reason:
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed"
+              | "NotFound"
+              | "AlreadyExists";
+          }
+      > => ({ ok: true }),
+    ),
+    deletePage: vi.fn(
+      async (_input: {
+        pageId: string;
+        revisionId: string;
+        canonicalPath: string;
+        mode: "page" | "subtree";
+      }): Promise<
+        | { ok: true }
+        | {
+            ok: false;
+            reason:
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed"
+              | "NotFound"
+              | "HasChildren"
+              | "Rejected";
+            message?: string;
+          }
+      > => ({ ok: true }),
+    ),
+    renamePage: vi.fn(
+      async (input: {
+        pageId: string;
+        revisionId: string;
+        currentCanonicalPath: string;
+        targetCanonicalPath: string;
+        mode: "page" | "subtree";
+      }): Promise<
+        | { ok: true; canonicalPath: string; pageInfo?: undefined }
+        | {
+            ok: false;
+            reason:
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed"
+              | "ParentNotFound"
+              | "NotFound"
+              | "AlreadyExists"
+              | "Rejected";
+            message?: string;
+          }
+      > => ({ ok: true, canonicalPath: input.targetCanonicalPath }),
+    ),
     clearPrefixes: vi.fn(
       async (): Promise<
         | { ok: true; value: string[]; cleared: boolean; removed: string[] }
@@ -98,6 +173,7 @@ function createDeps() {
       ):
         | {
             pageId: string;
+            revisionId?: string;
             url: string;
             path: string;
             lastUpdatedBy: string;
@@ -145,6 +221,9 @@ function createDeps() {
     ),
     findOpenTextDocument: vi.fn(
       (_path: string): { isDirty: boolean } | undefined => undefined,
+    ),
+    findOpenTextDocumentByUri: vi.fn(
+      (_uri: UriLike): { isDirty: boolean } | undefined => undefined,
     ),
     openDiff: vi.fn(
       async (
@@ -219,7 +298,28 @@ function createDeps() {
       },
     ),
     readDirectory: vi.fn(async (_uri: string): Promise<void> => {}),
+    reopenRenamedPages: vi.fn(
+      async (): Promise<{
+        attempted: boolean;
+        hasDirty: boolean;
+        hasFailed: boolean;
+      }> => ({
+        attempted: true,
+        hasDirty: false,
+        hasFailed: false,
+      }),
+    ),
+    closeDeletedPages: vi.fn(
+      async (): Promise<{
+        attempted: boolean;
+        hasFailed: boolean;
+      }> => ({
+        attempted: true,
+        hasFailed: false,
+      }),
+    ),
     refreshPrefixTree: vi.fn(),
+    clearSubtreeState: vi.fn(),
     seedRevisionContent: vi.fn(),
     showErrorMessage: vi.fn(),
     showEndEditDiscardConfirmation: vi.fn(
@@ -236,6 +336,13 @@ function createDeps() {
         _prefixes: readonly string[],
       ): Promise<boolean> => true,
     ),
+    showRenameScopeConfirmation: vi.fn(
+      async (): Promise<"single" | "subtree" | "cancel"> => "single",
+    ),
+    showDeleteScopeConfirmation: vi.fn(
+      async (): Promise<"single" | "subtree" | "cancel"> => "single",
+    ),
+    showDeletePageConfirmation: vi.fn(async (): Promise<boolean> => true),
     showQuickPick: vi.fn(
       async (
         _items: readonly QuickPickItem[],
@@ -1047,6 +1154,493 @@ describe("createOpenPageCommand", () => {
   });
 });
 
+describe("createCreatePageCommand", () => {
+  it("creates an empty page, opens it, and starts edit mode", async () => {
+    const deps = createDeps();
+    deps.showInputBox.mockResolvedValue("/team/dev/new-page.md/");
+
+    await createCreatePageCommand(deps)();
+
+    expect(deps.createPage).toHaveBeenCalledWith("/team/dev/new-page");
+    expect(deps.invalidateReadDirectoryCache).toHaveBeenCalledWith("/team/dev");
+    expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/new-page.md");
+    expect(deps.bootstrapEditSession).toHaveBeenCalledWith(
+      "/team/dev/new-page",
+    );
+    expect(deps.setEditSession).toHaveBeenCalledWith(
+      "/team/dev/new-page",
+      expect.objectContaining({
+        pageId: "page-123",
+        baseRevisionId: "revision-001",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# title",
+        dirty: false,
+      }),
+    );
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("uses the injected initial value when opening the path prompt", async () => {
+    const deps = createDeps();
+    deps.showInputBox.mockResolvedValue("/team/dev/new-page");
+
+    await createCreatePageCommand(deps)({
+      initialValue: "/team/dev/",
+    });
+
+    expect(deps.showInputBox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        value: "/team/dev/",
+      }),
+    );
+    expect(deps.createPage).toHaveBeenCalledWith("/team/dev/new-page");
+  });
+
+  it("rejects invalid page path input", async () => {
+    const deps = createDeps();
+    deps.showInputBox.mockResolvedValue("team/dev/new-page");
+
+    await createCreatePageCommand(deps)();
+
+    expect(deps.createPage).not.toHaveBeenCalled();
+    expect(deps.openUri).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "Create Page には先頭 / 付きのページパスを入力してください。",
+    );
+  });
+
+  it.each([
+    ["AlreadyExists", "指定した path のページは既に存在します。"],
+    [
+      "NotFound",
+      "指定した親ページが見つからないため Create Page を実行できませんでした。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効です。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+    ],
+    [
+      "ApiNotSupported",
+      "ページ作成 API が未対応のため Create Page を実行できませんでした。",
+    ],
+    [
+      "ConnectionFailed",
+      "GROWI への接続に失敗したため Create Page を実行できませんでした。",
+    ],
+  ] as const)("maps %s create failure to message", async (reason, message) => {
+    const deps = createDeps();
+    deps.showInputBox.mockResolvedValue("/team/dev/new-page");
+    deps.createPage.mockResolvedValue({ ok: false, reason });
+
+    await createCreatePageCommand(deps)();
+
+    expect(deps.openUri).not.toHaveBeenCalled();
+    expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(message);
+  });
+});
+
+describe("createDeletePageCommand", () => {
+  it("deletes the current page and refreshes subtree state", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+
+    await createDeletePageCommand(deps)();
+
+    expect(deps.showDeletePageConfirmation).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      "page",
+    );
+    expect(deps.deletePage).toHaveBeenCalledWith({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      canonicalPath: "/team/dev/spec",
+      mode: "page",
+    });
+    expect(deps.clearSubtreeState).toHaveBeenCalledWith("/team/dev/spec");
+    expect(deps.invalidateReadDirectoryCache).toHaveBeenCalledWith("/team/dev");
+    expect(deps.invalidateReadDirectoryCache).toHaveBeenCalledWith("/");
+    expect(deps.closeDeletedPages).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      "page",
+    );
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("asks for subtree scope when descendants exist", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/team/dev/spec/child"],
+    });
+    deps.showDeleteScopeConfirmation.mockResolvedValue("subtree");
+
+    await createDeletePageCommand(deps)();
+
+    expect(deps.showDeleteScopeConfirmation).toHaveBeenCalledWith(
+      "/team/dev/spec",
+    );
+    expect(deps.showDeletePageConfirmation).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      "subtree",
+    );
+    expect(deps.deletePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "subtree",
+      }),
+    );
+  });
+
+  it("blocks delete when the active document is dirty", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.findOpenTextDocumentByUri.mockReturnValue({ isDirty: true });
+
+    await createDeletePageCommand(deps)();
+
+    expect(deps.deletePage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "未保存の変更があるため Delete Page を実行できません。先に保存してください。",
+    );
+  });
+
+  it.each([
+    [
+      "HasChildren",
+      "子ページがあるためこのページのみは削除できません。配下も含めて削除してください。",
+    ],
+    [
+      "NotFound",
+      "対象ページが見つからないため Delete Page を実行できませんでした。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効です。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+    ],
+    [
+      "ApiNotSupported",
+      "ページ削除 API が未対応のため Delete Page を実行できませんでした。",
+    ],
+    [
+      "ConnectionFailed",
+      "GROWI への接続に失敗したため Delete Page を実行できませんでした。",
+    ],
+  ] as const)("maps %s delete failure to message", async (reason, message) => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.deletePage.mockResolvedValue({ ok: false, reason });
+
+    await createDeletePageCommand(deps)();
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(message);
+  });
+
+  it("shows a warning when deleted pages cannot be closed cleanly", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.closeDeletedPages.mockResolvedValue({
+      attempted: true,
+      hasFailed: true,
+    });
+
+    await createDeletePageCommand(deps)();
+
+    expect(deps.showWarningMessage).toHaveBeenCalledWith(
+      "Delete Page は成功しましたが、一部ページタブを閉じられませんでした。手動で閉じてください。",
+    );
+  });
+});
+
+describe("createRenamePageCommand", () => {
+  it("renames the current page and refreshes renamed subtree state", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec-renamed");
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.renamePage).toHaveBeenCalledWith({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      currentCanonicalPath: "/team/dev/spec",
+      targetCanonicalPath: "/team/dev/spec-renamed",
+      mode: "page",
+    });
+    expect(deps.clearSubtreeState).toHaveBeenCalledWith("/team/dev/spec");
+    expect(deps.invalidateReadDirectoryCache).toHaveBeenCalledWith("/team/dev");
+    expect(deps.invalidateReadDirectoryCache).toHaveBeenCalledWith("/");
+    expect(deps.reopenRenamedPages).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      "/team/dev/spec-renamed",
+    );
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("asks for subtree scope when descendants exist", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec-renamed");
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/team/dev/spec/child"],
+    });
+    deps.showRenameScopeConfirmation.mockResolvedValue("subtree");
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.showRenameScopeConfirmation).toHaveBeenCalledWith(
+      "/team/dev/spec",
+    );
+    expect(deps.renamePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "subtree",
+      }),
+    );
+  });
+
+  it("blocks rename when the active document is dirty", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.findOpenTextDocumentByUri.mockReturnValue({ isDirty: true });
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.renamePage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "未保存の変更があるため Rename Page を実行できません。先に保存してください。",
+    );
+  });
+
+  it("rejects invalid target path input", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("team/dev/spec-renamed");
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.renamePage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "Rename Page には先頭 / 付きのページパスを入力してください。",
+    );
+  });
+
+  it.each([
+    ["AlreadyExists", "同じ path のページが既に存在します。"],
+    [
+      "ParentNotFound",
+      "指定した親ページが見つからないため Rename Page を実行できませんでした。",
+    ],
+    [
+      "NotFound",
+      "対象ページが見つからないため Rename Page を実行できませんでした。",
+    ],
+    [
+      "InvalidApiToken",
+      "GROWI API token が無効です。Configure API Token を確認してください。",
+    ],
+    [
+      "PermissionDenied",
+      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+    ],
+    [
+      "ApiNotSupported",
+      "ページ名変更 API が未対応のため Rename Page を実行できませんでした。",
+    ],
+    [
+      "ConnectionFailed",
+      "GROWI への接続に失敗したため Rename Page を実行できませんでした。",
+    ],
+  ] as const)("maps %s rename failure to message", async (reason, message) => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec-renamed");
+    deps.renamePage.mockResolvedValue({ ok: false, reason });
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.reopenRenamedPages).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(message);
+  });
+
+  it("shows server rejection detail when rename request is rejected", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec-renamed");
+    deps.renamePage.mockResolvedValue({
+      ok: false,
+      reason: "Rejected",
+      message: "Rename Page request was rejected (HTTP 400: Invalid path).",
+    });
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "Rename Page request was rejected (HTTP 400: Invalid path).",
+    );
+  });
+
+  it("shows detailed unsupported message when rename API reports 405", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec-renamed");
+    deps.renamePage.mockResolvedValue({
+      ok: false,
+      reason: "ApiNotSupported",
+      message:
+        "Rename Page endpoint returned HTTP 405. The connected GROWI may not support PUT /_api/v3/pages/rename.",
+    });
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "Rename Page endpoint returned HTTP 405. The connected GROWI may not support PUT /_api/v3/pages/rename.",
+    );
+  });
+
+  it("shows a warning when renamed pages cannot be reopened cleanly", async () => {
+    const deps = createDeps();
+    deps.getActiveEditorUri.mockReturnValue(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      revisionId: "revision-001",
+      url: "https://growi.example.com/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec-renamed");
+    deps.reopenRenamedPages.mockResolvedValue({
+      attempted: true,
+      hasDirty: true,
+      hasFailed: false,
+    });
+
+    await createRenamePageCommand(deps)();
+
+    expect(deps.showWarningMessage).toHaveBeenCalledWith(
+      "Rename Page は成功しましたが、未保存変更のあるページは自動で開き直しませんでした。新しい path を開き直してください。",
+    );
+  });
+});
+
 describe("createOpenPrefixRootPageCommand", () => {
   it("opens the canonical page for a registered prefix root item", async () => {
     const deps = createDeps();
@@ -1222,6 +1816,48 @@ describe("Explorer context wrapper commands", () => {
     );
   });
 
+  it("starts create page from a page item's parent path", async () => {
+    const deps = createDeps();
+
+    await createExplorerCreatePageHereCommand(deps)({
+      uri: createUri("growi", "/team/dev/spec.md"),
+      contextValue: "growi.page",
+    });
+
+    expect(deps.executeCommand).toHaveBeenCalledWith(
+      GROWI_COMMANDS.createPage,
+      { initialValue: "/team/dev/" },
+    );
+  });
+
+  it("starts create page from a directory path", async () => {
+    const deps = createDeps();
+
+    await createExplorerCreatePageHereCommand(deps)({
+      uri: createUri("growi", "/team/dev/"),
+      contextValue: "growi.directory",
+    });
+
+    expect(deps.executeCommand).toHaveBeenCalledWith(
+      GROWI_COMMANDS.createPage,
+      { initialValue: "/team/dev/" },
+    );
+  });
+
+  it("starts create page from a prefix root path", async () => {
+    const deps = createDeps();
+
+    await createExplorerCreatePageHereCommand(deps)({
+      uri: createUri("growi", "/team/"),
+      contextValue: "growi.prefixRoot",
+    });
+
+    expect(deps.executeCommand).toHaveBeenCalledWith(
+      GROWI_COMMANDS.createPage,
+      { initialValue: "/team/" },
+    );
+  });
+
   it("ignores invalid Explorer targets for current-page wrappers", async () => {
     const deps = createDeps();
 
@@ -1230,6 +1866,44 @@ describe("Explorer context wrapper commands", () => {
     });
 
     expect(deps.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("ignores invalid Explorer targets for create-here", async () => {
+    const deps = createDeps();
+
+    await createExplorerCreatePageHereCommand(deps)({
+      uri: createUri("file", "/tmp/current.md"),
+    });
+
+    expect(deps.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("delegates rename from page items", async () => {
+    const deps = createDeps();
+
+    await createExplorerRenamePageCommand(deps)({
+      uri: createUri("growi", "/team/dev/spec.md"),
+      contextValue: "growi.page",
+    });
+
+    expect(deps.executeCommand).toHaveBeenCalledWith(
+      GROWI_COMMANDS.renamePage,
+      createUri("growi", "/team/dev/spec.md"),
+    );
+  });
+
+  it("delegates delete from directory page items", async () => {
+    const deps = createDeps();
+
+    await createExplorerDeletePageCommand(deps)({
+      uri: createUri("growi", "/team/dev.md"),
+      contextValue: "growi.directoryPage",
+    });
+
+    expect(deps.executeCommand).toHaveBeenCalledWith(
+      GROWI_COMMANDS.deletePage,
+      createUri("growi", "/team/dev.md"),
+    );
   });
 
   it("maps local round trip wrappers to the resolved page URI", async () => {
@@ -1812,7 +2486,9 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -1849,7 +2525,8 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
       `${createMirrorRootPath("/sample")}/hello.md`,
     );
     const manifestWrite = deps.writeLocalFile.mock.calls.find(
-      ([filePath]) => filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+      ([filePath]) =>
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
     );
     expect(manifestWrite).toBeDefined();
     expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
@@ -1873,7 +2550,10 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample/test", body: "# test\n" },
@@ -1882,7 +2562,9 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
           { rootCanonicalPath: "/sample/test" },
         );
       }
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -1913,7 +2595,8 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     );
     const manifestWrite = deps.writeLocalFile.mock.calls.find(
       ([filePath]) =>
-        filePath === `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`,
+        filePath ===
+        `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`,
     );
     expect(manifestWrite).toBeDefined();
     expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
@@ -1935,7 +2618,9 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     );
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return `${JSON.stringify(
           {
             version: 1,
@@ -1984,7 +2669,9 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return `${JSON.stringify(
           {
             version: 1,
@@ -2032,7 +2719,9 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -2535,7 +3224,9 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -2581,7 +3272,8 @@ describe("bundle commands", () => {
       expect.any(String),
     );
     const manifestWrite = deps.writeLocalFile.mock.calls.find(
-      ([filePath]) => filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+      ([filePath]) =>
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
     );
     expect(manifestWrite).toBeDefined();
     expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
@@ -2609,7 +3301,9 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -2962,10 +3656,15 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         throw new Error("missing exact manifest");
       }
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -2995,7 +3694,10 @@ describe("bundle commands", () => {
             ? "revision:/sample/hello:001"
             : `revision:${canonicalPath}:001`,
         baseUpdatedAt: "2026-03-08T00:00:00.000Z",
-        baseBody: canonicalPath === "/sample/hello" ? "# remote hello\n" : "# unchanged\n",
+        baseBody:
+          canonicalPath === "/sample/hello"
+            ? "# remote hello\n"
+            : "# unchanged\n",
       },
     }));
 
@@ -3005,31 +3707,39 @@ describe("bundle commands", () => {
 
     expect(deps.bootstrapEditSession).toHaveBeenCalledTimes(1);
     expect(deps.bootstrapEditSession).toHaveBeenCalledWith("/sample/hello");
-    expect(deps.openChanges).toHaveBeenCalledWith("GROWI Mirror Diff: /sample/hello", [
+    expect(deps.openChanges).toHaveBeenCalledWith(
+      "GROWI Mirror Diff: /sample/hello",
       [
-        {
-          scheme: "file",
-          path: `${createMirrorRootPath("/sample")}/hello.md`,
-          fsPath: `${createMirrorRootPath("/sample")}/hello.md`,
-        },
-        { scheme: "growi", path: "/sample/hello.md" },
-        {
-          scheme: "file",
-          path: `${createMirrorRootPath("/sample")}/hello.md`,
-          fsPath: `${createMirrorRootPath("/sample")}/hello.md`,
-        },
+        [
+          {
+            scheme: "file",
+            path: `${createMirrorRootPath("/sample")}/hello.md`,
+            fsPath: `${createMirrorRootPath("/sample")}/hello.md`,
+          },
+          { scheme: "growi", path: "/sample/hello.md" },
+          {
+            scheme: "file",
+            path: `${createMirrorRootPath("/sample")}/hello.md`,
+            fsPath: `${createMirrorRootPath("/sample")}/hello.md`,
+          },
+        ],
       ],
-    ]);
+    );
   });
 
   it("reuses an ancestor prefix mirror for subtree compare and limits the scope to the selected subtree", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/test")}/.growi-mirror.json`
+      ) {
         throw new Error("missing exact manifest");
       }
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             { canonicalPath: "/sample", body: "# sample\n" },
@@ -3058,7 +3768,9 @@ describe("bundle commands", () => {
             : `revision:${canonicalPath}:001`,
         baseUpdatedAt: "2026-03-08T00:00:00.000Z",
         baseBody:
-          canonicalPath === "/sample/test/child" ? "# remote child\n" : "# same\n",
+          canonicalPath === "/sample/test/child"
+            ? "# remote child\n"
+            : "# same\n",
       },
     }));
 
@@ -3083,13 +3795,18 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
           { rootCanonicalPath: "/sample/hello" },
         );
       }
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/__hello__.md`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample/hello")}/__hello__.md`
+      ) {
         return "# local hello\n";
       }
       throw new Error(`unexpected file: ${filePath}`);
@@ -3121,16 +3838,25 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         throw new Error("missing new manifest");
       }
-      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
           { rootCanonicalPath: "/sample/hello" },
         );
       }
-      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`) {
+      if (
+        filePath ===
+        `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`
+      ) {
         return "# local hello\n";
       }
       throw new Error(`unexpected file: ${filePath}`);
@@ -3145,9 +3871,9 @@ describe("bundle commands", () => {
       },
     });
 
-    const results = await createCompareLocalWorkFileWithCurrentPageCommand(deps)(
-      createUri("growi", "/sample/hello.md"),
-    );
+    const results = await createCompareLocalWorkFileWithCurrentPageCommand(
+      deps,
+    )(createUri("growi", "/sample/hello.md"));
 
     expect(results).toEqual([
       { canonicalPath: "/sample/hello", status: "LocalChanged" },
@@ -3162,10 +3888,15 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         throw new Error("missing exact manifest");
       }
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return `${JSON.stringify(
           {
             version: 1,
@@ -3198,9 +3929,9 @@ describe("bundle commands", () => {
       throw new Error(`unexpected file: ${filePath}`);
     });
 
-    const results = await createCompareLocalWorkFileWithCurrentPageCommand(deps)(
-      createUri("growi", "/sample/hello.md"),
-    );
+    const results = await createCompareLocalWorkFileWithCurrentPageCommand(
+      deps,
+    )(createUri("growi", "/sample/hello.md"));
 
     expect(results).toBeUndefined();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
@@ -3373,10 +4104,15 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         throw new Error("missing exact manifest");
       }
-      if (filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`) {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [
             {
@@ -3415,8 +4151,7 @@ describe("bundle commands", () => {
                 ? "revision:/sample/hello:001"
                 : "revision:/sample/hello:002",
             baseUpdatedAt: "2026-03-08T00:00:00.000Z",
-            baseBody:
-              callCount === 1 ? "# old hello\n" : "# local hello\n",
+            baseBody: callCount === 1 ? "# old hello\n" : "# local hello\n",
           },
         };
       }
@@ -3444,7 +4179,8 @@ describe("bundle commands", () => {
       }),
     );
     const manifestWrite = deps.writeLocalFile.mock.calls.find(
-      ([filePath]) => filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
+      ([filePath]) =>
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`,
     );
     expect(manifestWrite).toBeDefined();
     expect(JSON.parse(manifestWrite?.[1] as string)).toMatchObject({
@@ -3467,16 +4203,25 @@ describe("bundle commands", () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         throw new Error("missing new manifest");
       }
-      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`) {
+      if (
+        filePath ===
+        `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
         return createBundleManifest(
           [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
           { rootCanonicalPath: "/sample/hello" },
         );
       }
-      if (filePath === `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`) {
+      if (
+        filePath ===
+        `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`
+      ) {
         return "# local hello\n";
       }
       throw new Error(`unexpected file: ${filePath}`);
@@ -3507,7 +4252,8 @@ describe("bundle commands", () => {
     expect(
       deps.writeLocalFile.mock.calls.some(
         ([filePath]) =>
-          filePath === `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
+          filePath ===
+          `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
       ),
     ).toBe(true);
     expect(
@@ -3637,11 +4383,11 @@ describe("createShowBacklinksCommand", () => {
 });
 
 describe("createShowCurrentPageActionsCommand", () => {
-  it("includes revision history diff in current page actions", async () => {
+  it("includes delete, rename and revision history diff in current page actions", async () => {
     const executeCommand = vi.fn(async () => {});
     const showQuickPick = vi.fn(async () => ({
-      label: "履歴差分を表示",
-      command: GROWI_COMMANDS.showRevisionHistoryDiff,
+      label: "ページを削除",
+      command: GROWI_COMMANDS.deletePage,
     }));
 
     await createShowCurrentPageActionsCommand({
@@ -3656,6 +4402,14 @@ describe("createShowCurrentPageActionsCommand", () => {
     expect(showQuickPick).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
+          label: "ページ名を変更",
+          command: GROWI_COMMANDS.renamePage,
+        }),
+        expect.objectContaining({
+          label: "ページを削除",
+          command: GROWI_COMMANDS.deletePage,
+        }),
+        expect.objectContaining({
           label: "履歴差分を表示",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         }),
@@ -3663,7 +4417,7 @@ describe("createShowCurrentPageActionsCommand", () => {
       { placeHolder: "現在ページに対して実行する操作を選択してください。" },
     );
     expect(executeCommand).toHaveBeenCalledWith(
-      GROWI_COMMANDS.showRevisionHistoryDiff,
+      GROWI_COMMANDS.deletePage,
       createUri("growi", "/team/dev/spec.md"),
     );
   });

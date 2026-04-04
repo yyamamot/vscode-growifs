@@ -5,6 +5,7 @@
       "name": "Run Extension",
       "type": "extensionHost",
       "request": "launch",
+      "preLaunchTask": "pnpm: build",
       "runtimeExecutable": "${execPath}",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",

@@ -67,13 +67,28 @@ function sanitizeInstanceKeySegment(input: string): string {
 
 function normalizeBasePathname(pathname: string): string {
   const normalizedPath = pathname.replace(/\\/g, "/").replace(/\\/g, "/");
-  return normalizedPath.endsWith("/") ? normalizedPath.slice(0, -1) : normalizedPath;
+  return normalizedPath.endsWith("/")
+    ? normalizedPath.slice(0, -1)
+    : normalizedPath;
+}
+
+function isInvalidPathCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0);
+  if (codePoint === undefined) {
+    return false;
+  }
+  if (codePoint <= 0x1f || codePoint === 0x7f) {
+    return true;
+  }
+  return '<>:"/\\|?*'.includes(character);
 }
 
 function sanitizePathSegment(input: string): string {
   const normalized = input.normalize("NFC");
   const replaced = normalized
-    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, "_")
+    .split("")
+    .map((character) => (isInvalidPathCharacter(character) ? "_" : character))
+    .join("")
     .trim()
     .replace(/[. ]+$/g, "");
 
@@ -107,7 +122,9 @@ export function buildLegacyInstanceKey(baseUrl: string): string {
 }
 
 export function listMirrorInstanceKeys(baseUrl: string): string[] {
-  return [...new Set([buildInstanceKey(baseUrl), buildLegacyInstanceKey(baseUrl)])];
+  return [
+    ...new Set([buildInstanceKey(baseUrl), buildLegacyInstanceKey(baseUrl)]),
+  ];
 }
 
 export function canonicalPathToRelativeFilePath(canonicalPath: string): string {
@@ -122,7 +139,9 @@ export function canonicalPathToRelativeFilePath(canonicalPath: string): string {
 }
 
 function getCanonicalPathBasename(canonicalPath: string): string | undefined {
-  const segments = canonicalPath.split("/").filter((segment) => segment.length > 0);
+  const segments = canonicalPath
+    .split("/")
+    .filter((segment) => segment.length > 0);
   return segments.at(-1);
 }
 
@@ -138,9 +157,12 @@ function isDirectoryPage(
   canonicalPath: string,
   allCanonicalPaths: readonly string[],
 ): boolean {
-  const normalized = canonicalPath.endsWith("/") ? canonicalPath : `${canonicalPath}/`;
+  const normalized = canonicalPath.endsWith("/")
+    ? canonicalPath
+    : `${canonicalPath}/`;
   return allCanonicalPaths.some(
-    (candidate) => candidate !== canonicalPath && candidate.startsWith(normalized),
+    (candidate) =>
+      candidate !== canonicalPath && candidate.startsWith(normalized),
   );
 }
 
@@ -316,7 +338,11 @@ export function buildMirrorManifestPathWithInstanceKey(
   rootCanonicalPath: string,
 ): string {
   return path.join(
-    buildMirrorRootPathWithInstanceKey(workspaceRoot, instanceKey, rootCanonicalPath),
+    buildMirrorRootPathWithInstanceKey(
+      workspaceRoot,
+      instanceKey,
+      rootCanonicalPath,
+    ),
     MIRROR_MANIFEST_NAME,
   );
 }
@@ -342,7 +368,11 @@ export function buildMirrorPageFilePathWithInstanceKey(
   relativeFilePath: string,
 ): string {
   return path.join(
-    buildMirrorRootPathWithInstanceKey(workspaceRoot, instanceKey, rootCanonicalPath),
+    buildMirrorRootPathWithInstanceKey(
+      workspaceRoot,
+      instanceKey,
+      rootCanonicalPath,
+    ),
     ...relativeFilePath.split("/"),
   );
 }

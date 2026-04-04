@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildInstanceKey,
   buildLegacyInstanceKey,
-  buildMirrorRelativeFilePath,
   buildLocalWorkFilePath,
+  buildMirrorRelativeFilePath,
   LOCAL_WORK_FILE_NAME,
+  parseLocalRoundTripWorkFile,
   parseMirrorManifest,
   planMirrorRelativeFilePaths,
-  parseLocalRoundTripWorkFile,
-  serializeMirrorManifest,
   serializeLocalRoundTripWorkFile,
+  serializeMirrorManifest,
 } from "../../src/vscode/localRoundTrip";
 
 describe("localRoundTrip", () => {

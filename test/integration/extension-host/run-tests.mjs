@@ -385,6 +385,9 @@ export async function run() {
       "growi.configureBaseUrl",
       "growi.configureApiToken",
       "growi.addPrefix",
+      "growi.createPage",
+      "growi.deletePage",
+      "growi.renamePage",
       "growi.clearPrefixes",
       "growi.openPage",
       "growi.startEdit",
@@ -402,6 +405,9 @@ export async function run() {
       "growi.showCurrentPageInfo",
       "growi.showBacklinks",
       "growi.explorerOpenPageItem",
+      "growi.explorerCreatePageHere",
+      "growi.explorerRenamePage",
+      "growi.explorerDeletePage",
       "growi.explorerRefreshCurrentPage",
       "growi.explorerShowBacklinks",
       "growi.explorerShowCurrentPageInfo",
@@ -435,6 +441,391 @@ export async function run() {
     assert(
       stats.page >= 1 && stats.revision >= 1,
       `Expected page/revision requests, got ${toJsonString(stats)}`,
+    );
+  });
+
+  await runCase("create page success", async () => {
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand(
+      "growi.createPage",
+      "/team/dev/new-page",
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === "/team/dev/new-page.md",
+      `Unexpected active path after create: ${activePath}`,
+    );
+
+    const doc = vscode.window.activeTextEditor?.document;
+    assert(Boolean(doc), "Active document is missing after create.");
+    assert(
+      doc.getText() === "",
+      `Expected empty body for newly created page, got: ${doc.getText()}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      entries.some(
+        ([name, type]) =>
+          name === "new-page.md" && type === vscode.FileType.File,
+      ),
+      `Expected new page to appear in listing: ${toJsonString(entries)}`,
+    );
+
+    const stats = await getStats(adminUrl);
+    assert(
+      stats.create >= 1 && stats.list >= 1,
+      `Expected create/list requests after create command, got ${toJsonString(stats)}`,
+    );
+  });
+
+  await runCase("create page from explorer context success", async () => {
+    await resetStats(adminUrl);
+
+    await withWindowOverrides(
+      {
+        showInputBox: async (options) => {
+          assert(
+            options?.value === "/team/dev/",
+            `Unexpected create-here initial value: ${options?.value}`,
+          );
+          return "/team/dev/new-context-page";
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.explorerCreatePageHere", {
+          uri: vscode.Uri.parse("growi:/team/dev/spec.md"),
+          contextValue: "growi.page",
+        });
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === "/team/dev/new-context-page.md",
+      `Unexpected active path after context create: ${activePath}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      entries.some(
+        ([name, type]) =>
+          name === "new-context-page.md" && type === vscode.FileType.File,
+      ),
+      `Expected context-created page to appear in listing: ${toJsonString(entries)}`,
+    );
+  });
+
+  await runCase("rename page from explorer context success", async () => {
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand(
+      "growi.createPage",
+      "/team/dev/wrapper-rename-source",
+    );
+
+    await withWindowOverrides(
+      {
+        showInputBox: async (options) => {
+          assert(
+            options?.value === "/team/dev/wrapper-rename-source",
+            `Unexpected rename initial value: ${options?.value}`,
+          );
+          return "/team/dev/wrapper-rename-target";
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.explorerRenamePage", {
+          uri: vscode.Uri.parse("growi:/team/dev/wrapper-rename-source.md"),
+          contextValue: "growi.page",
+        });
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === "/team/dev/wrapper-rename-target.md",
+      `Unexpected active path after explorer rename: ${activePath}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      entries.some(
+        ([name, type]) =>
+          name === "wrapper-rename-target.md" && type === vscode.FileType.File,
+      ),
+      `Expected renamed page to appear in listing: ${toJsonString(entries)}`,
+    );
+  });
+
+  await runCase("delete page from explorer context success", async () => {
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand(
+      "growi.createPage",
+      "/team/dev/wrapper-delete-source",
+    );
+
+    await withWindowOverrides(
+      {
+        showWarningMessage: async (message, _optionsOrAction, ...actions) => {
+          if (
+            typeof message === "string" &&
+            message.includes("ゴミ箱に移動しますか")
+          ) {
+            return actions.find((action) => action === "ゴミ箱に移動する");
+          }
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.explorerDeletePage", {
+          uri: vscode.Uri.parse("growi:/team/dev/wrapper-delete-source.md"),
+          contextValue: "growi.page",
+        });
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === undefined,
+      `Expected explorer delete to close active page, got ${activePath}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      !entries.some(([name]) => name === "wrapper-delete-source.md"),
+      `Expected deleted page to disappear from listing: ${toJsonString(entries)}`,
+    );
+  });
+
+  await runCase("rename page success", async () => {
+    await updateFixture(adminUrl, BACKLINK_FIXTURE_PAGES);
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+
+    await withWindowOverrides(
+      {
+        showInputBox: async () => "/team/dev/spec-renamed",
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.renamePage");
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === "/team/dev/spec-renamed.md",
+      `Unexpected active path after rename: ${activePath}`,
+    );
+
+    const renamedPage = await getPageFixture(
+      adminUrl,
+      "/team/dev/spec-renamed",
+    );
+    assert(
+      renamedPage.path === "/team/dev/spec-renamed",
+      `Renamed page was not persisted: ${toJsonString(renamedPage)}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      entries.some(
+        ([name, type]) =>
+          name === "spec-renamed.md" && type === vscode.FileType.File,
+      ),
+      `Expected renamed page to appear in listing: ${toJsonString(entries)}`,
+    );
+
+    const stats = await getStats(adminUrl);
+    assert(
+      stats.rename >= 1,
+      `Expected rename request after rename command, got ${toJsonString(stats)}`,
+    );
+  });
+
+  await runCase("delete page success", async () => {
+    await closeAllEditors();
+    await updateFixture(adminUrl, BACKLINK_FIXTURE_PAGES);
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+
+    await withWindowOverrides(
+      {
+        showWarningMessage: async (message, _optionsOrAction, ...actions) => {
+          if (
+            typeof message === "string" &&
+            message.includes("ゴミ箱に移動しますか")
+          ) {
+            return actions.find((action) => action === "ゴミ箱に移動する");
+          }
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.deletePage");
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === undefined,
+      `Expected deleted page editor to close, got ${activePath}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      !entries.some(([name]) => name === "spec.md"),
+      `Expected deleted page to disappear from listing: ${toJsonString(entries)}`,
+    );
+
+    const stats = await getStats(adminUrl);
+    assert(
+      stats.delete >= 1 && stats.list >= 1,
+      `Expected delete/list requests after delete command, got ${toJsonString(stats)}`,
+    );
+  });
+
+  await runCase("rename subtree from current page actions", async () => {
+    await updateFixture(adminUrl, NESTED_TREE_FIXTURE_PAGES);
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand("growi.openPage", "/team/dev/docs");
+
+    await withWindowOverrides(
+      {
+        showInputBox: async () => "/team/dev/guides",
+        showQuickPick: async (items, options) => {
+          if (
+            options.placeHolder ===
+            "現在ページに対して実行する操作を選択してください。"
+          ) {
+            return items.find((item) => item.command === "growi.renamePage");
+          }
+          throw new Error(
+            `Unexpected quick pick invocation: ${toJsonString({ items, options })}`,
+          );
+        },
+        showWarningMessage: async (message, _optionsOrAction, ...actions) => {
+          if (
+            typeof message === "string" &&
+            message.includes("Rename Page の範囲を選択してください。")
+          ) {
+            return actions.find((action) => action === "配下も含める");
+          }
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.showCurrentPageActions");
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === "/team/dev/guides.md",
+      `Unexpected active path after subtree rename: ${activePath}`,
+    );
+
+    const renamedRoot = await getPageFixture(adminUrl, "/team/dev/guides");
+    const renamedChild = await getPageFixture(
+      adminUrl,
+      "/team/dev/guides/guide",
+    );
+    assert(
+      renamedRoot.path === "/team/dev/guides" &&
+        renamedChild.path === "/team/dev/guides/guide",
+      `Subtree rename was not persisted: ${toJsonString({
+        renamedRoot,
+        renamedChild,
+      })}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      entries.some(
+        ([name, type]) => name === "guides.md" && type === vscode.FileType.File,
+      ),
+      `Expected renamed subtree root to appear in listing: ${toJsonString(entries)}`,
+    );
+
+    const stats = await getStats(adminUrl);
+    assert(
+      stats.rename >= 1 && stats.page >= 1,
+      `Expected rename flow to reopen renamed pages, got ${toJsonString(stats)}`,
+    );
+  });
+
+  await runCase("delete subtree from current page actions", async () => {
+    await closeAllEditors();
+    await updateFixture(adminUrl, NESTED_TREE_FIXTURE_PAGES);
+    await resetStats(adminUrl);
+    await vscode.commands.executeCommand("growi.openPage", "/team/dev/docs");
+
+    await withWindowOverrides(
+      {
+        showQuickPick: async (items, options) => {
+          if (
+            options.placeHolder ===
+            "現在ページに対して実行する操作を選択してください。"
+          ) {
+            return items.find((item) => item.command === "growi.deletePage");
+          }
+          throw new Error(
+            `Unexpected quick pick invocation: ${toJsonString({ items, options })}`,
+          );
+        },
+        showWarningMessage: async (message, _optionsOrAction, ...actions) => {
+          if (
+            typeof message === "string" &&
+            message.includes("Delete Page の範囲を選択してください。")
+          ) {
+            return actions.find((action) => action === "配下も含める");
+          }
+          if (
+            typeof message === "string" &&
+            message.includes("ゴミ箱に移動しますか")
+          ) {
+            return actions.find((action) => action === "ゴミ箱に移動する");
+          }
+          return undefined;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.showCurrentPageActions");
+      },
+    );
+
+    const activePath = await getActivePath();
+    assert(
+      activePath === undefined,
+      `Expected deleted subtree editor to close, got ${activePath}`,
+    );
+
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.parse("growi:/team/dev/"),
+    );
+    assert(
+      !entries.some(([name]) => name === "docs.md" || name === "docs"),
+      `Expected deleted subtree root to disappear from listing: ${toJsonString(entries)}`,
+    );
+
+    const stats = await getStats(adminUrl);
+    assert(
+      stats.delete >= 1,
+      `Expected delete request after subtree delete, got ${toJsonString(stats)}`,
     );
   });
 
@@ -497,7 +888,10 @@ export async function run() {
         await vscode.workspace
           .getConfiguration("growi")
           .update("baseUrl", undefined, vscode.ConfigurationTarget.Global);
-        await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+        await vscode.commands.executeCommand(
+          "growi.openPage",
+          "/team/dev/spec",
+        );
       },
     );
 
@@ -528,7 +922,10 @@ export async function run() {
         },
       },
       async () => {
-        await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+        await vscode.commands.executeCommand(
+          "growi.openPage",
+          "/team/dev/spec",
+        );
       },
     );
 
@@ -559,7 +956,10 @@ export async function run() {
         },
       },
       async () => {
-        await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+        await vscode.commands.executeCommand(
+          "growi.openPage",
+          "/team/dev/spec",
+        );
       },
     );
 
@@ -1109,7 +1509,9 @@ export async function run() {
       });
 
       await vscode.commands.executeCommand("growi.openPage", "/sample");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPage");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPage",
+      );
 
       const newManifestPath = path.join(
         getWorkspaceMirrorRootPath(baseUrl, "/sample"),
@@ -1130,12 +1532,14 @@ export async function run() {
 
       assert(
         newExists === true && oldExists === false,
-        `Expected page mirror to use the scheme-less instanceKey: ${toJsonString({
-          newManifestPath,
-          oldManifestPath,
-          newExists,
-          oldExists,
-        })}`,
+        `Expected page mirror to use the scheme-less instanceKey: ${toJsonString(
+          {
+            newManifestPath,
+            oldManifestPath,
+            newExists,
+            oldExists,
+          },
+        )}`,
       );
     },
   );
@@ -1169,10 +1573,14 @@ export async function run() {
       });
 
       await vscode.commands.executeCommand("growi.openPage", "/sample");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPrefix",
+      );
 
       await vscode.commands.executeCommand("growi.openPage", "/sample/hello");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPage");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPage",
+      );
 
       const prefixManifestPath = path.join(
         getWorkspaceMirrorRootPath(baseUrl, "/sample"),
@@ -1211,12 +1619,14 @@ export async function run() {
         .catch(() => false);
       assert(
         nestedManifestExists === false && nestedReservedExists === false,
-        `Current page mirror should not create nested mirror root: ${toJsonString({
-          nestedManifestPath,
-          nestedReservedPath,
-          nestedManifestExists,
-          nestedReservedExists,
-        })}`,
+        `Current page mirror should not create nested mirror root: ${toJsonString(
+          {
+            nestedManifestPath,
+            nestedReservedPath,
+            nestedManifestExists,
+            nestedReservedExists,
+          },
+        )}`,
       );
     },
   );
@@ -1245,7 +1655,9 @@ export async function run() {
       });
 
       await vscode.commands.executeCommand("growi.openPage", "/sample");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPrefix",
+      );
       await fs.writeFile(
         path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), "hello.md"),
         "# hello page updated locally\n",
@@ -1311,7 +1723,9 @@ export async function run() {
       });
 
       await vscode.commands.executeCommand("growi.openPage", "/sample");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPrefix",
+      );
       await fs.writeFile(
         path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), "hello.md"),
         "# hello page updated locally\n",
@@ -1344,7 +1758,10 @@ export async function run() {
       );
       const prefixManifest = JSON.parse(
         await fs.readFile(
-          path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), ".growi-mirror.json"),
+          path.join(
+            getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+            ".growi-mirror.json",
+          ),
           "utf8",
         ),
       );
@@ -1388,7 +1805,11 @@ export async function run() {
 
       const exportedAt = "2026-03-09T00:00:00.000Z";
       const legacyBody = "# hello page legacy local change\n";
-      await fs.writeFile(path.join(legacyRootPath, "__hello__.md"), legacyBody, "utf8");
+      await fs.writeFile(
+        path.join(legacyRootPath, "__hello__.md"),
+        legacyBody,
+        "utf8",
+      );
       await fs.writeFile(
         path.join(legacyRootPath, ".growi-mirror.json"),
         `${JSON.stringify(
@@ -1459,8 +1880,13 @@ export async function run() {
       );
 
       const newManifestPath = path.join(newRootPath, ".growi-mirror.json");
-      const newManifest = JSON.parse(await fs.readFile(newManifestPath, "utf8"));
-      const newBody = await fs.readFile(path.join(newRootPath, "__hello__.md"), "utf8");
+      const newManifest = JSON.parse(
+        await fs.readFile(newManifestPath, "utf8"),
+      );
+      const newBody = await fs.readFile(
+        path.join(newRootPath, "__hello__.md"),
+        "utf8",
+      );
       const legacyManifestExists = await fs
         .access(path.join(legacyRootPath, ".growi-mirror.json"))
         .then(() => true)
@@ -1480,14 +1906,16 @@ export async function run() {
           newBody === legacyBody &&
           legacyManifestExists === false &&
           legacyBodyExists === false,
-        `Expected legacy-key page mirror to migrate into the scheme-less instanceKey: ${toJsonString({
-          newManifestPath,
-          newManifest,
-          newBody,
-          legacyRootPath,
-          legacyManifestExists,
-          legacyBodyExists,
-        })}`,
+        `Expected legacy-key page mirror to migrate into the scheme-less instanceKey: ${toJsonString(
+          {
+            newManifestPath,
+            newManifest,
+            newBody,
+            legacyRootPath,
+            legacyManifestExists,
+            legacyBodyExists,
+          },
+        )}`,
       );
     },
   );
@@ -1527,10 +1955,14 @@ export async function run() {
       });
 
       await vscode.commands.executeCommand("growi.openPage", "/sample");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPrefix",
+      );
 
       await vscode.commands.executeCommand("growi.openPage", "/sample/test");
-      await vscode.commands.executeCommand("growi.createLocalMirrorForCurrentPrefix");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPrefix",
+      );
 
       const prefixManifestPath = path.join(
         getWorkspaceMirrorRootPath(baseUrl, "/sample"),
@@ -1565,10 +1997,12 @@ export async function run() {
         .catch(() => false);
       assert(
         nestedManifestExists === false,
-        `Current prefix mirror should not create nested manifest root: ${toJsonString({
-          nestedManifestPath,
-          nestedManifestExists,
-        })}`,
+        `Current prefix mirror should not create nested manifest root: ${toJsonString(
+          {
+            nestedManifestPath,
+            nestedManifestExists,
+          },
+        )}`,
       );
     },
   );
@@ -2606,9 +3040,7 @@ export async function run() {
       );
       assert(
         delegatedCommands[0]?.args[0]?.path === "/team/dev.md",
-        `Unexpected delegated page URI: ${toJsonString(
-          delegatedCommands,
-        )}`,
+        `Unexpected delegated page URI: ${toJsonString(delegatedCommands)}`,
       );
     },
   );

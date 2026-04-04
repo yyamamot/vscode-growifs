@@ -9,7 +9,9 @@ import { collectMarkdownLinkCandidates as collectMarkdownLinks } from "./markdow
 
 export interface GrowiLinkNavigationDeps {
   getBaseUrl(): string | undefined;
-  resolvePageReference(reference: ParsedGrowiReference): Promise<
+  resolvePageReference(
+    reference: ParsedGrowiReference,
+  ): Promise<
     | { ok: true; canonicalPath: string; uri: string }
     | { ok: false; reason: GrowiReadFailureReason }
   >;

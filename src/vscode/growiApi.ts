@@ -3,8 +3,13 @@ import type {
   GrowiCurrentPageInfo,
   GrowiCurrentRevisionResult,
   GrowiEditSession,
+  GrowiPageCreateResult,
+  GrowiPageDeleteMode,
+  GrowiPageDeleteResult,
   GrowiPageListResult,
   GrowiPageReadResult,
+  GrowiPageRenameMode,
+  GrowiPageRenameResult,
   GrowiPageWriteResult,
 } from "./fsProvider";
 import type {
@@ -25,6 +30,19 @@ function isObjectRecord(value: unknown): value is JsonObject {
 function readStringField(source: JsonObject, key: string): string | undefined {
   const value = source[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readErrorMessage(
+  payload: JsonObject | null | undefined,
+): string | undefined {
+  if (!payload) {
+    return undefined;
+  }
+  return (
+    readStringField(payload, "error") ??
+    readStringField(payload, "message") ??
+    readStringField(payload, "msg")
+  );
 }
 
 function hasJsonContentType(response: Response): boolean {
@@ -68,6 +86,33 @@ async function parseOptionalJsonObject(
   }
 }
 
+async function parseOptionalErrorResponse(response: Response): Promise<{
+  payload: JsonObject | null | undefined;
+  rawText?: string;
+}> {
+  const contentType = response.headers.get("content-type");
+  const rawBody = await response.text();
+  if (rawBody.length === 0) {
+    return { payload: null };
+  }
+  if (contentType?.toLowerCase().includes("application/json")) {
+    try {
+      const payload: unknown = JSON.parse(rawBody);
+      if (isObjectRecord(payload)) {
+        return { payload };
+      }
+    } catch {
+      // Fall through and surface the raw body below.
+    }
+  }
+
+  return {
+    payload: undefined,
+    rawText:
+      rawBody.length > 200 ? `${rawBody.slice(0, 200).trimEnd()}...` : rawBody,
+  };
+}
+
 function isLoginPath(pathname: string): boolean {
   return pathname === "/login" || pathname.startsWith("/login/");
 }
@@ -102,11 +147,13 @@ function isLoginRedirectResponse(response: Response): boolean {
   return false;
 }
 
-function classifyPageSnapshotFailureStatus(
-  status: number,
-): {
+function classifyPageSnapshotFailureStatus(status: number): {
   ok: false;
-  reason: "NotFound" | "InvalidApiToken" | "PermissionDenied" | "ApiNotSupported";
+  reason:
+    | "NotFound"
+    | "InvalidApiToken"
+    | "PermissionDenied"
+    | "ApiNotSupported";
 } {
   if (status === 404) {
     return { ok: false, reason: "NotFound" };
@@ -179,6 +226,10 @@ function buildCurrentPageInfo(
   const path = readStringField(page, "path");
   const lastUpdatedAt = readStringField(page, "updatedAt");
   const lastUpdatedBy = readLastUpdatedBy(page);
+  const revision = isObjectRecord(page.revision) ? page.revision : undefined;
+  const revisionId =
+    readStringField(page, "revision") ??
+    (revision ? readStringField(revision, "_id") : undefined);
   if (!pageId || !path || !lastUpdatedAt || !lastUpdatedBy) {
     return undefined;
   }
@@ -190,7 +241,9 @@ function buildCurrentPageInfo(
     return undefined;
   }
 
-  return { pageId, url, path, lastUpdatedBy, lastUpdatedAt };
+  return revisionId
+    ? { pageId, revisionId, url, path, lastUpdatedBy, lastUpdatedAt }
+    : { pageId, url, path, lastUpdatedBy, lastUpdatedAt };
 }
 
 function readRevisionAuthor(revision: JsonObject): string | undefined {
@@ -226,12 +279,12 @@ type PageSnapshotDataResult =
       };
     }
   | {
-        ok: false;
-        reason:
-          | "InvalidApiToken"
-          | "PermissionDenied"
-          | "ApiNotSupported"
-          | "ConnectionFailed"
+      ok: false;
+      reason:
+        | "InvalidApiToken"
+        | "PermissionDenied"
+        | "ApiNotSupported"
+        | "ConnectionFailed"
         | "NotFound";
     };
 
@@ -267,6 +320,32 @@ export type GrowiApiAdapter = {
     baseUrl: string,
     apiToken: string,
   ): Promise<GrowiPageListResult>;
+  createPage(
+    canonicalPath: string,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiPageCreateResult>;
+  deletePage(
+    input: {
+      pageId: string;
+      revisionId: string;
+      canonicalPath: string;
+      mode: GrowiPageDeleteMode;
+    },
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiPageDeleteResult>;
+  renamePage(
+    input: {
+      pageId: string;
+      revisionId: string;
+      currentCanonicalPath: string;
+      targetCanonicalPath: string;
+      mode: GrowiPageRenameMode;
+    },
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiPageRenameResult>;
   listRevisions(
     pageId: string,
     baseUrl: string,
@@ -554,6 +633,303 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
       }
 
       return { ok: true, paths } as const;
+    },
+
+    async createPage(canonicalPath, baseUrl, apiToken) {
+      let pageEndpoint: URL;
+      try {
+        pageEndpoint = new URL("/_api/v3/page", baseUrl);
+      } catch {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      let pageResponse: Response;
+      try {
+        pageResponse = await fetchWithTimeout(pageEndpoint, {
+          body: JSON.stringify({
+            body: "",
+            path: canonicalPath,
+          }),
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${apiToken}`,
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+          redirect: "manual",
+        });
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(pageResponse)) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (pageResponse.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (pageResponse.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
+      if (pageResponse.status === 404) {
+        const payload = await parseOptionalJsonObject(pageResponse);
+        if (payload?.error === "ParentPageNotFound") {
+          return { ok: false, reason: "NotFound" } as const;
+        }
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (pageResponse.status === 409) {
+        const payload = await parseOptionalJsonObject(pageResponse);
+        if (payload?.error === "PageAlreadyExists") {
+          return { ok: false, reason: "AlreadyExists" } as const;
+        }
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (!pageResponse.ok || pageResponse.status === 405) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const payload = await parseOptionalJsonObject(pageResponse);
+      if (payload === undefined) {
+        return { ok: true } as const;
+      }
+      if (payload === null) {
+        return { ok: true } as const;
+      }
+
+      const page = payload.page;
+      if (!isObjectRecord(page)) {
+        return { ok: true } as const;
+      }
+      const pageInfo = buildCurrentPageInfo(page, baseUrl);
+      if (!pageInfo) {
+        return { ok: true } as const;
+      }
+
+      return { ok: true, pageInfo } as const;
+    },
+
+    async deletePage(input, baseUrl, apiToken) {
+      const requestBody: Record<string, unknown> = {
+        pageIdToRevisionIdMap: {
+          [input.pageId]: input.revisionId,
+        },
+      };
+      if (input.mode === "subtree") {
+        requestBody.isRecursively = true;
+      }
+
+      let pageEndpoint: URL;
+      try {
+        pageEndpoint = new URL("/_api/v3/pages/delete", baseUrl);
+      } catch {
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message: "Delete Page endpoint URL could not be constructed.",
+        } as const;
+      }
+
+      let pageResponse: Response;
+      try {
+        pageResponse = await fetchWithTimeout(pageEndpoint, {
+          body: JSON.stringify(requestBody),
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${apiToken}`,
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+          redirect: "manual",
+        });
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(pageResponse)) {
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message:
+            "Delete Page request was redirected to login. The endpoint may require cookie authentication or the API token may not be accepted for this API.",
+        } as const;
+      }
+      if (pageResponse.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (pageResponse.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
+      if (pageResponse.status === 404) {
+        const { payload, rawText } =
+          await parseOptionalErrorResponse(pageResponse);
+        if (payload?.error === "PageNotFound") {
+          return { ok: false, reason: "NotFound" } as const;
+        }
+        const detail = readErrorMessage(payload) ?? rawText;
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message: detail
+            ? `Delete Page endpoint returned HTTP 404: ${detail}.`
+            : "Delete Page endpoint returned HTTP 404.",
+        } as const;
+      }
+      if (pageResponse.status === 405) {
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message:
+            "Delete Page endpoint returned HTTP 405. The connected GROWI may not support POST /_api/v3/pages/delete.",
+        } as const;
+      }
+      if (!pageResponse.ok) {
+        const { payload, rawText } =
+          await parseOptionalErrorResponse(pageResponse);
+        const detail = readErrorMessage(payload) ?? rawText;
+        if (
+          pageResponse.status === 400 &&
+          (payload?.error === "PageHasChildren" ||
+            detail?.toLowerCase().includes("child") ||
+            detail?.toLowerCase().includes("descendant"))
+        ) {
+          return { ok: false, reason: "HasChildren" } as const;
+        }
+        const message = detail
+          ? `Delete Page request was rejected (HTTP ${pageResponse.status}: ${detail}).`
+          : `Delete Page request was rejected (HTTP ${pageResponse.status}). Sent pageId=${input.pageId}, revisionId=${input.revisionId}, path=${input.canonicalPath}, isRecursively=${requestBody.isRecursively}.`;
+        return { ok: false, reason: "Rejected", message } as const;
+      }
+
+      return { ok: true } as const;
+    },
+
+    async renamePage(input, baseUrl, apiToken) {
+      const requestBody = {
+        isRecursively: input.mode === "subtree",
+        isRenameRedirect: false,
+        newPagePath: input.targetCanonicalPath,
+        pageId: input.pageId,
+        path: input.currentCanonicalPath,
+        revisionId: input.revisionId,
+        updateMetadata: true,
+      };
+      let pageEndpoint: URL;
+      try {
+        pageEndpoint = new URL("/_api/v3/pages/rename", baseUrl);
+      } catch {
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message: "Rename Page endpoint URL could not be constructed.",
+        } as const;
+      }
+
+      let pageResponse: Response;
+      try {
+        pageResponse = await fetchWithTimeout(pageEndpoint, {
+          body: JSON.stringify(requestBody),
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${apiToken}`,
+            "Content-Type": "application/json",
+          },
+          method: "PUT",
+          redirect: "manual",
+        });
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(pageResponse)) {
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message:
+            "Rename Page request was redirected to login. The endpoint may require cookie authentication or the API token may not be accepted for this API.",
+        } as const;
+      }
+      if (pageResponse.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (pageResponse.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
+      if (pageResponse.status === 404) {
+        const { payload, rawText } =
+          await parseOptionalErrorResponse(pageResponse);
+        if (payload?.error === "ParentPageNotFound") {
+          return { ok: false, reason: "ParentNotFound" } as const;
+        }
+        if (payload?.error === "PageNotFound") {
+          return { ok: false, reason: "NotFound" } as const;
+        }
+        const detail = readErrorMessage(payload) ?? rawText;
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message: detail
+            ? `Rename Page endpoint returned HTTP 404: ${detail}.`
+            : "Rename Page endpoint returned HTTP 404.",
+        } as const;
+      }
+      if (pageResponse.status === 409) {
+        const { payload, rawText } =
+          await parseOptionalErrorResponse(pageResponse);
+        if (payload?.error === "PageAlreadyExists") {
+          return { ok: false, reason: "AlreadyExists" } as const;
+        }
+        const detail = readErrorMessage(payload) ?? rawText;
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message: detail
+            ? `Rename Page endpoint returned HTTP 409: ${detail}.`
+            : "Rename Page endpoint returned HTTP 409.",
+        } as const;
+      }
+      if (pageResponse.status === 405) {
+        return {
+          ok: false,
+          reason: "ApiNotSupported",
+          message:
+            "Rename Page endpoint returned HTTP 405. The connected GROWI may not support PUT /_api/v3/pages/rename.",
+        } as const;
+      }
+      if (!pageResponse.ok) {
+        const { payload, rawText } =
+          await parseOptionalErrorResponse(pageResponse);
+        const detail = readErrorMessage(payload) ?? rawText;
+        const message = detail
+          ? `Rename Page request was rejected (HTTP ${pageResponse.status}: ${detail}).`
+          : `Rename Page request was rejected (HTTP ${pageResponse.status}). Sent pageId=${requestBody.pageId}, revisionId=${requestBody.revisionId}, path=${requestBody.path}, newPagePath=${requestBody.newPagePath}, isRecursively=${requestBody.isRecursively}.`;
+        return { ok: false, reason: "Rejected", message } as const;
+      }
+
+      const payload = await parseOptionalJsonObject(pageResponse);
+      if (payload === undefined || payload === null) {
+        return {
+          ok: true,
+          canonicalPath: input.targetCanonicalPath,
+        } as const;
+      }
+
+      const page = isObjectRecord(payload.page)
+        ? payload.page
+        : isObjectRecord(payload.renamedPage)
+          ? payload.renamedPage
+          : undefined;
+      if (!page) {
+        return {
+          ok: true,
+          canonicalPath: input.targetCanonicalPath,
+        } as const;
+      }
+
+      const canonicalPath =
+        readStringField(page, "path") ?? input.targetCanonicalPath;
+      const pageInfo = buildCurrentPageInfo(page, baseUrl);
+      return { ok: true, canonicalPath, pageInfo } as const;
     },
 
     async listRevisions(pageId, baseUrl, apiToken) {

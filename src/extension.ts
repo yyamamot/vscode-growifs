@@ -1,5 +1,6 @@
 import path from "node:path";
 import * as vscode from "vscode";
+import { buildGrowiUriFromInput } from "./core/uri";
 import { createGrowiAssetProxy } from "./vscode/assetProxy";
 import {
   createAddPrefixCommand,
@@ -7,15 +8,20 @@ import {
   createCompareLocalBundleWithGrowiCommand,
   createConfigureApiTokenCommand,
   createConfigureBaseUrlCommand,
+  createCreatePageCommand,
+  createDeletePageCommand,
   createDownloadCurrentPageSetToLocalBundleCommand,
   createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
   createExplorerCompareLocalBundleWithGrowiCommand,
   createExplorerCompareLocalWorkFileWithCurrentPageCommand,
+  createExplorerCreatePageHereCommand,
+  createExplorerDeletePageCommand,
   createExplorerDownloadCurrentPageSetToLocalBundleCommand,
   createExplorerDownloadCurrentPageToLocalFileCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
+  createExplorerRenamePageCommand,
   createExplorerShowBacklinksCommand,
   createExplorerShowCurrentPageInfoCommand,
   createExplorerShowRevisionHistoryDiffCommand,
@@ -28,6 +34,7 @@ import {
   createRefreshCurrentPageCommand,
   createRefreshListingCommand,
   createRefreshLocalMirrorCommand,
+  createRenamePageCommand,
   createShowBacklinksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageInfoCommand,
@@ -49,8 +56,11 @@ import {
   type GrowiEditSession,
   type GrowiEditSessionReference,
   GrowiFileSystemProvider,
+  type GrowiPageCreator,
+  type GrowiPageDeleter,
   type GrowiPageListReader,
   type GrowiPageReader,
+  type GrowiPageRenameResult,
   type GrowiPageWriter,
   type GrowiSaveFailureNotifier,
 } from "./vscode/fsProvider";
@@ -84,15 +94,19 @@ export {
   createCompareLocalWorkFileWithCurrentPageCommand,
   createConfigureApiTokenCommand,
   createConfigureBaseUrlCommand,
+  createCreatePageCommand,
   createDownloadCurrentPageSetToLocalBundleCommand,
   createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
   createExplorerCompareLocalBundleWithGrowiCommand,
   createExplorerCompareLocalWorkFileWithCurrentPageCommand,
+  createExplorerCreatePageHereCommand,
+  createExplorerDeletePageCommand,
   createExplorerDownloadCurrentPageSetToLocalBundleCommand,
   createExplorerDownloadCurrentPageToLocalFileCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
+  createExplorerRenamePageCommand,
   createExplorerShowBacklinksCommand,
   createExplorerShowCurrentPageInfoCommand,
   createExplorerShowRevisionHistoryDiffCommand,
@@ -102,6 +116,7 @@ export {
   createOpenReadmeCommand,
   createRefreshCurrentPageCommand,
   createRefreshListingCommand,
+  createRenamePageCommand,
   createShowBacklinksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageInfoCommand,
@@ -278,6 +293,54 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     },
   };
+  const pageCreator: GrowiPageCreator = {
+    async createPage(canonicalPath: string) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+
+      return growiApi.createPage(
+        canonicalPath,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+    },
+  };
+  const pageDeleter: GrowiPageDeleter = {
+    async deletePage(input) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+
+      return growiApi.deletePage(
+        input,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+    },
+  };
+  const pageRenamer = {
+    async renamePage(input: {
+      pageId: string;
+      revisionId: string;
+      currentCanonicalPath: string;
+      targetCanonicalPath: string;
+      mode: "page" | "subtree";
+    }): Promise<GrowiPageRenameResult> {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+
+      return growiApi.renamePage(
+        input,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+    },
+  };
   const revisionContentProvider = new GrowiRevisionContentProvider({
     async readRevision(pageId: string, revisionId: string) {
       const configured = await getConfiguredApiContext();
@@ -371,6 +434,26 @@ export function activate(context: vscode.ExtensionContext): void {
         configured.apiToken,
       );
     },
+    async createPage(canonicalPath: string) {
+      return pageCreator.createPage(canonicalPath);
+    },
+    async deletePage(input: {
+      pageId: string;
+      revisionId: string;
+      canonicalPath: string;
+      mode: "page" | "subtree";
+    }) {
+      return await pageDeleter.deletePage(input);
+    },
+    async renamePage(input: {
+      pageId: string;
+      revisionId: string;
+      currentCanonicalPath: string;
+      targetCanonicalPath: string;
+      mode: "page" | "subtree";
+    }) {
+      return await pageRenamer.renamePage(input);
+    },
     async listRevisions(pageId: string) {
       const configured = await getConfiguredApiContext();
       if (!configured.ok) {
@@ -387,6 +470,18 @@ export function activate(context: vscode.ExtensionContext): void {
       const document = vscode.workspace.textDocuments.find(
         (candidate) =>
           candidate.uri.scheme === "file" && candidate.uri.fsPath === localPath,
+      );
+      if (!document) {
+        return undefined;
+      }
+      return {
+        isDirty: document.isDirty,
+      };
+    },
+    findOpenTextDocumentByUri(uri: { scheme: string; path: string }) {
+      const targetUri = vscode.Uri.parse(`${uri.scheme}:${uri.path}`);
+      const document = vscode.workspace.textDocuments.find(
+        (candidate) => candidate.uri.toString() === targetUri.toString(),
       );
       if (!document) {
         return undefined;
@@ -497,8 +592,135 @@ export function activate(context: vscode.ExtensionContext): void {
     async readDirectory(uri: string) {
       await vscode.workspace.fs.readDirectory(vscode.Uri.parse(uri));
     },
+    async reopenRenamedPages(
+      oldCanonicalPath: string,
+      newCanonicalPath: string,
+    ) {
+      const remappedDocuments = vscode.workspace.textDocuments
+        .map((document) => {
+          if (document.uri.scheme !== "growi") {
+            return undefined;
+          }
+
+          const parsed = buildGrowiUriFromInput(document.uri.path);
+          if (
+            !parsed.ok ||
+            !(
+              parsed.value.canonicalPath === oldCanonicalPath ||
+              parsed.value.canonicalPath.startsWith(`${oldCanonicalPath}/`)
+            )
+          ) {
+            return undefined;
+          }
+
+          const suffix = parsed.value.canonicalPath.slice(
+            oldCanonicalPath.length,
+          );
+          return {
+            document,
+            targetUri: vscode.Uri.parse(
+              `growi:${newCanonicalPath}${suffix}.md`,
+            ),
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            document: vscode.TextDocument;
+            targetUri: vscode.Uri;
+          } => entry !== undefined,
+        );
+
+      if (remappedDocuments.length === 0) {
+        return { attempted: false, hasDirty: false, hasFailed: false } as const;
+      }
+
+      const activeUri = vscode.window.activeTextEditor?.document.uri.toString();
+      const activeEntries = remappedDocuments.filter(
+        (entry) => entry.document.uri.toString() === activeUri,
+      );
+      const backgroundEntries = remappedDocuments.filter(
+        (entry) => entry.document.uri.toString() !== activeUri,
+      );
+
+      let hasDirty = false;
+      let hasFailed = false;
+      for (const entry of backgroundEntries) {
+        if (entry.document.isDirty) {
+          hasDirty = true;
+          continue;
+        }
+        try {
+          await vscode.commands.executeCommand("vscode.open", entry.targetUri, {
+            preserveFocus: true,
+            preview: false,
+          });
+        } catch {
+          hasFailed = true;
+        }
+      }
+
+      for (const entry of activeEntries) {
+        if (entry.document.isDirty) {
+          hasDirty = true;
+          continue;
+        }
+        try {
+          await vscode.commands.executeCommand("vscode.open", entry.targetUri, {
+            preserveFocus: false,
+            preview: false,
+          });
+        } catch {
+          hasFailed = true;
+        }
+      }
+
+      return { attempted: true, hasDirty, hasFailed } as const;
+    },
+    async closeDeletedPages(canonicalPath: string, mode: "page" | "subtree") {
+      const targetTabs = vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .filter((tab) => {
+          const input = tab.input;
+          if (!(input instanceof vscode.TabInputText)) {
+            return false;
+          }
+          if (input.uri.scheme !== "growi") {
+            return false;
+          }
+
+          const parsed = buildGrowiUriFromInput(input.uri.path);
+          if (!parsed.ok) {
+            return false;
+          }
+
+          if (mode === "subtree") {
+            return (
+              parsed.value.canonicalPath === canonicalPath ||
+              parsed.value.canonicalPath.startsWith(`${canonicalPath}/`)
+            );
+          }
+
+          return parsed.value.canonicalPath === canonicalPath;
+        });
+
+      if (targetTabs.length === 0) {
+        return { attempted: false, hasFailed: false } as const;
+      }
+
+      try {
+        await vscode.window.tabGroups.close(targetTabs);
+        return { attempted: true, hasFailed: false } as const;
+      } catch {
+        return { attempted: true, hasFailed: true } as const;
+      }
+    },
     refreshPrefixTree() {
       refreshGrowiExplorer();
+    },
+    clearSubtreeState(canonicalPrefixPath: string) {
+      fileSystemProvider.clearSubtreeState(canonicalPrefixPath);
     },
     seedRevisionContent(
       uri: { scheme: string; path: string; fsPath?: string },
@@ -550,6 +772,49 @@ export function activate(context: vscode.ExtensionContext): void {
         "削除する",
       );
       return selected === "削除する";
+    },
+    async showRenameScopeConfirmation(canonicalPath: string) {
+      const selected = await vscode.window.showWarningMessage(
+        `${canonicalPath} には配下ページがあります。Rename Page の範囲を選択してください。`,
+        { modal: true },
+        "このページのみ",
+        "配下も含める",
+      );
+      if (selected === "このページのみ") {
+        return "single" as const;
+      }
+      if (selected === "配下も含める") {
+        return "subtree" as const;
+      }
+      return "cancel" as const;
+    },
+    async showDeleteScopeConfirmation(canonicalPath: string) {
+      const selected = await vscode.window.showWarningMessage(
+        `${canonicalPath} には配下ページがあります。Delete Page の範囲を選択してください。`,
+        { modal: true },
+        "このページのみ",
+        "配下も含める",
+      );
+      if (selected === "このページのみ") {
+        return "single" as const;
+      }
+      if (selected === "配下も含める") {
+        return "subtree" as const;
+      }
+      return "cancel" as const;
+    },
+    async showDeletePageConfirmation(
+      canonicalPath: string,
+      mode: "page" | "subtree",
+    ) {
+      const selected = await vscode.window.showWarningMessage(
+        mode === "subtree"
+          ? `${canonicalPath} と配下ページをゴミ箱に移動しますか？`
+          : `${canonicalPath} をゴミ箱に移動しますか？`,
+        { modal: true },
+        "ゴミ箱に移動する",
+      );
+      return selected === "ゴミ箱に移動する";
     },
     async executeCommand(command: string, ...args: unknown[]) {
       await vscode.commands.executeCommand(command, ...args);
@@ -638,6 +903,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const openPageCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.openPage,
     openPageCommand,
+  );
+  const createPageCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.createPage,
+    createCreatePageCommand(deps),
+  );
+  const deletePageCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.deletePage,
+    createDeletePageCommand(deps),
+  );
+  const renamePageCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.renamePage,
+    createRenamePageCommand(deps),
   );
   const refreshCurrentPageCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.refreshCurrentPage,
@@ -745,6 +1022,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const explorerOpenPageItemCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.explorerOpenPageItem,
     createExplorerOpenPageItemCommand(deps),
+  );
+  const explorerCreatePageHereCommandDisposable =
+    vscode.commands.registerCommand(
+      GROWI_COMMANDS.explorerCreatePageHere,
+      createExplorerCreatePageHereCommand(deps),
+    );
+  const explorerRenamePageCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.explorerRenamePage,
+    createExplorerRenamePageCommand(deps),
+  );
+  const explorerDeletePageCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.explorerDeletePage,
+    createExplorerDeletePageCommand(deps),
   );
   const explorerRefreshCurrentPageCommandDisposable =
     vscode.commands.registerCommand(
@@ -1056,6 +1346,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const navigationCommandsDisposable: vscode.Disposable = {
     dispose() {
       openPageCommandDisposable.dispose();
+      createPageCommandDisposable.dispose();
+      deletePageCommandDisposable.dispose();
+      renamePageCommandDisposable.dispose();
       refreshCurrentPageCommandDisposable.dispose();
       showCurrentPageActionsCommandDisposable.dispose();
       showLocalMirrorActionsCommandDisposable.dispose();
@@ -1073,6 +1366,9 @@ export function activate(context: vscode.ExtensionContext): void {
       openPrefixRootPageCommandDisposable.dispose();
       openDirectoryPageCommandDisposable.dispose();
       explorerOpenPageItemCommandDisposable.dispose();
+      explorerCreatePageHereCommandDisposable.dispose();
+      explorerRenamePageCommandDisposable.dispose();
+      explorerDeletePageCommandDisposable.dispose();
       explorerRefreshCurrentPageCommandDisposable.dispose();
       explorerShowBacklinksCommandDisposable.dispose();
       explorerShowCurrentPageInfoCommandDisposable.dispose();

@@ -14,7 +14,12 @@ function runGit(args) {
 }
 
 function listChangedFiles() {
-  const output = runGit(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
+  const output = runGit([
+    "diff",
+    "--cached",
+    "--name-only",
+    "--diff-filter=ACMR",
+  ]);
   return output
     .split("\n")
     .map((value) => value.trim())
@@ -92,7 +97,6 @@ function summarizeBuckets(buckets) {
         scope: "scripts",
         summary: "public mirrorへ補助scriptの変更差分を同期",
       };
-    case "repo":
     default:
       return {
         type: "chore",

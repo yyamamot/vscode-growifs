@@ -75,7 +75,10 @@ function createPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   return item;
 }
 
-function createDirectoryPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
+function createDirectoryPageItem(
+  uri: vscode.Uri,
+  label: string,
+): PrefixTreeItem {
   const item = createPageItem(uri, label);
   item.contextValue = "growi.directoryPage";
   return item;

@@ -10,9 +10,7 @@ export type GrowiAccessFailureReason =
   | "ApiNotSupported"
   | "ConnectionFailed";
 
-export type GrowiReadFailureReason =
-  | GrowiAccessFailureReason
-  | "NotFound";
+export type GrowiReadFailureReason = GrowiAccessFailureReason | "NotFound";
 
 export type GrowiPageReadResult =
   | { ok: true; body: string; pageInfo?: GrowiCurrentPageInfo }
@@ -29,12 +27,84 @@ export type GrowiPageWriteResult =
       reason: GrowiAccessFailureReason;
     };
 
+export type GrowiPageCreateFailureReason =
+  | GrowiAccessFailureReason
+  | "NotFound"
+  | "AlreadyExists";
+
+export type GrowiPageCreateResult =
+  | { ok: true; pageInfo?: GrowiCurrentPageInfo }
+  | {
+      ok: false;
+      reason: GrowiPageCreateFailureReason;
+    };
+
+export type GrowiPageRenameFailureReason =
+  | GrowiAccessFailureReason
+  | "NotFound"
+  | "ParentNotFound"
+  | "AlreadyExists"
+  | "Rejected";
+
+export type GrowiPageRenameMode = "page" | "subtree";
+
+export type GrowiPageRenameResult =
+  | {
+      ok: true;
+      canonicalPath: string;
+      pageInfo?: GrowiCurrentPageInfo;
+    }
+  | {
+      ok: false;
+      reason: GrowiPageRenameFailureReason;
+      message?: string;
+    };
+
+export type GrowiPageDeleteFailureReason =
+  | GrowiAccessFailureReason
+  | "NotFound"
+  | "HasChildren"
+  | "Rejected";
+
+export type GrowiPageDeleteMode = "page" | "subtree";
+
+export type GrowiPageDeleteResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: GrowiPageDeleteFailureReason;
+      message?: string;
+    };
+
 export type GrowiPageWriter = {
   writePage(
     canonicalPath: string,
     body: string,
     editSession: GrowiEditSession,
   ): Promise<GrowiPageWriteResult>;
+};
+
+export type GrowiPageCreator = {
+  createPage(canonicalPath: string): Promise<GrowiPageCreateResult>;
+};
+
+export type GrowiPageRenamer = {
+  renamePage(input: {
+    pageId: string;
+    revisionId: string;
+    currentCanonicalPath: string;
+    targetCanonicalPath: string;
+    mode: GrowiPageRenameMode;
+  }): Promise<GrowiPageRenameResult>;
+};
+
+export type GrowiPageDeleter = {
+  deletePage(input: {
+    pageId: string;
+    revisionId: string;
+    canonicalPath: string;
+    mode: GrowiPageDeleteMode;
+  }): Promise<GrowiPageDeleteResult>;
 };
 
 export type GrowiCurrentRevisionResult =
@@ -75,6 +145,7 @@ export type GrowiSaveFailureNotifier = {
 
 export type GrowiCurrentPageInfo = {
   pageId: string;
+  revisionId?: string;
   url: string;
   path: string;
   lastUpdatedBy: string;
@@ -470,6 +541,35 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
     }
 
     this.emitFileChanged(normalized.value);
+  }
+
+  clearSubtreeState(canonicalPrefixPath: string): void {
+    const normalized = normalizeCanonicalPath(canonicalPrefixPath);
+    if (!normalized.ok) {
+      return;
+    }
+
+    const prefix = normalized.value;
+    for (const key of this.readFileCache.keys()) {
+      if (this.isSameOrDescendantPath(key, prefix)) {
+        this.readFileCache.delete(key);
+      }
+    }
+    for (const key of this.inFlightReadRequests.keys()) {
+      if (this.isSameOrDescendantPath(key, prefix)) {
+        this.inFlightReadRequests.delete(key);
+      }
+    }
+    for (const key of this.fileModifiedAtMs.keys()) {
+      if (this.isSameOrDescendantPath(key, prefix)) {
+        this.fileModifiedAtMs.delete(key);
+      }
+    }
+    for (const key of this.currentPageInfo.keys()) {
+      if (this.isSameOrDescendantPath(key, prefix)) {
+        this.currentPageInfo.delete(key);
+      }
+    }
   }
 
   stat(uri: vscode.Uri): vscode.FileStat {

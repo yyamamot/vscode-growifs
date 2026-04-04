@@ -70,6 +70,10 @@ function buildNextRevisionId(revisionId) {
     : `${revisionId}-saved`;
 }
 
+function buildNextPageId(pageCount) {
+  return `page-${pageCount + 1}`;
+}
+
 function toFixture(pages = DEFAULT_PAGES) {
   const pageByPath = new Map();
   const pageById = new Map();
@@ -122,6 +126,9 @@ export async function startMockGrowiServer(options = {}) {
   let fixture = toFixture(options.pages);
   let authMode = "normal";
   const requestStats = {
+    create: 0,
+    delete: 0,
+    rename: 0,
     page: 0,
     revision: 0,
     revisionList: 0,
@@ -147,6 +154,287 @@ export async function startMockGrowiServer(options = {}) {
         writeJson(res, 401, { ok: false, error: "Unauthorized" });
         return;
       }
+    }
+
+    if (method === "POST" && url.pathname === "/_api/v3/page") {
+      requestStats.create += 1;
+      const bodyChunks = [];
+      req.on("data", (chunk) => {
+        bodyChunks.push(chunk);
+      });
+      req.on("end", () => {
+        let payload;
+        try {
+          payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8"));
+        } catch {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        const canonicalPath = normalizeCanonicalPath(payload.path);
+        const nextBody =
+          typeof payload.body === "string" ? payload.body : undefined;
+        if (!canonicalPath || nextBody === undefined) {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        if (fixture.pageByPath.has(canonicalPath)) {
+          writeJson(res, 409, { ok: false, error: "PageAlreadyExists" });
+          return;
+        }
+
+        const parentPath = canonicalPath.slice(
+          0,
+          canonicalPath.lastIndexOf("/"),
+        );
+        if (
+          parentPath &&
+          parentPath !== "/" &&
+          !fixture.pageByPath.has(parentPath)
+        ) {
+          writeJson(res, 404, { ok: false, error: "ParentPageNotFound" });
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const pageId = buildNextPageId(fixture.pageByPath.size);
+        const revisionId = `revision-${fixture.revisionById.size + 1}`;
+        const entry = {
+          path: canonicalPath,
+          pageId,
+          revisionId,
+          body: nextBody,
+          updatedAt: now,
+          updatedBy: "host-test-user",
+          revisions: [
+            {
+              revisionId,
+              body: nextBody,
+              updatedAt: now,
+              updatedBy: "host-test-user",
+            },
+          ],
+        };
+        fixture.pageByPath.set(canonicalPath, entry);
+        fixture.pageById.set(pageId, entry);
+        fixture.revisionById.set(revisionId, {
+          pageId,
+          revisionId,
+          body: nextBody,
+          updatedAt: now,
+          updatedBy: "host-test-user",
+        });
+        fixture.orderedPaths = [...fixture.orderedPaths, canonicalPath].sort(
+          (a, b) => a.localeCompare(b),
+        );
+
+        writeJson(res, 201, {
+          ok: true,
+          page: {
+            _id: pageId,
+            path: canonicalPath,
+            updatedAt: now,
+            lastUpdateUser: {
+              username: "host-test-user",
+            },
+            revision: {
+              _id: revisionId,
+            },
+          },
+        });
+      });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/_api/v3/pages/delete") {
+      requestStats.delete += 1;
+      const bodyChunks = [];
+      req.on("data", (chunk) => {
+        bodyChunks.push(chunk);
+      });
+      req.on("end", () => {
+        let payload;
+        try {
+          payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8"));
+        } catch {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        const pageMap =
+          payload && typeof payload.pageIdToRevisionIdMap === "object"
+            ? payload.pageIdToRevisionIdMap
+            : undefined;
+        const entries = pageMap ? Object.entries(pageMap) : [];
+        const [[pageId, revisionId] = []] = entries;
+        const isRecursively = payload.isRecursively === true;
+        const isCompletely = payload.isCompletely === true;
+
+        if (
+          entries.length !== 1 ||
+          typeof pageId !== "string" ||
+          typeof revisionId !== "string" ||
+          isCompletely
+        ) {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        const rootPage = fixture.pageById.get(pageId);
+        if (!rootPage || rootPage.revisionId !== revisionId) {
+          writeJson(res, 404, { ok: false, error: "PageNotFound" });
+          return;
+        }
+
+        const descendantPaths = fixture.orderedPaths.filter(
+          (path) =>
+            path !== rootPage.path && path.startsWith(`${rootPage.path}/`),
+        );
+        if (!isRecursively && descendantPaths.length > 0) {
+          writeJson(res, 400, { ok: false, error: "PageHasChildren" });
+          return;
+        }
+
+        const deletingPaths = isRecursively
+          ? [rootPage.path, ...descendantPaths]
+          : [rootPage.path];
+
+        for (const deletingPath of deletingPaths) {
+          const page = fixture.pageByPath.get(deletingPath);
+          if (!page) {
+            continue;
+          }
+          fixture.pageByPath.delete(deletingPath);
+          fixture.pageById.delete(page.pageId);
+          for (const revision of page.revisions) {
+            fixture.revisionById.delete(revision.revisionId);
+          }
+        }
+        fixture.orderedPaths = [...fixture.pageByPath.keys()].sort((a, b) =>
+          a.localeCompare(b),
+        );
+
+        writeJson(res, 200, { ok: true });
+      });
+      return;
+    }
+
+    if (method === "PUT" && url.pathname === "/_api/v3/pages/rename") {
+      requestStats.rename += 1;
+      const bodyChunks = [];
+      req.on("data", (chunk) => {
+        bodyChunks.push(chunk);
+      });
+      req.on("end", () => {
+        let payload;
+        try {
+          payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8"));
+        } catch {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        const pageId =
+          typeof payload.pageId === "string" ? payload.pageId : undefined;
+        const revisionId =
+          typeof payload.revisionId === "string"
+            ? payload.revisionId
+            : undefined;
+        const currentPath = normalizeCanonicalPath(payload.path);
+        const newPath = normalizeCanonicalPath(
+          typeof payload.newPath === "string"
+            ? payload.newPath
+            : payload.newPagePath,
+        );
+        const isRecursively = payload.isRecursively === true;
+        if (
+          !pageId ||
+          !revisionId ||
+          !currentPath ||
+          !newPath ||
+          newPath === "/"
+        ) {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        const rootPage = fixture.pageById.get(pageId);
+        if (
+          !rootPage ||
+          rootPage.path !== currentPath ||
+          rootPage.revisionId !== revisionId
+        ) {
+          writeJson(res, 404, { ok: false, error: "PageNotFound" });
+          return;
+        }
+
+        const parentPath = newPath.slice(0, newPath.lastIndexOf("/"));
+        if (
+          parentPath &&
+          parentPath !== "/" &&
+          !fixture.pageByPath.has(parentPath)
+        ) {
+          writeJson(res, 404, { ok: false, error: "ParentPageNotFound" });
+          return;
+        }
+
+        const movingPaths = fixture.orderedPaths.filter((path) =>
+          isRecursively
+            ? path === currentPath || path.startsWith(`${currentPath}/`)
+            : path === currentPath,
+        );
+        const movedPathPairs = movingPaths.map((path) => [
+          path,
+          path === currentPath
+            ? newPath
+            : `${newPath}${path.slice(currentPath.length)}`,
+        ]);
+        const movingPathSet = new Set(movingPaths);
+
+        for (const [_oldPath, targetPath] of movedPathPairs) {
+          if (
+            fixture.pageByPath.has(targetPath) &&
+            !movingPathSet.has(targetPath)
+          ) {
+            writeJson(res, 409, { ok: false, error: "PageAlreadyExists" });
+            return;
+          }
+        }
+
+        const now = new Date().toISOString();
+        for (const [oldPath, targetPath] of movedPathPairs) {
+          const page = fixture.pageByPath.get(oldPath);
+          if (!page) {
+            continue;
+          }
+          fixture.pageByPath.delete(oldPath);
+          page.path = targetPath;
+          page.updatedAt = now;
+          page.updatedBy = "host-test-user";
+          fixture.pageByPath.set(targetPath, page);
+        }
+
+        fixture.orderedPaths = [...fixture.pageByPath.keys()].sort((a, b) =>
+          a.localeCompare(b),
+        );
+
+        writeJson(res, 200, {
+          ok: true,
+          page: {
+            _id: rootPage.pageId,
+            path: newPath,
+            updatedAt: now,
+            lastUpdateUser: {
+              username: "host-test-user",
+            },
+            revision: {
+              _id: rootPage.revisionId,
+            },
+          },
+        });
+      });
+      return;
     }
 
     if (method === "GET" && url.pathname === "/_api/v3/page") {
@@ -363,6 +651,9 @@ export async function startMockGrowiServer(options = {}) {
     }
 
     if (method === "POST" && url.pathname === "/__admin/reset") {
+      requestStats.create = 0;
+      requestStats.delete = 0;
+      requestStats.rename = 0;
       requestStats.page = 0;
       requestStats.revision = 0;
       requestStats.revisionList = 0;
@@ -408,6 +699,9 @@ export async function startMockGrowiServer(options = {}) {
             Buffer.concat(bodyChunks).toString("utf8"),
           );
           fixture = toFixture(payload.pages);
+          requestStats.create = 0;
+          requestStats.delete = 0;
+          requestStats.rename = 0;
           requestStats.page = 0;
           requestStats.revision = 0;
           requestStats.revisionList = 0;

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.3 (2026-04-04)
+
+- ページの作成、名前変更、削除をサポート
+
 ## 0.0.2 (2026-03-15)
 
 - 破壊的変更: workspace mirror を `.growi-workspaces/<instanceKey>/` と `.growi-mirror.json` 移行し、旧 mirror 命名・配置との互換を変更

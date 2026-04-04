@@ -1,8 +1,5 @@
 import { buildGrowiUri, type ParsedGrowiReference } from "../core/uri";
-import type {
-  GrowiAccessFailureReason,
-  GrowiReadFailureReason,
-} from "./fsProvider";
+import type { GrowiReadFailureReason } from "./fsProvider";
 
 export type ResolvePageIdResult =
   | { ok: true; canonicalPath: string }
