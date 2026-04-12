@@ -295,7 +295,10 @@ function getLocalWorkFilePath() {
   const localWorkspaceFolder = (vscode.workspace.workspaceFolders ?? []).find(
     (folder) => folder.uri.scheme === "file",
   );
-  assert(Boolean(localWorkspaceFolder), "Expected a file: workspace folder.");
+  assert(
+    Boolean(localWorkspaceFolder),
+    "Expected an open local file workspace.",
+  );
   return path.join(localWorkspaceFolder.uri.fsPath, "growi-current.md");
 }
 
@@ -303,7 +306,10 @@ function getLocalWorkspaceRoot() {
   const localWorkspaceFolder = (vscode.workspace.workspaceFolders ?? []).find(
     (folder) => folder.uri.scheme === "file",
   );
-  assert(Boolean(localWorkspaceFolder), "Expected a file: workspace folder.");
+  assert(
+    Boolean(localWorkspaceFolder),
+    "Expected an open local file workspace.",
+  );
   return localWorkspaceFolder.uri.fsPath;
 }
 
@@ -327,30 +333,12 @@ function buildHostInstanceKey(baseUrl) {
   return `${parsed.host}${pathname}`.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function buildLegacyHostInstanceKey(baseUrl) {
-  const parsed = new URL(baseUrl);
-  const pathname = parsed.pathname.endsWith("/")
-    ? parsed.pathname.slice(0, -1)
-    : parsed.pathname;
-  return `${parsed.origin}${pathname}`.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
 function getWorkspaceMirrorRootPath(baseUrl, rootCanonicalPath) {
   const trimmedRoot = rootCanonicalPath.replace(/^\/+/, "");
   return path.join(
     getLocalWorkspaceRoot(),
-    ".growi-workspaces",
+    ".growi-mirrors",
     buildHostInstanceKey(baseUrl),
-    trimmedRoot,
-  );
-}
-
-function getLegacyWorkspaceMirrorRootPath(baseUrl, rootCanonicalPath) {
-  const trimmedRoot = rootCanonicalPath.replace(/^\/+/, "");
-  return path.join(
-    getLocalWorkspaceRoot(),
-    ".growi-workspaces",
-    buildLegacyHostInstanceKey(baseUrl),
     trimmedRoot,
   );
 }
@@ -984,7 +972,7 @@ export async function run() {
       const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
       assert(
         !workspaceFolders.some((folder) => folder.uri.scheme === "growi"),
-        `growi: workspace folder should not be added: ${toJsonString(
+        `growi: prefix should not appear as a workspace root: ${toJsonString(
           workspaceFolders.map((folder) => folder.uri.toString()),
         )}`,
       );
@@ -1032,12 +1020,12 @@ export async function run() {
   );
 
   await runCase(
-    "duplicate add prefix keeps workspace folders unchanged",
+    "duplicate add prefix keeps growi roots absent from workspace folders",
     async () => {
       const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
       assert(
         !workspaceFolders.some((folder) => folder.uri.scheme === "growi"),
-        `growi: workspace folder should stay absent: ${toJsonString(
+        `growi: prefix should stay absent from workspace roots: ${toJsonString(
           workspaceFolders.map((folder) => folder.uri.toString()),
         )}`,
       );
@@ -1047,7 +1035,7 @@ export async function run() {
       const afterResync = vscode.workspace.workspaceFolders ?? [];
       assert(
         !afterResync.some((folder) => folder.uri.scheme === "growi"),
-        `Duplicate addPrefix should not create growi workspace folders: ${toJsonString(
+        `Duplicate addPrefix should not create growi workspace roots: ${toJsonString(
           afterResync.map((folder) => folder.uri.toString()),
         )}`,
       );
@@ -1055,7 +1043,7 @@ export async function run() {
   );
 
   await runCase(
-    "clear prefixes keeps workspace folders free of growi entries",
+    "clear prefixes keeps growi entries out of workspace folders",
     async () => {
       await withWindowOverrides(
         {
@@ -1069,7 +1057,7 @@ export async function run() {
       const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
       assert(
         !workspaceFolders.some((folder) => folder.uri.scheme === "growi"),
-        `Expected growi workspace folders to be removed: ${toJsonString(
+        `Expected growi workspace roots to remain absent: ${toJsonString(
           workspaceFolders.map((folder) => folder.uri.toString()),
         )}`,
       );
@@ -1488,61 +1476,42 @@ export async function run() {
     },
   );
 
-  await runCase(
-    "current page mirror uses the scheme-less instanceKey",
-    async () => {
-      await updateFixture(adminUrl, [
-        {
-          path: "/sample",
-          body: "# sample page",
-          updatedAt: "2026-03-08T01:00:00.000Z",
-          updatedBy: "system",
-        },
-      ]);
-      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
-        recursive: true,
-        force: true,
-      });
-      await fs.rm(getLegacyWorkspaceMirrorRootPath(baseUrl, "/sample"), {
-        recursive: true,
-        force: true,
-      });
+  await runCase("current page mirror uses the new root directory", async () => {
+    await updateFixture(adminUrl, [
+      {
+        path: "/sample",
+        body: "# sample page",
+        updatedAt: "2026-03-08T01:00:00.000Z",
+        updatedBy: "system",
+      },
+    ]);
+    await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+      recursive: true,
+      force: true,
+    });
 
-      await vscode.commands.executeCommand("growi.openPage", "/sample");
-      await vscode.commands.executeCommand(
-        "growi.createLocalMirrorForCurrentPage",
-      );
+    await vscode.commands.executeCommand("growi.openPage", "/sample");
+    await vscode.commands.executeCommand(
+      "growi.createLocalMirrorForCurrentPage",
+    );
 
-      const newManifestPath = path.join(
-        getWorkspaceMirrorRootPath(baseUrl, "/sample"),
-        ".growi-mirror.json",
-      );
-      const oldManifestPath = path.join(
-        getLegacyWorkspaceMirrorRootPath(baseUrl, "/sample"),
-        ".growi-mirror.json",
-      );
-      const newExists = await fs
-        .access(newManifestPath)
-        .then(() => true)
-        .catch(() => false);
-      const oldExists = await fs
-        .access(oldManifestPath)
-        .then(() => true)
-        .catch(() => false);
+    const newManifestPath = path.join(
+      getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+      ".growi-mirror.json",
+    );
+    const newExists = await fs
+      .access(newManifestPath)
+      .then(() => true)
+      .catch(() => false);
 
-      assert(
-        newExists === true && oldExists === false,
-        `Expected page mirror to use the scheme-less instanceKey: ${toJsonString(
-          {
-            newManifestPath,
-            oldManifestPath,
-            newExists,
-            oldExists,
-          },
-        )}`,
-      );
-    },
-  );
+    assert(
+      newExists === true,
+      `Expected page mirror to be written under .growi-mirrors: ${toJsonString({
+        newManifestPath,
+        newExists,
+      })}`,
+    );
+  });
 
   await runCase(
     "current page mirror reuses existing ancestor prefix mirror",
@@ -1777,7 +1746,7 @@ export async function run() {
   );
 
   await runCase(
-    "legacy-key page compare and upload migrate to the scheme-less instanceKey",
+    "legacy .growi-workspaces roots are ignored for compare and upload",
     async () => {
       await updateFixture(adminUrl, [
         {
@@ -1795,9 +1764,12 @@ export async function run() {
       ]);
 
       const newRootPath = getWorkspaceMirrorRootPath(baseUrl, "/sample/hello");
-      const legacyRootPath = getLegacyWorkspaceMirrorRootPath(
-        baseUrl,
-        "/sample/hello",
+      const legacyRootPath = path.join(
+        getLocalWorkspaceRoot(),
+        ".growi-workspaces",
+        "https___growi.example.com",
+        "sample",
+        "hello",
       );
       await fs.rm(newRootPath, { recursive: true, force: true });
       await fs.rm(legacyRootPath, { recursive: true, force: true });
@@ -1850,70 +1822,28 @@ export async function run() {
           ),
       );
       assert(
-        Array.isArray(compareResults) &&
-          compareResults.length === 1 &&
-          compareResults[0]?.status === "LocalChanged",
-        `Expected compare to read the legacy-key page mirror: ${toJsonString(compareResults)}`,
+        compareResults === undefined,
+        `Expected compare to fail without a .growi-mirrors root: ${toJsonString(compareResults)}`,
       );
-
       await resetStats(adminUrl);
       const uploadResults = await vscode.commands.executeCommand(
         "growi.uploadExportedLocalFileToGrowi",
       );
       assert(
-        Array.isArray(uploadResults) &&
-          uploadResults.length === 1 &&
-          uploadResults[0]?.status === "Uploaded",
-        `Expected upload to reuse the legacy-key page mirror: ${toJsonString(uploadResults)}`,
+        uploadResults === undefined,
+        `Expected upload to fail without a .growi-mirrors root: ${toJsonString(uploadResults)}`,
       );
-
-      const page = await getPageFixture(adminUrl, "/sample/hello");
-      assert(
-        page.body === legacyBody,
-        `Expected uploaded body to match the legacy mirror file: ${toJsonString(page)}`,
-      );
-
-      const stats = await getStats(adminUrl);
-      assert(
-        stats.write === 1,
-        `Expected exactly one upload from the migrated legacy mirror: ${toJsonString(stats)}`,
-      );
-
-      const newManifestPath = path.join(newRootPath, ".growi-mirror.json");
-      const newManifest = JSON.parse(
-        await fs.readFile(newManifestPath, "utf8"),
-      );
-      const newBody = await fs.readFile(
-        path.join(newRootPath, "__hello__.md"),
-        "utf8",
-      );
-      const legacyManifestExists = await fs
-        .access(path.join(legacyRootPath, ".growi-mirror.json"))
+      const newMirrorExists = await fs
+        .access(path.join(newRootPath, ".growi-mirror.json"))
         .then(() => true)
         .catch(() => false);
-      const legacyBodyExists = await fs
-        .access(path.join(legacyRootPath, "__hello__.md"))
-        .then(() => true)
-        .catch(() => false);
-
       assert(
-        newManifest.rootCanonicalPath === "/sample/hello" &&
-          newManifest.pages.some(
-            (entry) =>
-              entry.canonicalPath === "/sample/hello" &&
-              entry.relativeFilePath === "__hello__.md",
-          ) &&
-          newBody === legacyBody &&
-          legacyManifestExists === false &&
-          legacyBodyExists === false,
-        `Expected legacy-key page mirror to migrate into the scheme-less instanceKey: ${toJsonString(
+        newMirrorExists === false,
+        `Expected compare/upload to ignore the legacy root and leave the new mirror root absent: ${toJsonString(
           {
-            newManifestPath,
-            newManifest,
-            newBody,
+            newRootPath,
             legacyRootPath,
-            legacyManifestExists,
-            legacyBodyExists,
+            newMirrorExists,
           },
         )}`,
       );

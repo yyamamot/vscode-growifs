@@ -20,12 +20,10 @@ import type {
 } from "./fsProvider";
 import {
   buildInstanceKey,
-  buildLegacyInstanceKey,
   buildMirrorManifestPath,
   buildMirrorManifestPathWithInstanceKey,
   buildMirrorPageFilePath,
   buildMirrorPageFilePathWithInstanceKey,
-  listMirrorInstanceKeys,
   type MirrorManifest,
   type MirrorManifestPage,
   type MirrorManifestSkippedPage,
@@ -391,7 +389,7 @@ const REFRESH_LISTING_UNEXPECTED_ERROR_MESSAGE =
 const DOWNLOAD_CURRENT_PAGE_INVALID_TARGET_MESSAGE =
   "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。";
 const DOWNLOAD_CURRENT_PAGE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace を開いてください。";
+  "ローカル file: workspace/folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace/folder を開いてください。";
 const DOWNLOAD_CURRENT_PAGE_DIRTY_EDIT_SESSION_MESSAGE =
   "未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存または End Edit を実行してください。";
 const DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE =
@@ -414,7 +412,7 @@ const CURRENT_PAGE_SET_MAX_PAGES = 50;
 const DOWNLOAD_CURRENT_PAGE_SET_INVALID_TARGET_MESSAGE =
   "Sync Local Mirror for Current Prefix は growi: ページでのみ実行できます。";
 const DOWNLOAD_CURRENT_PAGE_SET_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Sync Local Mirror for Current Prefix を実行できません。先に file: workspace を開いてください。";
+  "ローカル file: workspace/folder が開かれていないため Sync Local Mirror for Current Prefix を実行できません。先に file: workspace/folder を開いてください。";
 const DOWNLOAD_CURRENT_PAGE_SET_DIRTY_EDIT_SESSION_MESSAGE =
   "未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存または End Edit を実行してください。";
 const DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE =
@@ -436,7 +434,7 @@ const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE =
 const COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE =
   "Compare Local Mirror with GROWI は growi: ページでのみ実行できます。";
 const COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace を開いてください。";
+  "ローカル file: workspace/folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace/folder を開いてください。";
 const COMPARE_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE =
   ".growi-mirror.json の読み込みに失敗したため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
 const COMPARE_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE =
@@ -621,7 +619,7 @@ const UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE =
 const UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE =
   "GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。";
 const UPLOAD_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace を開いてください。";
+  "ローカル file: workspace/folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace/folder を開いてください。";
 const UPLOAD_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE =
   ".growi-mirror.json の読み込みに失敗したため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
 const UPLOAD_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE =
@@ -639,7 +637,7 @@ const UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE =
 const REFRESH_LOCAL_MIRROR_INVALID_TARGET_MESSAGE =
   "Refresh Local Mirror は growi: ページでのみ実行できます。";
 const REFRESH_LOCAL_MIRROR_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル folder が開かれていないため Refresh Local Mirror を実行できません。先に file: workspace を開いてください。";
+  "ローカル file: workspace/folder が開かれていないため Refresh Local Mirror を実行できません。先に file: workspace/folder を開いてください。";
 const REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE =
   ".growi-mirror.json の読み込みに失敗したため Refresh Local Mirror を実行できませんでした。先に Sync Local Mirror を実行してください。";
 const REFRESH_LOCAL_MIRROR_INVALID_MANIFEST_MESSAGE =
@@ -680,14 +678,6 @@ function buildMirrorLocalFilePath(
   );
 }
 
-function buildPreferredMirrorInstanceKey(baseUrl: string): string {
-  return buildInstanceKey(baseUrl);
-}
-
-function _buildLegacyMirrorInstanceKey(baseUrl: string): string {
-  return buildLegacyInstanceKey(baseUrl);
-}
-
 function buildMirrorManifestFilePathWithInstanceKey(
   workspaceRoot: string,
   instanceKey: string,
@@ -719,105 +709,17 @@ function listMirrorManifestCandidates(
   baseUrl: string,
   rootCanonicalPath: string,
 ): Array<{ instanceKey: string; manifestPath: string }> {
-  return listMirrorInstanceKeys(baseUrl).map((instanceKey) => ({
-    instanceKey,
-    manifestPath: buildMirrorManifestFilePathWithInstanceKey(
-      workspaceRoot,
+  const instanceKey = buildInstanceKey(baseUrl);
+  return [
+    {
       instanceKey,
-      rootCanonicalPath,
-    ),
-  }));
-}
-
-async function migrateMirrorRootIfNeeded(
-  deps: CommandDeps,
-  input: {
-    workspaceRoot: string;
-    baseUrl: string;
-    rootCanonicalPath: string;
-    sourceInstanceKey: string;
-    manifest: MirrorManifest;
-  },
-): Promise<string> {
-  const targetInstanceKey = buildPreferredMirrorInstanceKey(input.baseUrl);
-  if (targetInstanceKey === input.sourceInstanceKey) {
-    return buildMirrorManifestFilePathWithInstanceKey(
-      input.workspaceRoot,
-      input.sourceInstanceKey,
-      input.rootCanonicalPath,
-    );
-  }
-
-  for (const page of input.manifest.pages) {
-    const sourcePath = buildMirrorLocalFilePathWithInstanceKey(
-      input.workspaceRoot,
-      input.sourceInstanceKey,
-      input.rootCanonicalPath,
-      page.relativeFilePath,
-    );
-    try {
-      await deps.readLocalFile(
-        buildMirrorLocalFilePathWithInstanceKey(
-          input.workspaceRoot,
-          targetInstanceKey,
-          input.rootCanonicalPath,
-          page.relativeFilePath,
-        ),
-      );
-      continue;
-    } catch {
-      // Target file does not exist yet.
-    }
-
-    try {
-      const body = await deps.readLocalFile(sourcePath);
-      await deps.writeLocalFile(
-        buildMirrorLocalFilePathWithInstanceKey(
-          input.workspaceRoot,
-          targetInstanceKey,
-          input.rootCanonicalPath,
-          page.relativeFilePath,
-        ),
-        body,
-      );
-    } catch {
-      // Preserve missing locals as-is.
-    }
-  }
-
-  for (const page of input.manifest.pages) {
-    await deps.deleteLocalPath(
-      buildMirrorLocalFilePathWithInstanceKey(
-        input.workspaceRoot,
-        input.sourceInstanceKey,
-        input.rootCanonicalPath,
-        page.relativeFilePath,
+      manifestPath: buildMirrorManifestFilePathWithInstanceKey(
+        workspaceRoot,
+        instanceKey,
+        rootCanonicalPath,
       ),
-    );
-  }
-  for (const page of input.manifest.skippedPages ?? []) {
-    await deps.deleteLocalPath(
-      buildMirrorLocalFilePathWithInstanceKey(
-        input.workspaceRoot,
-        input.sourceInstanceKey,
-        input.rootCanonicalPath,
-        page.relativeFilePath,
-      ),
-    );
-  }
-  await deps.deleteLocalPath(
-    buildMirrorManifestFilePathWithInstanceKey(
-      input.workspaceRoot,
-      input.sourceInstanceKey,
-      input.rootCanonicalPath,
-    ),
-  );
-
-  return buildMirrorManifestFilePathWithInstanceKey(
-    input.workspaceRoot,
-    targetInstanceKey,
-    input.rootCanonicalPath,
-  );
+    },
+  ];
 }
 
 function listAncestorCanonicalPaths(canonicalPath: string): string[] {
@@ -979,13 +881,11 @@ async function exportPageIntoExistingPrefixMirror(
       exportedAt,
       pages: updatedPages,
     };
-    const targetManifestPath = await migrateMirrorRootIfNeeded(deps, {
-      workspaceRoot: input.workspaceRoot,
-      baseUrl: input.baseUrl,
-      rootCanonicalPath: reusable.manifest.rootCanonicalPath,
-      sourceInstanceKey: reusable.instanceKey,
-      manifest: updatedManifest,
-    });
+    const targetManifestPath = buildMirrorManifestFilePathWithInstanceKey(
+      input.workspaceRoot,
+      reusable.instanceKey,
+      reusable.manifest.rootCanonicalPath,
+    );
     await deps.writeLocalFile(
       targetManifestPath,
       serializeMirrorManifest(updatedManifest),
@@ -1150,13 +1050,11 @@ async function exportPrefixIntoExistingPrefixMirror(
         : {}),
     };
 
-    const targetManifestPath = await migrateMirrorRootIfNeeded(deps, {
-      workspaceRoot: input.workspaceRoot,
-      baseUrl: input.baseUrl,
-      rootCanonicalPath: reusable.manifest.rootCanonicalPath,
-      sourceInstanceKey: reusable.instanceKey,
-      manifest: updatedManifest,
-    });
+    const targetManifestPath = buildMirrorManifestFilePathWithInstanceKey(
+      input.workspaceRoot,
+      reusable.instanceKey,
+      reusable.manifest.rootCanonicalPath,
+    );
 
     for (const stalePath of previousTrackedPaths) {
       if (currentTrackedPaths.has(stalePath)) {
@@ -3145,10 +3043,9 @@ async function exportMirror(
   const exportedAt = new Date().toISOString();
   const pages: MirrorManifestPage[] = [];
   let previousManifest: MirrorManifest | undefined;
-  let previousManifestInstanceKey: string | undefined;
 
   try {
-    for (const { instanceKey, manifestPath } of listMirrorManifestCandidates(
+    for (const { manifestPath } of listMirrorManifestCandidates(
       localWorkspaceRoot,
       baseUrl,
       input.rootCanonicalPath,
@@ -3157,7 +3054,6 @@ async function exportMirror(
       const parsedPreviousManifest = parseMirrorManifest(rawPreviousManifest);
       if (parsedPreviousManifest.ok) {
         previousManifest = parsedPreviousManifest.value;
-        previousManifestInstanceKey = instanceKey;
         break;
       }
     }
@@ -3263,19 +3159,6 @@ async function exportMirror(
       preferredManifestPath,
       serializeMirrorManifest(manifest),
     );
-    if (
-      previousManifest &&
-      previousManifestInstanceKey &&
-      previousManifestInstanceKey !== buildPreferredMirrorInstanceKey(baseUrl)
-    ) {
-      await migrateMirrorRootIfNeeded(deps, {
-        workspaceRoot: localWorkspaceRoot,
-        baseUrl,
-        rootCanonicalPath: input.rootCanonicalPath,
-        sourceInstanceKey: previousManifestInstanceKey,
-        manifest,
-      });
-    }
     await deps.openLocalFile(
       buildMirrorLocalFilePath(
         localWorkspaceRoot,
@@ -3738,17 +3621,11 @@ async function uploadMirror(
 
   if (manifestChanged) {
     try {
-      const targetManifestPath = await migrateMirrorRootIfNeeded(deps, {
-        workspaceRoot: loaded.workspaceRoot,
-        baseUrl: loaded.baseUrl,
-        rootCanonicalPath: loaded.manifest.rootCanonicalPath,
-        sourceInstanceKey: loaded.instanceKey,
-        manifest: {
-          ...loaded.manifest,
-          exportedAt: new Date().toISOString(),
-          pages: updatedPages,
-        },
-      });
+      const targetManifestPath = buildMirrorManifestFilePathWithInstanceKey(
+        loaded.workspaceRoot,
+        loaded.instanceKey,
+        loaded.manifest.rootCanonicalPath,
+      );
       await deps.writeLocalFile(
         targetManifestPath,
         serializeMirrorManifest({

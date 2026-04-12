@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const MIRROR_ROOT_DIR = ".growi-workspaces";
+export const MIRROR_ROOT_DIR = ".growi-mirrors";
 export const MIRROR_MANIFEST_NAME = ".growi-mirror.json";
 export const MIRROR_ROOT_PAGE_NAME = "__root__.md";
 export const LOCAL_WORK_FILE_NAME = "growi-current.md";
@@ -119,12 +119,6 @@ export function buildLegacyInstanceKey(baseUrl: string): string {
   } catch {
     return sanitizeInstanceKeySegment(baseUrl);
   }
-}
-
-export function listMirrorInstanceKeys(baseUrl: string): string[] {
-  return [
-    ...new Set([buildInstanceKey(baseUrl), buildLegacyInstanceKey(baseUrl)]),
-  ];
 }
 
 export function canonicalPathToRelativeFilePath(canonicalPath: string): string {

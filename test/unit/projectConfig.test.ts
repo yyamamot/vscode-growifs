@@ -691,8 +691,10 @@ describe("project configuration", () => {
     expect(readme).toContain("GROWI の API token");
     expect(readme).toContain("VS Code の Secret Storage");
     expect(readme).toContain("Explorer 配下の `GROWI` view");
+    expect(readme).toContain("workspace root としては現れず");
+    expect(readme).not.toContain("workspace folder");
     expect(readme).toContain(
-      ".growi-workspaces/<instanceKey>/<rootCanonicalPath>/",
+      ".growi-mirrors/<instanceKey>/<rootCanonicalPath>/",
     );
     expect(readme).toContain(".growi-mirror.json");
     expect(readme).toContain("http://localhost:3000/");
@@ -737,11 +739,12 @@ describe("project configuration", () => {
     expect(readme).toContain("wiki 内リンク移動は");
     expect(readme).toContain("<!-- screenshot: overview-explorer");
     expect(readme).toContain("<!-- screenshot: explorer-prefix-root");
-    expect(readme).toContain("<!-- screenshot: workspace-mirror");
+    expect(readme).toContain("<!-- screenshot: local-mirror");
     expect(readme).toContain("ローカルミラーを同期 / 比較 / 反映");
     expect(readme).toContain(
       "配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映",
     );
+    expect(readme).toContain("workspace root には追加されません");
   });
 
   it("tracks the recommended code-workspace entrypoint", () => {

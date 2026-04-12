@@ -405,11 +405,7 @@ function createMirrorRelativePath(
 }
 
 function createMirrorRootPath(rootCanonicalPath: string) {
-  return `/workspace/.growi-workspaces/growi.example.com${rootCanonicalPath}`;
-}
-
-function createLegacyMirrorRootPath(rootCanonicalPath: string) {
-  return `/workspace/.growi-workspaces/https___growi.example.com${rootCanonicalPath}`;
+  return `/workspace/.growi-mirrors/growi.example.com${rootCanonicalPath}`;
 }
 
 function hashBodyForTest(body: string) {
@@ -640,7 +636,7 @@ describe("createCompareLocalWorkFileWithCurrentPageCommand", () => {
     expect(deps.openChanges).not.toHaveBeenCalled();
   });
 
-  it("rejects compare when no local workspace folder is open", async () => {
+  it("rejects compare when no local file workspace is open", async () => {
     const deps = createDeps();
     deps.getActiveEditorUri.mockReturnValue(
       createUri("growi", "/team/dev/spec.md"),
@@ -650,7 +646,7 @@ describe("createCompareLocalWorkFileWithCurrentPageCommand", () => {
     await createCompareLocalWorkFileWithCurrentPageCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace を開いてください。",
+      "ローカル file: workspace/folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace/folder を開いてください。",
     );
   });
 
@@ -2414,7 +2410,7 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
     );
   });
 
-  it("rejects download when no local workspace folder is open", async () => {
+  it("rejects download when no local file workspace is open", async () => {
     const deps = createDeps();
     deps.getLocalWorkspaceRoot.mockReturnValue(undefined);
 
@@ -2424,7 +2420,7 @@ describe("createDownloadCurrentPageToLocalFileCommand", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace を開いてください。",
+      "ローカル file: workspace/folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace/folder を開いてください。",
     );
   });
 
@@ -2925,7 +2921,7 @@ describe("createUploadExportedLocalFileToGrowiCommand", () => {
     );
   });
 
-  it("rejects upload when no local workspace folder is open", async () => {
+  it("rejects upload when no local file workspace is open", async () => {
     const deps = createDeps();
     deps.getActiveEditorUri.mockReturnValue(
       createUri("growi", "/team/dev/spec.md"),
@@ -2935,7 +2931,7 @@ describe("createUploadExportedLocalFileToGrowiCommand", () => {
     await createUploadExportedLocalFileToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace を開いてください。",
+      "ローカル file: workspace/folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace/folder を開いてください。",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
@@ -3107,7 +3103,7 @@ describe("createUploadExportedLocalFileToGrowiCommand", () => {
 });
 
 describe("bundle commands", () => {
-  it("downloads the active page set into workspace mirror with manifest metadata", async () => {
+  it("downloads the active page set into local mirror with manifest metadata", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.listPages.mockResolvedValue({
@@ -3834,30 +3830,15 @@ describe("bundle commands", () => {
     );
   });
 
-  it("reads an exact mirror manifest from the legacy instanceKey when the new key is missing", async () => {
+  it("does not read legacy mirror roots when the new root is missing", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (
-        filePath ===
-        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
-      ) {
+      if (filePath.startsWith("/workspace/.growi-mirrors/")) {
         throw new Error("missing new manifest");
       }
-      if (
-        filePath ===
-        `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`
-      ) {
-        return createBundleManifest(
-          [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
-          { rootCanonicalPath: "/sample/hello" },
-        );
-      }
-      if (
-        filePath ===
-        `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`
-      ) {
-        return "# local hello\n";
+      if (filePath.startsWith("/workspace/.growi-workspaces/")) {
+        throw new Error("legacy mirror root must not be read");
       }
       throw new Error(`unexpected file: ${filePath}`);
     });
@@ -3875,12 +3856,10 @@ describe("bundle commands", () => {
       deps,
     )(createUri("growi", "/sample/hello.md"));
 
-    expect(results).toEqual([
-      { canonicalPath: "/sample/hello", status: "LocalChanged" },
-    ]);
-    expect(deps.openChanges).toHaveBeenCalledWith(
-      "GROWI Mirror Diff: /sample/hello",
-      expect.any(Array),
+    expect(results).toBeUndefined();
+    expect(deps.openChanges).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "対象の local mirror が見つからないため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。",
     );
   });
 
@@ -4199,30 +4178,15 @@ describe("bundle commands", () => {
     });
   });
 
-  it("migrates an exact legacy-key mirror to the new instanceKey on upload", async () => {
+  it("does not read legacy mirror roots when uploading without a new root", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
     deps.readLocalFile.mockImplementation(async (filePath: string) => {
-      if (
-        filePath ===
-        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
-      ) {
+      if (filePath.startsWith("/workspace/.growi-mirrors/")) {
         throw new Error("missing new manifest");
       }
-      if (
-        filePath ===
-        `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`
-      ) {
-        return createBundleManifest(
-          [{ canonicalPath: "/sample/hello", body: "# old hello\n" }],
-          { rootCanonicalPath: "/sample/hello" },
-        );
-      }
-      if (
-        filePath ===
-        `${createLegacyMirrorRootPath("/sample/hello")}/__hello__.md`
-      ) {
-        return "# local hello\n";
+      if (filePath.startsWith("/workspace/.growi-workspaces/")) {
+        throw new Error("legacy mirror root must not be read");
       }
       throw new Error(`unexpected file: ${filePath}`);
     });
@@ -4246,23 +4210,12 @@ describe("bundle commands", () => {
       createUri("growi", "/sample/hello.md"),
     );
 
-    expect(results).toEqual([
-      { canonicalPath: "/sample/hello", status: "Uploaded" },
-    ]);
-    expect(
-      deps.writeLocalFile.mock.calls.some(
-        ([filePath]) =>
-          filePath ===
-          `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
-      ),
-    ).toBe(true);
-    expect(
-      deps.deleteLocalPath.mock.calls.some(
-        ([filePath]) =>
-          filePath ===
-          `${createLegacyMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
-      ),
-    ).toBe(true);
+    expect(results).toBeUndefined();
+    expect(deps.writeLocalFile).not.toHaveBeenCalled();
+    expect(deps.deleteLocalPath).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "対象の local mirror が見つからないため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。",
+    );
   });
 });
 
