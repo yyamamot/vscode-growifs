@@ -228,6 +228,24 @@ async function pause(ms = 50) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForFileMatching(pathname, pattern, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const content = await fs.readFile(pathname, "utf8");
+      if (pattern.test(content)) {
+        return content;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await pause(100);
+  }
+  throw new Error(`Timed out waiting for log file match: ${pathname}`);
+}
+
 async function withWindowOverrides(overrides, fn) {
   const originalDescriptors = new Map();
 
@@ -253,6 +271,35 @@ async function withWindowOverrides(overrides, fn) {
       }
 
       delete vscode.window[key];
+    }
+  }
+}
+
+async function withEnvOverrides(overrides, fn) {
+  const originalDescriptors = new Map();
+
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      originalDescriptors.set(
+        key,
+        Object.getOwnPropertyDescriptor(vscode.env, key),
+      );
+      Object.defineProperty(vscode.env, key, {
+        configurable: true,
+        writable: true,
+        value,
+      });
+    }
+
+    return await fn();
+  } finally {
+    for (const [key, descriptor] of originalDescriptors.entries()) {
+      if (descriptor) {
+        Object.defineProperty(vscode.env, key, descriptor);
+        continue;
+      }
+
+      delete vscode.env[key];
     }
   }
 }
@@ -363,8 +410,21 @@ export async function run() {
   const baseUrl = requireEnv("GROWI_HOST_TEST_BASE_URL");
   const token = requireEnv("GROWI_HOST_TEST_TOKEN");
   const adminUrl = requireEnv("GROWI_HOST_TEST_ADMIN_URL");
+  let treeProvider;
 
-  await configureExtension({ baseUrl, token });
+  await withWindowOverrides(
+    {
+      registerTreeDataProvider: (viewId, provider) => {
+        if (viewId === "growi.explorer") {
+          treeProvider = provider;
+        }
+        return { dispose: () => {} };
+      },
+    },
+    async () => {
+      await configureExtension({ baseUrl, token });
+    },
+  );
   await closeAllEditors();
 
   await runCase("command palette commands are registered", async () => {
@@ -391,14 +451,19 @@ export async function run() {
       "growi.compareLocalBundleWithGrowi",
       "growi.uploadLocalBundleToGrowi",
       "growi.showCurrentPageInfo",
+      "growi.showCurrentPageAttachments",
       "growi.showBacklinks",
+      "growi.clearRuntimeLogs",
+      "growi.revealRuntimeLogs",
       "growi.explorerOpenPageItem",
+      "growi.explorerOpenPageInBrowser",
       "growi.explorerCreatePageHere",
       "growi.explorerRenamePage",
       "growi.explorerDeletePage",
       "growi.explorerRefreshCurrentPage",
       "growi.explorerShowBacklinks",
       "growi.explorerShowCurrentPageInfo",
+      "growi.explorerShowCurrentPageAttachments",
       "growi.explorerShowRevisionHistoryDiff",
       "growi.explorerDownloadCurrentPageToLocalFile",
       "growi.explorerDownloadCurrentPageSetToLocalBundle",
@@ -409,8 +474,134 @@ export async function run() {
     ]);
   });
 
+  await runCase(
+    "runtime log directory command resolves and attachment logs are written",
+    async () => {
+      const logDirectory = await vscode.commands.executeCommand(
+        "growi.__test.getResolvedRuntimeLogDirectory",
+      );
+      assert(logDirectory, "Runtime log directory is missing.");
+
+      const runtimeLogPath = process.env.GROWI_JSONL_PATH;
+      assert(runtimeLogPath, "Missing GROWI_JSONL_PATH.");
+
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+
+      await withEnvOverrides(
+        {
+          openExternal: async () => true,
+        },
+        async () => {
+          await withWindowOverrides(
+            {
+              showQuickPick: async (items, options) => {
+                if (
+                  options.placeHolder ===
+                  "添付一覧からブラウザで表示する添付を選択してください。"
+                ) {
+                  return items.find((item) => item.label === "diagram.png");
+                }
+                throw new Error(
+                  `Unexpected quick pick invocation: ${toJsonString({ items, options })}`,
+                );
+              },
+            },
+            async () =>
+              await vscode.commands.executeCommand(
+                "growi.showCurrentPageAttachments",
+              ),
+          );
+        },
+      );
+
+      const logContent = await waitForFileMatching(
+        runtimeLogPath,
+        /attachment\.list\.succeeded/,
+      );
+      assert(
+        /command\.started/.test(logContent),
+        "Missing command.started log.",
+      );
+      assert(
+        /command:growi\.showCurrentPageAttachments/.test(logContent),
+        "Missing showCurrentPageAttachments command operation.",
+      );
+      assert(
+        /session\.started/.test(logContent),
+        "Missing session.started log.",
+      );
+      assert(
+        /attachment\.list\.requested/.test(logContent),
+        "Missing attachment.list.requested log.",
+      );
+      assert(
+        /attachment\.list\.payload/.test(logContent),
+        "Missing attachment.list.payload log.",
+      );
+      assert(
+        /attachment\.list\.succeeded/.test(logContent),
+        "Missing attachment.list.succeeded log.",
+      );
+      assert(
+        /externalOpen\.succeeded/.test(logContent),
+        "Missing externalOpen.succeeded log.",
+      );
+    },
+  );
+
+  await runCase(
+    "explorer browser open writes command and external open trace",
+    async () => {
+      const runtimeLogPath = process.env.GROWI_JSONL_PATH;
+      assert(runtimeLogPath, "Missing GROWI_JSONL_PATH.");
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+
+      let openedUrl;
+      await withEnvOverrides(
+        {
+          openExternal: async (uri) => {
+            openedUrl = uri.toString();
+            return true;
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand(
+            "growi.explorerOpenPageInBrowser",
+            {
+              resourceUri: vscode.Uri.parse("growi:/team/dev/spec.md"),
+            },
+          );
+        },
+      );
+
+      assert(
+        openedUrl === new URL("/team/dev/spec", baseUrl).toString(),
+        `Unexpected browser open URL: ${openedUrl}`,
+      );
+
+      const logContent = await waitForFileMatching(
+        runtimeLogPath,
+        /command:growi\.explorerOpenPageInBrowser/,
+      );
+      assert(
+        /externalOpen\.started/.test(logContent),
+        "Missing externalOpen.started log.",
+      );
+      assert(
+        /externalOpen\.succeeded/.test(logContent),
+        "Missing externalOpen.succeeded log.",
+      );
+      assert(
+        /growi\.example\.com\/team\/dev\/spec/.test(logContent),
+        "Missing sanitized external open target.",
+      );
+    },
+  );
+
   await runCase("open page success", async () => {
     await resetStats(adminUrl);
+    const runtimeLogPath = process.env.GROWI_JSONL_PATH;
+    assert(runtimeLogPath, "Missing GROWI_JSONL_PATH.");
     await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
     const activePath = await getActivePath();
     assert(
@@ -429,6 +620,18 @@ export async function run() {
     assert(
       stats.page >= 1 && stats.revision >= 1,
       `Expected page/revision requests, got ${toJsonString(stats)}`,
+    );
+    const logContent = await waitForFileMatching(
+      runtimeLogPath,
+      /command:growi\.openPage/,
+    );
+    assert(
+      /page\.read\.requested/.test(logContent),
+      "Missing page.read.requested log.",
+    );
+    assert(
+      /page\.read\.revision\.requested/.test(logContent),
+      "Missing page.read.revision.requested log.",
     );
   });
 
@@ -470,6 +673,35 @@ export async function run() {
     );
   });
 
+  await runCase("create page applies same-hierarchy template", async () => {
+    await updateFixture(adminUrl, [
+      ...BACKLINK_FIXTURE_PAGES,
+      {
+        path: "/team/dev/_template",
+        body: "# child template\n\n- seeded from same hierarchy",
+        updatedAt: "2026-03-08T00:06:00.000Z",
+        updatedBy: "template-owner",
+      },
+    ]);
+    try {
+      await resetStats(adminUrl);
+
+      await vscode.commands.executeCommand(
+        "growi.createPage",
+        "/team/dev/new-template-page",
+      );
+
+      const doc = vscode.window.activeTextEditor?.document;
+      assert(Boolean(doc), "Active document is missing after template create.");
+      assert(
+        doc.getText() === "# child template\n\n- seeded from same hierarchy",
+        `Expected same-hierarchy template body, got: ${doc?.getText()}`,
+      );
+    } finally {
+      await updateFixture(adminUrl, BACKLINK_FIXTURE_PAGES);
+    }
+  });
+
   await runCase("create page from explorer context success", async () => {
     await resetStats(adminUrl);
 
@@ -508,6 +740,57 @@ export async function run() {
       `Expected context-created page to appear in listing: ${toJsonString(entries)}`,
     );
   });
+
+  await runCase(
+    "create page from explorer context applies descendant template",
+    async () => {
+      await updateFixture(adminUrl, [
+        ...BACKLINK_FIXTURE_PAGES,
+        {
+          path: "/team/__template",
+          body: "# descendant template\n\nInherited from /team",
+          updatedAt: "2026-03-08T00:06:00.000Z",
+          updatedBy: "template-owner",
+        },
+      ]);
+      try {
+        await resetStats(adminUrl);
+
+        await withWindowOverrides(
+          {
+            showInputBox: async (options) => {
+              assert(
+                options?.value === "/team/dev/",
+                `Unexpected create-here initial value: ${options?.value}`,
+              );
+              return "/team/dev/new-descendant-template-page";
+            },
+          },
+          async () => {
+            await vscode.commands.executeCommand(
+              "growi.explorerCreatePageHere",
+              {
+                uri: vscode.Uri.parse("growi:/team/dev/spec.md"),
+                contextValue: "growi.page",
+              },
+            );
+          },
+        );
+
+        const doc = vscode.window.activeTextEditor?.document;
+        assert(
+          Boolean(doc),
+          "Active document is missing after descendant template create.",
+        );
+        assert(
+          doc.getText() === "# descendant template\n\nInherited from /team",
+          `Expected descendant template body, got: ${doc?.getText()}`,
+        );
+      } finally {
+        await updateFixture(adminUrl, BACKLINK_FIXTURE_PAGES);
+      }
+    },
+  );
 
   await runCase("rename page from explorer context success", async () => {
     await resetStats(adminUrl);
@@ -816,6 +1099,86 @@ export async function run() {
       `Expected delete request after subtree delete, got ${toJsonString(stats)}`,
     );
   });
+
+  await runCase(
+    "show current page attachments opens selected browser URL",
+    async () => {
+      await closeAllEditors();
+      await updateFixture(adminUrl, [
+        {
+          path: "/team/dev/spec",
+          body: "# spec page",
+          updatedAt: "2026-03-08T00:01:00.000Z",
+          updatedBy: "spec-owner",
+          attachments: [
+            {
+              attachmentId: "attachment-1",
+              originalName: "diagram.png",
+              fileFormat: "image/png",
+              fileSize: 1024,
+              downloadUrl: "attachment/diagram.png",
+            },
+            {
+              attachmentId: "attachment-2",
+              originalName: "report.pdf",
+              fileFormat: "application/pdf",
+              fileSize: 2048,
+              downloadUrl: "https://growi.example.com/attachment/report.pdf",
+            },
+          ],
+        },
+      ]);
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+
+      let openedUrl;
+      await withEnvOverrides(
+        {
+          openExternal: async (uri) => {
+            openedUrl = uri.toString();
+            return true;
+          },
+        },
+        async () => {
+          const result = await withWindowOverrides(
+            {
+              showQuickPick: async (items, options) => {
+                if (
+                  options.placeHolder ===
+                  "添付一覧からブラウザで表示する添付を選択してください。"
+                ) {
+                  return items.find((item) => item.label === "diagram.png");
+                }
+                throw new Error(
+                  `Unexpected quick pick invocation: ${toJsonString({ items, options })}`,
+                );
+              },
+            },
+            async () =>
+              await vscode.commands.executeCommand(
+                "growi.showCurrentPageAttachments",
+              ),
+          );
+
+          assert(
+            result === new URL("attachment/diagram.png", baseUrl).toString(),
+            `Unexpected attachment browser URL: ${result}`,
+          );
+        },
+      );
+
+      assert(
+        openedUrl === new URL("attachment/diagram.png", baseUrl).toString(),
+        `Expected browser open URL to be resolved attachment URL, got ${openedUrl}`,
+      );
+
+      const stats = await getStats(adminUrl);
+      assert(
+        stats.attachmentList >= 1,
+        `Expected attachment list request after attachment command, got ${toJsonString(stats)}`,
+      );
+    },
+  );
 
   await runCase("open page not found", async () => {
     await resetStats(adminUrl);
@@ -1157,6 +1520,94 @@ export async function run() {
       assert(
         stats.page >= 1 && stats.revision >= 1,
         `Expected page/revision reload on refresh, got ${toJsonString(stats)}`,
+      );
+    },
+  );
+
+  await runCase(
+    "active growi editor switches mark stale pages and refresh clears them",
+    async () => {
+      assert(
+        treeProvider,
+        "Expected growi explorer tree provider to be captured",
+      );
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      await adminUpdatePage(adminUrl, {
+        path: "/team/dev/spec",
+        body: "# refreshed from remote\n",
+        updatedBy: "stale-owner",
+      });
+
+      await resetStats(adminUrl);
+      const growiDocument = vscode.window.activeTextEditor?.document;
+      assert(
+        growiDocument,
+        "Expected growi document to stay open before editor switch",
+      );
+
+      const scratchDocument = await vscode.workspace.openTextDocument({
+        content: "scratch",
+        language: "plaintext",
+      });
+      await vscode.window.showTextDocument(scratchDocument);
+      await pause();
+
+      let stats = await getStats(adminUrl);
+      assert(
+        stats.page === 0,
+        `Non-growi editor should not trigger freshness lookup, got ${toJsonString(stats)}`,
+      );
+
+      const growiEditor = vscode.window.activeTextEditor;
+      assert(
+        growiEditor?.document.uri.scheme === "file",
+        `Expected scratch editor to be active, got ${growiEditor?.document.uri.toString()}`,
+      );
+      await vscode.window.showTextDocument(growiDocument);
+      await pause();
+
+      stats = await getStats(adminUrl);
+      assert(
+        stats.page >= 1,
+        `Growi editor switch should trigger freshness lookup, got ${toJsonString(stats)}`,
+      );
+
+      const [root] = await treeProvider.getChildren();
+      const stalePage = (await treeProvider.getChildren(root)).find(
+        (item) => item.uri.path === "/team/dev/spec.md",
+      );
+      assert(
+        stalePage?.description === "remote changed",
+        `Expected stale tree decoration after editor switch: ${toJsonString(stalePage)}`,
+      );
+      assert(
+        stalePage?.tooltip ===
+          "remote が更新されています。Refresh Current Page で再読込してください。",
+        `Expected stale tree tooltip after editor switch: ${toJsonString(stalePage)}`,
+      );
+      assert(
+        stalePage?.iconPath?.id === "warning",
+        `Expected warning icon after editor switch: ${toJsonString(stalePage)}`,
+      );
+
+      await vscode.commands.executeCommand("growi.refreshCurrentPage");
+      await pause();
+
+      const freshPage = (await treeProvider.getChildren(root)).find(
+        (item) => item.uri.path === "/team/dev/spec.md",
+      );
+      assert(
+        freshPage?.description === undefined,
+        `Expected stale decoration to clear after refresh: ${toJsonString(freshPage)}`,
+      );
+      assert(
+        freshPage?.tooltip === undefined,
+        `Expected stale tooltip to clear after refresh: ${toJsonString(freshPage)}`,
+      );
+      assert(
+        freshPage?.iconPath?.id !== "warning",
+        `Expected warning icon to clear after refresh: ${toJsonString(freshPage)}`,
       );
     },
   );
@@ -3061,6 +3512,70 @@ export async function run() {
       `Unexpected normalized URL path: ${activePath}`,
     );
   });
+
+  await runCase(
+    "open page quick pick lists registered prefix candidates and opens selection",
+    async () => {
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+
+      const quickPickCalls = [];
+      await withWindowOverrides(
+        {
+          showQuickPick: async (items, options) => {
+            quickPickCalls.push({
+              items: items.map((item) => ({
+                label: item.label,
+                description: item.description,
+                canonicalPath: item.canonicalPath,
+                action: item.action,
+              })),
+              options,
+            });
+            return items.find(
+              (item) => item.canonicalPath === "/team/dev/spec",
+            );
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.openPage");
+        },
+      );
+
+      assert(
+        quickPickCalls.length === 1,
+        `Expected one open page quick pick, got ${toJsonString(quickPickCalls)}`,
+      );
+      assert(
+        quickPickCalls[0].options.placeHolder ===
+          "登録済み Prefix 配下からページを絞り込んで選択してください。",
+        `Unexpected open page placeholder: ${toJsonString(quickPickCalls)}`,
+      );
+      assert(
+        quickPickCalls[0].items.some(
+          (item) =>
+            item.label === "spec" &&
+            item.description === "/team/dev/spec" &&
+            item.canonicalPath === "/team/dev/spec",
+        ),
+        `Expected /team/dev/spec candidate in quick pick: ${toJsonString(quickPickCalls)}`,
+      );
+      assert(
+        quickPickCalls[0].items.some(
+          (item) =>
+            item.label === "URL / path を直接入力" &&
+            item.action === "directInput",
+        ),
+        `Expected direct-input fallback in quick pick: ${toJsonString(quickPickCalls)}`,
+      );
+
+      const activePath = await getActivePath();
+      assert(
+        activePath === "/team/dev/spec.md",
+        `Unexpected quick pick open result: ${activePath}`,
+      );
+    },
+  );
 
   await runCase("permalink URL open normalization", async () => {
     await updateFixture(

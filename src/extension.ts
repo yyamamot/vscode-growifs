@@ -1,3 +1,4 @@
+import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import * as vscode from "vscode";
 import { buildGrowiUriFromInput } from "./core/uri";
@@ -10,6 +11,7 @@ import {
   createConfigureBaseUrlCommand,
   createCreatePageCommand,
   createDeletePageCommand,
+  createDeletePrefixCommand,
   createDownloadCurrentPageSetToLocalBundleCommand,
   createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
@@ -19,10 +21,12 @@ import {
   createExplorerDeletePageCommand,
   createExplorerDownloadCurrentPageSetToLocalBundleCommand,
   createExplorerDownloadCurrentPageToLocalFileCommand,
+  createExplorerOpenPageInBrowserCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
   createExplorerRenamePageCommand,
   createExplorerShowBacklinksCommand,
+  createExplorerShowCurrentPageAttachmentsCommand,
   createExplorerShowCurrentPageInfoCommand,
   createExplorerShowRevisionHistoryDiffCommand,
   createExplorerUploadExportedLocalFileToGrowiCommand,
@@ -37,6 +41,7 @@ import {
   createRenamePageCommand,
   createShowBacklinksCommand,
   createShowCurrentPageActionsCommand,
+  createShowCurrentPageAttachmentsCommand,
   createShowCurrentPageInfoCommand,
   createShowLocalRoundTripActionsCommand,
   createShowRevisionHistoryDiffCommand,
@@ -74,6 +79,7 @@ import {
   extendMarkdownPreviewIt,
   setGrowiAssetProxyUrlResolver,
 } from "./vscode/markdownPreview";
+import { createPageFreshnessService } from "./vscode/pageFreshnessService";
 import {
   createPageReferenceResolver,
   type ResolveParsedGrowiReferenceResult,
@@ -85,6 +91,7 @@ import {
 } from "./vscode/prefixTree";
 import { GrowiRevisionContentProvider } from "./vscode/revisionContentProvider";
 import { GROWI_REVISION_SCHEME } from "./vscode/revisionModel";
+import { RuntimeLogger } from "./vscode/runtimeLogger";
 
 export { buildGrowiUriFromInput, normalizeCanonicalPath } from "./core/uri";
 export {
@@ -95,6 +102,7 @@ export {
   createConfigureApiTokenCommand,
   createConfigureBaseUrlCommand,
   createCreatePageCommand,
+  createDeletePrefixCommand,
   createDownloadCurrentPageSetToLocalBundleCommand,
   createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
@@ -104,6 +112,7 @@ export {
   createExplorerDeletePageCommand,
   createExplorerDownloadCurrentPageSetToLocalBundleCommand,
   createExplorerDownloadCurrentPageToLocalFileCommand,
+  createExplorerOpenPageInBrowserCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
   createExplorerRenamePageCommand,
@@ -173,6 +182,12 @@ function mapReadPageBodyError(
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const runtimeLogsEnabled = process.env.GROWI_RUNTIME_MODE === "debug-f5";
+  void vscode.commands.executeCommand?.(
+    "setContext",
+    "growi.runtimeLogsEnabled",
+    runtimeLogsEnabled,
+  );
   const workspaceState = context.workspaceState ?? {
     get<T>(_key: string, defaultValue?: T): T {
       return defaultValue as T;
@@ -190,7 +205,202 @@ export function activate(context: vscode.ExtensionContext): void {
       return vscode.workspace.fs.readDirectory(uri);
     },
   });
-  const growiApi = createGrowiApiAdapter();
+  const outputChannel = (
+    vscode.window as typeof vscode.window & {
+      createOutputChannel?: (
+        name: string,
+      ) => Pick<vscode.OutputChannel, "appendLine" | "dispose">;
+    }
+  ).createOutputChannel?.("GROWI") ?? {
+    appendLine(_value: string): void {},
+    dispose(): void {},
+  };
+  const runtimeLogger = new RuntimeLogger();
+  const appendRuntimeStatus = (prefix: string) => {
+    const status = runtimeLogger.getRuntimeLogStatus();
+    outputChannel.appendLine(
+      `[${new Date().toISOString()}] ${prefix} enabled=${status.enabled} mode=${status.mode} configuredPath=${status.configuredPath} resolvedPath=${status.resolvedPath ?? "(unresolved)"} workspaceResolved=${status.workspaceResolved}`,
+    );
+  };
+  appendRuntimeStatus("runtime log status");
+  type RuntimeCommandTraceState = {
+    commandId: string;
+    outcome?: "failed" | "canceled";
+    errorCode?: string;
+  };
+  const runtimeCommandTraceStack: RuntimeCommandTraceState[] = [];
+  const getCurrentRuntimeCommandTrace = () =>
+    runtimeCommandTraceStack[runtimeCommandTraceStack.length - 1];
+  const inferRuntimeTraceErrorCode = (message: string): string => {
+    const text = message.toLowerCase();
+    if (text.includes("base url")) {
+      return "BaseUrlNotConfigured";
+    }
+    if (text.includes("api token")) {
+      return text.includes("invalid")
+        ? "InvalidApiToken"
+        : "ApiTokenNotConfigured";
+    }
+    if (text.includes("permission denied") || text.includes("アクセス権")) {
+      return "PermissionDenied";
+    }
+    if (text.includes("接続に失敗") || text.includes("failed to connect")) {
+      return "ConnectionFailed";
+    }
+    if (text.includes("未対応") || text.includes("not supported")) {
+      return "ApiNotSupported";
+    }
+    if (text.includes("見つから") || text.includes("not found")) {
+      return "NotFound";
+    }
+    if (text.includes("invalid target")) {
+      return "InvalidTarget";
+    }
+    if (text.includes("unavailable")) {
+      return "Unavailable";
+    }
+    if (text.includes("open failed")) {
+      return "OpenFailed";
+    }
+    return "UserVisibleError";
+  };
+  const markCurrentRuntimeCommandTrace = (
+    outcome: "failed" | "canceled",
+    errorCode?: string,
+  ) => {
+    const current = getCurrentRuntimeCommandTrace();
+    if (!current) {
+      return;
+    }
+    if (current.outcome === "failed") {
+      return;
+    }
+    current.outcome = outcome;
+    if (errorCode && !current.errorCode) {
+      current.errorCode = errorCode;
+    }
+  };
+  const sanitizeExternalTarget = (uri: string): string => {
+    try {
+      const parsed = new URL(uri);
+      return `${parsed.host}${parsed.pathname}`;
+    } catch {
+      return "(invalid-uri)";
+    }
+  };
+  const tracedCommandIds = new Set<string>([
+    GROWI_COMMANDS.openPage,
+    GROWI_COMMANDS.showCurrentPageInfo,
+    GROWI_COMMANDS.showCurrentPageAttachments,
+    GROWI_COMMANDS.explorerOpenPageInBrowser,
+    GROWI_COMMANDS.explorerShowCurrentPageAttachments,
+  ]);
+  const wrapRuntimeTracedCommand = <TArgs extends unknown[], TResult>(
+    commandId: string,
+    handler: (...args: TArgs) => TResult | Promise<TResult>,
+  ) => {
+    if (!tracedCommandIds.has(commandId)) {
+      return handler;
+    }
+    return (async (...args: TArgs): Promise<TResult> => {
+      runtimeCommandTraceStack.push({ commandId });
+      await runtimeLogger.logWithStatus({
+        level: "info",
+        event: "command.started",
+        source: "command",
+        operation: `command:${commandId}`,
+        entityType: "command",
+        entityId: commandId,
+        virtualPath: commandId,
+        outcome: "started",
+      });
+      try {
+        const result = await handler(...args);
+        const current = getCurrentRuntimeCommandTrace();
+        if (current?.outcome === "canceled") {
+          await runtimeLogger.logWithStatus({
+            level: "info",
+            event: "command.canceled",
+            source: "command",
+            operation: `command:${commandId}`,
+            entityType: "command",
+            entityId: commandId,
+            virtualPath: commandId,
+            outcome: "canceled",
+            errorCode: current.errorCode ?? "Canceled",
+          });
+        } else if (current?.outcome === "failed") {
+          await runtimeLogger.logWithStatus({
+            level: "error",
+            event: "command.failed",
+            source: "command",
+            operation: `command:${commandId}`,
+            entityType: "command",
+            entityId: commandId,
+            virtualPath: commandId,
+            outcome: "failed",
+            errorCode: current.errorCode ?? "UserVisibleError",
+          });
+        } else {
+          await runtimeLogger.logWithStatus({
+            level: "info",
+            event: "command.succeeded",
+            source: "command",
+            operation: `command:${commandId}`,
+            entityType: "command",
+            entityId: commandId,
+            virtualPath: commandId,
+            outcome: "succeeded",
+          });
+        }
+        return result;
+      } catch (error) {
+        await runtimeLogger.logWithStatus({
+          level: "error",
+          event: "command.failed",
+          source: "command",
+          operation: `command:${commandId}`,
+          entityType: "command",
+          entityId: commandId,
+          virtualPath: commandId,
+          outcome: "failed",
+          errorCode: "UnhandledException",
+        });
+        throw error;
+      } finally {
+        runtimeCommandTraceStack.pop();
+      }
+    }) as typeof handler;
+  };
+  const registerGrowiCommand = <TArgs extends unknown[], TResult>(
+    commandId: string,
+    handler: (...args: TArgs) => TResult | Promise<TResult>,
+  ) =>
+    vscode.commands.registerCommand(
+      commandId,
+      wrapRuntimeTracedCommand(commandId, handler),
+    );
+  const growiApi = createGrowiApiAdapter({
+    diagnostics: {
+      log(message: string) {
+        outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
+      },
+      logStructured(event) {
+        void runtimeLogger
+          .logWithStatus({
+            ...event,
+            source: "adapter",
+          })
+          .then((result) => {
+            if (!result.ok) {
+              appendRuntimeStatus(
+                `runtime log write failed: ${result.message}`,
+              );
+            }
+          });
+      },
+    },
+  });
 
   const refreshGrowiExplorer = () => {
     prefixTreeDataProvider.refresh();
@@ -294,13 +504,26 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
   const pageCreator: GrowiPageCreator = {
-    async createPage(canonicalPath: string) {
+    async createPage(canonicalPath: string, body: string) {
       const configured = await getConfiguredApiContext();
       if (!configured.ok) {
         return configured;
       }
 
       return growiApi.createPage(
+        canonicalPath,
+        body,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+    },
+    async resolveCreatePageBody(canonicalPath: string) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return "";
+      }
+
+      return growiApi.resolveCreatePageBody(
         canonicalPath,
         configured.baseUrl,
         configured.apiToken,
@@ -377,6 +600,16 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       return result;
     },
+    async deletePrefix(rawPrefix: string) {
+      const result = await prefixRegistry.deletePrefix(
+        vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
+        rawPrefix,
+      );
+      if (result.ok && result.removed) {
+        refreshGrowiExplorer();
+      }
+      return result;
+    },
     async bootstrapEditSession(canonicalPath: string) {
       const configured = await getConfiguredApiContext();
       if (!configured.ok) {
@@ -434,8 +667,11 @@ export function activate(context: vscode.ExtensionContext): void {
         configured.apiToken,
       );
     },
-    async createPage(canonicalPath: string) {
-      return pageCreator.createPage(canonicalPath);
+    async createPage(canonicalPath: string, body: string) {
+      return pageCreator.createPage(canonicalPath, body);
+    },
+    async resolveCreatePageBody(canonicalPath: string) {
+      return pageCreator.resolveCreatePageBody(canonicalPath);
     },
     async deletePage(input: {
       pageId: string;
@@ -461,6 +697,18 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       return growiApi.listRevisions(
+        pageId,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+    },
+    async listAttachments(pageId: string) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+
+      return growiApi.listAttachments(
         pageId,
         configured.baseUrl,
         configured.apiToken,
@@ -495,6 +743,53 @@ export function activate(context: vscode.ExtensionContext): void {
         "vscode.open",
         vscode.Uri.parse(uri),
       );
+    },
+    async openExternalUri(uri: string) {
+      const currentTrace = getCurrentRuntimeCommandTrace();
+      const sanitizedTarget = sanitizeExternalTarget(uri);
+      if (currentTrace) {
+        await runtimeLogger.logWithStatus({
+          level: "info",
+          event: "externalOpen.started",
+          source: "command",
+          operation: `command:${currentTrace.commandId}`,
+          entityType: "externalUri",
+          entityId: currentTrace.commandId,
+          virtualPath: sanitizedTarget,
+          outcome: "started",
+        });
+      }
+      try {
+        await vscode.env.openExternal(vscode.Uri.parse(uri));
+        if (currentTrace) {
+          await runtimeLogger.logWithStatus({
+            level: "info",
+            event: "externalOpen.succeeded",
+            source: "command",
+            operation: `command:${currentTrace.commandId}`,
+            entityType: "externalUri",
+            entityId: currentTrace.commandId,
+            virtualPath: sanitizedTarget,
+            outcome: "succeeded",
+          });
+        }
+      } catch (error) {
+        if (currentTrace) {
+          markCurrentRuntimeCommandTrace("failed", "OpenExternalFailed");
+          await runtimeLogger.logWithStatus({
+            level: "error",
+            event: "externalOpen.failed",
+            source: "command",
+            operation: `command:${currentTrace.commandId}`,
+            entityType: "externalUri",
+            entityId: currentTrace.commandId,
+            virtualPath: sanitizedTarget,
+            outcome: "failed",
+            errorCode: "OpenExternalFailed",
+          });
+        }
+        throw error;
+      }
     },
     async openLocalFile(localPath: string) {
       await vscode.commands.executeCommand(
@@ -547,6 +842,8 @@ export function activate(context: vscode.ExtensionContext): void {
           preserveFocus: true,
           preview: false,
         });
+        prefixTreeDataProvider.clearStaleState(canonicalPath);
+        prefixTreeDataProvider.refresh();
         return "reopened" as const;
       } catch {
         return "failed" as const;
@@ -721,6 +1018,8 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     clearSubtreeState(canonicalPrefixPath: string) {
       fileSystemProvider.clearSubtreeState(canonicalPrefixPath);
+      prefixTreeDataProvider.clearStaleState(canonicalPrefixPath);
+      prefixTreeDataProvider.refresh();
     },
     seedRevisionContent(
       uri: { scheme: string; path: string; fsPath?: string },
@@ -733,6 +1032,10 @@ export function activate(context: vscode.ExtensionContext): void {
       revisionContentProvider.seedRevisionContent(targetUri, body);
     },
     showErrorMessage(message: string) {
+      markCurrentRuntimeCommandTrace(
+        "failed",
+        inferRuntimeTraceErrorCode(message),
+      );
       void vscode.window.showErrorMessage(message);
     },
     async showEndEditDiscardConfirmation() {
@@ -760,7 +1063,12 @@ export function activate(context: vscode.ExtensionContext): void {
       title?: string;
       value?: string;
     }) {
-      return vscode.window.showInputBox(options);
+      return vscode.window.showInputBox(options).then((value) => {
+        if (value === undefined) {
+          markCurrentRuntimeCommandTrace("canceled", "Canceled");
+        }
+        return value;
+      });
     },
     async showClearPrefixesConfirmation(
       baseUrl: string,
@@ -823,7 +1131,11 @@ export function activate(context: vscode.ExtensionContext): void {
       items: readonly { label: string; canonicalPath: string }[],
       options: { placeHolder: string },
     ) {
-      return await vscode.window.showQuickPick(items, options);
+      const selected = await vscode.window.showQuickPick(items, options);
+      if (selected === undefined) {
+        markCurrentRuntimeCommandTrace("canceled", "Canceled");
+      }
+      return selected;
     },
     showWarningMessage(message: string) {
       void vscode.window.showWarningMessage(message);
@@ -900,7 +1212,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const openPageCommand = createOpenPageCommand(deps);
-  const openPageCommandDisposable = vscode.commands.registerCommand(
+  const openPageCommandDisposable = registerGrowiCommand(
     GROWI_COMMANDS.openPage,
     openPageCommand,
   );
@@ -998,9 +1310,13 @@ export function activate(context: vscode.ExtensionContext): void {
     GROWI_COMMANDS.refreshListing,
     createRefreshListingCommand(deps),
   );
-  const showCurrentPageInfoCommandDisposable = vscode.commands.registerCommand(
+  const showCurrentPageInfoCommandDisposable = registerGrowiCommand(
     GROWI_COMMANDS.showCurrentPageInfo,
     createShowCurrentPageInfoCommand(deps),
+  );
+  const showCurrentPageAttachmentsCommandDisposable = registerGrowiCommand(
+    GROWI_COMMANDS.showCurrentPageAttachments,
+    createShowCurrentPageAttachmentsCommand(deps),
   );
   const showRevisionHistoryDiffCommandDisposable =
     vscode.commands.registerCommand(
@@ -1022,6 +1338,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const explorerOpenPageItemCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.explorerOpenPageItem,
     createExplorerOpenPageItemCommand(deps),
+  );
+  const explorerOpenPageInBrowserCommandDisposable = registerGrowiCommand(
+    GROWI_COMMANDS.explorerOpenPageInBrowser,
+    createExplorerOpenPageInBrowserCommand(deps),
   );
   const explorerCreatePageHereCommandDisposable =
     vscode.commands.registerCommand(
@@ -1050,6 +1370,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       GROWI_COMMANDS.explorerShowCurrentPageInfo,
       createExplorerShowCurrentPageInfoCommand(deps),
+    );
+  const explorerShowCurrentPageAttachmentsCommandDisposable =
+    registerGrowiCommand(
+      GROWI_COMMANDS.explorerShowCurrentPageAttachments,
+      createExplorerShowCurrentPageAttachmentsCommand(deps),
     );
   const explorerShowRevisionHistoryDiffCommandDisposable =
     vscode.commands.registerCommand(
@@ -1090,6 +1415,10 @@ export function activate(context: vscode.ExtensionContext): void {
     GROWI_COMMANDS.clearPrefixes,
     createClearPrefixesCommand(deps),
   );
+  const deletePrefixCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.deletePrefix,
+    createDeletePrefixCommand(deps),
+  );
   const showBacklinksCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.showBacklinks,
     createShowBacklinksCommand(deps),
@@ -1105,6 +1434,97 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
   );
+  const clearRuntimeLogsCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.clearRuntimeLogs,
+    async () => {
+      if (!runtimeLogsEnabled) {
+        void vscode.window.showInformationMessage(
+          "Runtime logs are available only in debug-f5 mode.",
+        );
+        return 0;
+      }
+
+      const directory = runtimeLogger.getResolvedRuntimeLogDirectory();
+      if (!directory) {
+        const status = runtimeLogger.getRuntimeLogStatus();
+        void vscode.window.showInformationMessage(
+          `Runtime log path is not resolved yet. mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`,
+        );
+        return 0;
+      }
+
+      let removed = 0;
+      try {
+        const entries = await readdir(directory, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+            await rm(
+              vscode.Uri.joinPath(vscode.Uri.file(directory), entry.name)
+                .fsPath,
+              { force: true },
+            );
+            removed += 1;
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      runtimeLogger.resetRuntimeLogState();
+      void vscode.window.showInformationMessage(
+        `Removed ${removed} runtime log file(s).`,
+      );
+      return removed;
+    },
+  );
+  const pageFreshnessService = createPageFreshnessService({
+    getEditSession(canonicalPath: string) {
+      return editSessionRegistry.getEditSession(canonicalPath);
+    },
+    getCurrentPageInfo(canonicalPath: string) {
+      return fileSystemProvider.getCurrentPageInfo(canonicalPath);
+    },
+    async getCurrentRevision(canonicalPath: string) {
+      return await currentRevisionReader.getCurrentRevision(canonicalPath);
+    },
+  });
+  const revealRuntimeLogsCommandDisposable = vscode.commands.registerCommand(
+    GROWI_COMMANDS.revealRuntimeLogs,
+    async () => {
+      if (!runtimeLogsEnabled) {
+        void vscode.window.showInformationMessage(
+          "Runtime logs are available only in debug-f5 mode.",
+        );
+        return;
+      }
+
+      const directory = runtimeLogger.getResolvedRuntimeLogDirectory();
+      if (!directory) {
+        const status = runtimeLogger.getRuntimeLogStatus();
+        void vscode.window.showInformationMessage(
+          `Runtime log path is not resolved yet. mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`,
+        );
+        return;
+      }
+
+      await vscode.env.openExternal(vscode.Uri.file(directory));
+      return directory;
+    },
+  );
+  const getResolvedRuntimeLogDirectoryCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.getResolvedRuntimeLogDirectory",
+      async () => {
+        const directory = runtimeLogger.getResolvedRuntimeLogDirectory();
+        if (directory) {
+          return directory;
+        }
+        const status = runtimeLogger.getRuntimeLogStatus();
+        return `unresolved: mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`;
+      },
+    );
 
   const linkNavigationDeps = {
     getBaseUrl() {
@@ -1296,11 +1716,50 @@ export function activate(context: vscode.ExtensionContext): void {
     const isEditing = Boolean(
       editSessionRegistry.getEditSession(document.uri.path),
     );
-    editStatusBarItem.text = isEditing ? "編集中" : "閲覧中";
+    editStatusBarItem.text = isEditing ? "$(unlock) 編集中" : "$(lock) 閲覧中";
     editStatusBarItem.command = isEditing
       ? GROWI_COMMANDS.endEdit
       : GROWI_COMMANDS.startEdit;
     editStatusBarItem.show();
+  };
+
+  const resolveGrowiPageCanonicalPath = (
+    document: vscode.TextDocument | undefined,
+  ): string | undefined => {
+    if (!document || document.uri.scheme !== "growi") {
+      return undefined;
+    }
+    if (!document.uri.path.endsWith(".md")) {
+      return undefined;
+    }
+
+    const normalized = buildGrowiUriFromInput(document.uri.path);
+    if (!normalized.ok || normalized.value.canonicalPath === "/") {
+      return undefined;
+    }
+
+    return normalized.value.canonicalPath;
+  };
+
+  const updatePageFreshnessDecoration = async (
+    document: vscode.TextDocument | undefined,
+  ) => {
+    const canonicalPath = resolveGrowiPageCanonicalPath(document);
+    if (!canonicalPath) {
+      return;
+    }
+
+    const freshness =
+      await pageFreshnessService.checkPageFreshness(canonicalPath);
+    if (freshness === "stale") {
+      prefixTreeDataProvider.markCanonicalPathStale(canonicalPath);
+      prefixTreeDataProvider.refresh();
+      return;
+    }
+    if (freshness === "fresh") {
+      prefixTreeDataProvider.clearStaleState(canonicalPath);
+      prefixTreeDataProvider.refresh();
+    }
   };
 
   for (const document of workspaceApi.textDocuments ?? []) {
@@ -1333,6 +1792,7 @@ export function activate(context: vscode.ExtensionContext): void {
     windowApi.onDidChangeActiveTextEditor?.((editor) => {
       updateEditStatusBar(editor);
       void maybeAutoFoldDrawioDocument(editor);
+      void updatePageFreshnessDecoration(editor?.document);
     }) ?? noopDisposable;
   const onDidChangeEditSessionDisposable = editSessionRegistry.onDidChange(
     (event) => {
@@ -1361,17 +1821,20 @@ export function activate(context: vscode.ExtensionContext): void {
       uploadLocalMirrorToGrowiCommandDisposable.dispose();
       refreshListingCommandDisposable.dispose();
       showCurrentPageInfoCommandDisposable.dispose();
+      showCurrentPageAttachmentsCommandDisposable.dispose();
       showRevisionHistoryDiffCommandDisposable.dispose();
       addPrefixCommandDisposable.dispose();
       openPrefixRootPageCommandDisposable.dispose();
       openDirectoryPageCommandDisposable.dispose();
       explorerOpenPageItemCommandDisposable.dispose();
+      explorerOpenPageInBrowserCommandDisposable.dispose();
       explorerCreatePageHereCommandDisposable.dispose();
       explorerRenamePageCommandDisposable.dispose();
       explorerDeletePageCommandDisposable.dispose();
       explorerRefreshCurrentPageCommandDisposable.dispose();
       explorerShowBacklinksCommandDisposable.dispose();
       explorerShowCurrentPageInfoCommandDisposable.dispose();
+      explorerShowCurrentPageAttachmentsCommandDisposable.dispose();
       explorerShowRevisionHistoryDiffCommandDisposable.dispose();
       explorerCreateLocalMirrorForCurrentPageCommandDisposable.dispose();
       explorerCreateLocalMirrorForCurrentPrefixCommandDisposable.dispose();
@@ -1380,8 +1843,12 @@ export function activate(context: vscode.ExtensionContext): void {
       explorerCompareLocalMirrorSubtreeWithGrowiCommandDisposable.dispose();
       explorerUploadLocalMirrorSubtreeToGrowiCommandDisposable.dispose();
       clearPrefixesCommandDisposable.dispose();
+      deletePrefixCommandDisposable.dispose();
       showBacklinksCommandDisposable.dispose();
       openReadmeCommandDisposable.dispose();
+      clearRuntimeLogsCommandDisposable.dispose();
+      revealRuntimeLogsCommandDisposable.dispose();
+      getResolvedRuntimeLogDirectoryCommandDisposable.dispose();
       documentLinkProviderDisposable.dispose();
       definitionProviderDisposable.dispose();
       documentSymbolProviderDisposable.dispose();
@@ -1393,6 +1860,7 @@ export function activate(context: vscode.ExtensionContext): void {
       onDidChangeEditSessionDisposable.dispose();
       editStatusBarItem?.dispose();
       diagnosticsCollection?.dispose();
+      outputChannel.dispose();
       setGrowiAssetProxyUrlResolver(undefined);
       void assetProxy.dispose();
     },

@@ -12,6 +12,7 @@ import {
   createConfigureBaseUrlCommand,
   createCreatePageCommand,
   createDeletePageCommand,
+  createDeletePrefixCommand,
   createDownloadCurrentPageSetToLocalBundleCommand,
   createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
@@ -21,6 +22,7 @@ import {
   createExplorerDeletePageCommand,
   createExplorerDownloadCurrentPageSetToLocalBundleCommand,
   createExplorerDownloadCurrentPageToLocalFileCommand,
+  createExplorerOpenPageInBrowserCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
   createExplorerRenamePageCommand,
@@ -37,6 +39,7 @@ import {
   createRenamePageCommand,
   createShowBacklinksCommand,
   createShowCurrentPageActionsCommand,
+  createShowCurrentPageAttachmentsCommand,
   createShowCurrentPageInfoCommand,
   createShowRevisionHistoryDiffCommand,
   createStartEditCommand,
@@ -55,6 +58,9 @@ function createDeps() {
   type QuickPickItem = Parameters<CommandDeps["showQuickPick"]>[0][number];
   type QuickPickResult = Awaited<ReturnType<CommandDeps["showQuickPick"]>>;
   type RevisionListResult = Awaited<ReturnType<CommandDeps["listRevisions"]>>;
+  type AttachmentListResult = Awaited<
+    ReturnType<CommandDeps["listAttachments"]>
+  >;
   type RevisionReadResult = Awaited<ReturnType<CommandDeps["readRevision"]>>;
 
   return {
@@ -76,6 +82,7 @@ function createDeps() {
     createPage: vi.fn(
       async (
         _canonicalPath: string,
+        _body: string,
       ): Promise<
         | { ok: true; pageInfo?: undefined }
         | {
@@ -92,6 +99,7 @@ function createDeps() {
           }
       > => ({ ok: true }),
     ),
+    resolveCreatePageBody: vi.fn(async (_canonicalPath: string) => ""),
     deletePage: vi.fn(
       async (_input: {
         pageId: string;
@@ -148,6 +156,14 @@ function createDeps() {
         | { ok: false; reason: "InvalidBaseUrl" }
       > => ({ ok: true, value: [], cleared: true, removed: ["/team/dev"] }),
     ),
+    deletePrefix: vi.fn(
+      async (
+        _rawPrefix: string,
+      ): Promise<
+        | { ok: true; value: string[]; removed: boolean }
+        | { ok: false; reason: "InvalidBaseUrl" | "InvalidPath" }
+      > => ({ ok: true, value: [], removed: true }),
+    ),
     executeCommand: vi.fn(async (_command: string, ..._args: unknown[]) => {}),
     bootstrapEditSession: vi.fn(
       async (_canonicalPath: string): Promise<StartEditBootstrapResult> => ({
@@ -202,6 +218,12 @@ function createDeps() {
           }
       > => ({ ok: true, paths: [] }),
     ),
+    listAttachments: vi.fn(
+      async (): Promise<AttachmentListResult> => ({
+        ok: true,
+        attachments: [],
+      }),
+    ),
     listRevisions: vi.fn(
       async (): Promise<RevisionListResult> => ({
         ok: true,
@@ -240,6 +262,7 @@ function createDeps() {
     ),
     openLocalFile: vi.fn(async (_path: string): Promise<void> => {}),
     openUri: vi.fn(async (_uri: string): Promise<void> => {}),
+    openExternalUri: vi.fn(async (_uri: string): Promise<void> => {}),
     readLocalFile: vi.fn(async (_path: string): Promise<string> => ""),
     refreshOpenGrowiPage: vi.fn(
       async (
@@ -1036,6 +1059,60 @@ describe("createClearPrefixesCommand", () => {
   });
 });
 
+describe("createDeletePrefixCommand", () => {
+  it("shows an error when the target is not a prefix root", async () => {
+    const deps = createDeps();
+
+    await createDeletePrefixCommand(deps)({
+      uri: createUri("growi", "/team/dev.md"),
+      contextValue: "growi.page",
+    });
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "削除対象の Prefix root ではありません。",
+    );
+    expect(deps.deletePrefix).not.toHaveBeenCalled();
+  });
+
+  it("deletes a registered prefix root and reports success", async () => {
+    const deps = createDeps();
+    deps.deletePrefix.mockResolvedValue({
+      ok: true,
+      value: ["/team/ops"],
+      removed: true,
+    });
+
+    await createDeletePrefixCommand(deps)({
+      uri: createUri("growi", "/team/dev/"),
+      contextValue: "growi.prefixRoot",
+    });
+
+    expect(deps.deletePrefix).toHaveBeenCalledWith("/team/dev");
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "対象 Prefix を削除しました。",
+    );
+  });
+
+  it("treats an unregistered prefix root as a no-op", async () => {
+    const deps = createDeps();
+    deps.deletePrefix.mockResolvedValue({
+      ok: true,
+      value: ["/team/dev"],
+      removed: false,
+    });
+
+    await createDeletePrefixCommand(deps)({
+      uri: createUri("growi", "/team/ops/"),
+      contextValue: "growi.prefixRoot",
+    });
+
+    expect(deps.deletePrefix).toHaveBeenCalledWith("/team/ops");
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "対象 Prefix は登録されていません。",
+    );
+  });
+});
+
 describe("createOpenPageCommand", () => {
   it("opens a normalized growi URI for valid input", async () => {
     const deps = createDeps();
@@ -1148,16 +1225,107 @@ describe("createOpenPageCommand", () => {
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(message);
   });
+
+  it("shows quick pick candidates from registered prefixes and opens the selected page", async () => {
+    const deps = createDeps();
+    deps.getRegisteredPrefixes.mockReturnValue(["/team/dev"]);
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/team/dev/guide", "/team/dev/spec"],
+    });
+    deps.showQuickPick.mockResolvedValue({
+      label: "spec",
+      description: "/team/dev/spec",
+      canonicalPath: "/team/dev/spec",
+    });
+
+    await createOpenPageCommand(deps)();
+
+    expect(deps.showQuickPick).toHaveBeenCalledWith(
+      [
+        {
+          label: "guide",
+          description: "/team/dev/guide",
+          canonicalPath: "/team/dev/guide",
+        },
+        {
+          label: "spec",
+          description: "/team/dev/spec",
+          canonicalPath: "/team/dev/spec",
+        },
+        {
+          label: "URL / path を直接入力",
+          description: "候補に無いページは直接入力で開きます。",
+          action: "directInput",
+          alwaysShow: true,
+        },
+      ],
+      {
+        placeHolder:
+          "登録済み Prefix 配下からページを絞り込んで選択してください。",
+      },
+    );
+    expect(deps.showInputBox).not.toHaveBeenCalled();
+    expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
+  });
+
+  it("falls back to direct input after selecting the direct-input quick pick item", async () => {
+    const deps = createDeps();
+    deps.getRegisteredPrefixes.mockReturnValue(["/team/dev"]);
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: ["/team/dev/spec"],
+    });
+    deps.showQuickPick.mockResolvedValue({
+      label: "URL / path を直接入力",
+      description: "候補に無いページは直接入力で開きます。",
+      action: "directInput",
+      alwaysShow: true,
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec");
+
+    await createOpenPageCommand(deps)();
+
+    expect(deps.showInputBox).toHaveBeenCalledWith({
+      placeHolder:
+        "https://growi.example.com/67ca... or /team/dev/spec or /67ca...",
+      prompt: "GROWI の URL、permalink、またはページパスを入力してください",
+      title: "GROWI: Open Page",
+    });
+    expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
+  });
+
+  it("falls back to direct input when registered prefixes have no candidate pages", async () => {
+    const deps = createDeps();
+    deps.getRegisteredPrefixes.mockReturnValue(["/team/dev"]);
+    deps.listPages.mockResolvedValue({
+      ok: true,
+      paths: [],
+    });
+    deps.showInputBox.mockResolvedValue("/team/dev/spec");
+
+    await createOpenPageCommand(deps)();
+
+    expect(deps.showQuickPick).not.toHaveBeenCalled();
+    expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
+  });
 });
 
 describe("createCreatePageCommand", () => {
-  it("creates an empty page, opens it, and starts edit mode", async () => {
+  it("creates a page with the resolved template body, opens it, and starts edit mode", async () => {
     const deps = createDeps();
     deps.showInputBox.mockResolvedValue("/team/dev/new-page.md/");
+    deps.resolveCreatePageBody.mockResolvedValue("# template body");
 
     await createCreatePageCommand(deps)();
 
-    expect(deps.createPage).toHaveBeenCalledWith("/team/dev/new-page");
+    expect(deps.resolveCreatePageBody).toHaveBeenCalledWith(
+      "/team/dev/new-page",
+    );
+    expect(deps.createPage).toHaveBeenCalledWith(
+      "/team/dev/new-page",
+      "# template body",
+    );
     expect(deps.invalidateReadDirectoryCache).toHaveBeenCalledWith("/team/dev");
     expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/new-page.md");
     expect(deps.bootstrapEditSession).toHaveBeenCalledWith(
@@ -1190,7 +1358,17 @@ describe("createCreatePageCommand", () => {
         value: "/team/dev/",
       }),
     );
-    expect(deps.createPage).toHaveBeenCalledWith("/team/dev/new-page");
+    expect(deps.createPage).toHaveBeenCalledWith("/team/dev/new-page", "");
+  });
+
+  it("falls back to empty body when template resolution fails", async () => {
+    const deps = createDeps();
+    deps.showInputBox.mockResolvedValue("/team/dev/new-page");
+    deps.resolveCreatePageBody.mockResolvedValue("");
+
+    await createCreatePageCommand(deps)();
+
+    expect(deps.createPage).toHaveBeenCalledWith("/team/dev/new-page", "");
   });
 
   it("rejects invalid page path input", async () => {
@@ -1753,6 +1931,76 @@ describe("Explorer context wrapper commands", () => {
       path: "/team/dev/spec.md",
       fsPath: "/team/dev/spec.md",
     });
+  });
+
+  it("opens browser URLs for page, directory page and prefix root items", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/wiki/");
+
+    const pageUrl = await createExplorerOpenPageInBrowserCommand(deps)({
+      uri: createUri("growi", "/team/dev/spec.md"),
+      contextValue: "growi.page",
+    });
+    const directoryPageUrl = await createExplorerOpenPageInBrowserCommand(deps)(
+      {
+        uri: createUri("growi", "/team/dev/docs.md"),
+        contextValue: "growi.directoryPage",
+      },
+    );
+    const prefixRootUrl = await createExplorerOpenPageInBrowserCommand(deps)({
+      uri: createUri("growi", "/team/dev/"),
+      contextValue: "growi.prefixRoot",
+    });
+
+    expect(pageUrl).toBe("https://growi.example.com/wiki/team/dev/spec");
+    expect(directoryPageUrl).toBe(
+      "https://growi.example.com/wiki/team/dev/docs",
+    );
+    expect(prefixRootUrl).toBe("https://growi.example.com/wiki/team/dev");
+    expect(deps.openExternalUri).toHaveBeenNthCalledWith(
+      1,
+      "https://growi.example.com/wiki/team/dev/spec",
+    );
+    expect(deps.openExternalUri).toHaveBeenNthCalledWith(
+      2,
+      "https://growi.example.com/wiki/team/dev/docs",
+    );
+    expect(deps.openExternalUri).toHaveBeenNthCalledWith(
+      3,
+      "https://growi.example.com/wiki/team/dev",
+    );
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid explorer targets for browser open", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/wiki/");
+
+    const result = await createExplorerOpenPageInBrowserCommand(deps)({
+      uri: createUri("growi", "/team/dev/"),
+      contextValue: "growi.directory",
+    });
+
+    expect(result).toBeUndefined();
+    expect(deps.openExternalUri).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "ブラウザで表示 は growi: ページ、growi: ディレクトリページ、growi: prefix root でのみ実行できます。",
+    );
+  });
+
+  it("rejects browser open without a configured base URL", async () => {
+    const deps = createDeps();
+
+    const result = await createExplorerOpenPageInBrowserCommand(deps)({
+      uri: createUri("growi", "/team/dev/spec.md"),
+      contextValue: "growi.page",
+    });
+
+    expect(result).toBeUndefined();
+    expect(deps.openExternalUri).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+    );
   });
 
   it("opens synthetic directory page items through vscode.open", async () => {
@@ -4366,6 +4614,10 @@ describe("createShowCurrentPageActionsCommand", () => {
           label: "履歴差分を表示",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         }),
+        expect.objectContaining({
+          label: "添付一覧を表示",
+          command: GROWI_COMMANDS.showCurrentPageAttachments,
+        }),
       ]),
       { placeHolder: "現在ページに対して実行する操作を選択してください。" },
     );
@@ -4373,6 +4625,233 @@ describe("createShowCurrentPageActionsCommand", () => {
       GROWI_COMMANDS.deletePage,
       createUri("growi", "/team/dev/spec.md"),
     );
+  });
+});
+
+describe("createShowCurrentPageAttachmentsCommand", () => {
+  it("shows attachment quick pick for the current page and opens the selected browser URL", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/wiki/");
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      url: "https://growi.example.com/wiki/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T09:00:00.000Z",
+    });
+    deps.listAttachments.mockResolvedValue({
+      ok: true,
+      attachments: [
+        {
+          attachmentId: "attachment-002",
+          originalName: "report.pdf",
+          fileFormat: "application/pdf",
+          fileSize: 2048,
+          downloadUrl: "https://growi.example.com/wiki/attachment/report",
+        },
+        {
+          attachmentId: "attachment-003",
+          originalName: "notes.txt",
+          fileFormat: "text/plain",
+          fileSize: 64,
+          downloadUrl: "/attachment/attachment-003",
+        },
+        {
+          attachmentId: "attachment-001",
+          originalName: "image.png",
+          fileFormat: "image/png",
+          fileSize: 1024,
+          downloadUrl: "attachment/image.png",
+        },
+      ],
+    });
+    deps.showQuickPick.mockResolvedValueOnce({
+      label: "image.png",
+      description: "image/png ・ 1024 bytes",
+      detail: "https://growi.example.com/wiki/attachment/image.png",
+      attachmentId: "attachment-001",
+      downloadUrl: "https://growi.example.com/wiki/attachment/image.png",
+    } as never);
+
+    const result = await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.listAttachments).toHaveBeenCalledWith("page-123");
+    expect(deps.showQuickPick).toHaveBeenCalledWith(
+      [
+        {
+          label: "image.png",
+          description: "image/png ・ 1024 bytes",
+          detail: "https://growi.example.com/wiki/attachment/image.png",
+          attachmentId: "attachment-001",
+          downloadUrl: "https://growi.example.com/wiki/attachment/image.png",
+        },
+        {
+          label: "notes.txt",
+          description: "text/plain ・ 64 bytes",
+          detail: "https://growi.example.com/attachment/attachment-003",
+          attachmentId: "attachment-003",
+          downloadUrl: "https://growi.example.com/attachment/attachment-003",
+        },
+        {
+          label: "report.pdf",
+          description: "application/pdf ・ 2048 bytes",
+          detail: "https://growi.example.com/wiki/attachment/report",
+          attachmentId: "attachment-002",
+          downloadUrl: "https://growi.example.com/wiki/attachment/report",
+        },
+      ],
+      {
+        placeHolder: "添付一覧からブラウザで表示する添付を選択してください。",
+      },
+    );
+    expect(deps.openExternalUri).toHaveBeenCalledWith(
+      "https://growi.example.com/wiki/attachment/image.png",
+    );
+    expect(result).toBe("https://growi.example.com/wiki/attachment/image.png");
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows information when there are no attachments", async () => {
+    const deps = createDeps();
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      url: "https://growi.example.com/wiki/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T09:00:00.000Z",
+    });
+    deps.listAttachments.mockResolvedValue({ ok: true, attachments: [] });
+
+    const result = await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(result).toBeUndefined();
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "現在ページに添付はありません。",
+    );
+    expect(deps.openExternalUri).not.toHaveBeenCalled();
+  });
+
+  it("shows information when no attachment can be opened in a browser", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/wiki/");
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      url: "https://growi.example.com/wiki/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T09:00:00.000Z",
+    });
+    deps.listAttachments.mockResolvedValue({
+      ok: true,
+      attachments: [
+        {
+          attachmentId: "attachment-001",
+          originalName: "archive.bin",
+          fileFormat: "application/octet-stream",
+          fileSize: 4096,
+          downloadUrl: "ftp://example.com/archive.bin",
+        },
+      ],
+    });
+
+    const result = await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(result).toBeUndefined();
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "ブラウザで表示できる添付はありません。",
+    );
+    expect(deps.openExternalUri).not.toHaveBeenCalled();
+  });
+
+  it("shows an error when page info is unavailable", async () => {
+    const deps = createDeps();
+    deps.listAttachments.mockResolvedValue({
+      ok: true,
+      attachments: [],
+    });
+
+    await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "現在ページメタ情報を取得できないため添付一覧を表示できません。ページを開き直して再実行してください。",
+    );
+    expect(deps.openExternalUri).not.toHaveBeenCalled();
+  });
+
+  it("maps API failures to fixed messages", async () => {
+    const deps = createDeps();
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      url: "https://growi.example.com/wiki/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T09:00:00.000Z",
+    });
+    deps.listAttachments.mockResolvedValueOnce({
+      ok: false,
+      reason: "ApiNotSupported",
+    });
+
+    await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
+      "添付一覧 API が未対応のため添付一覧を表示できません。",
+    );
+
+    deps.listAttachments.mockResolvedValueOnce({
+      ok: false,
+      reason: "ConnectionFailed",
+    });
+    await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+    expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
+      "GROWI への接続に失敗したため添付一覧を表示できませんでした。",
+    );
+  });
+
+  it("shows information when the selection is canceled", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/wiki/");
+    deps.getCurrentPageInfo.mockReturnValue({
+      pageId: "page-123",
+      url: "https://growi.example.com/wiki/team/dev/spec",
+      path: "/team/dev/spec",
+      lastUpdatedBy: "alice",
+      lastUpdatedAt: "2026-03-08T09:00:00.000Z",
+    });
+    deps.listAttachments.mockResolvedValue({
+      ok: true,
+      attachments: [
+        {
+          attachmentId: "attachment-001",
+          originalName: "report.pdf",
+          fileFormat: "application/pdf",
+          fileSize: 2048,
+          downloadUrl: "attachment/report.pdf",
+        },
+      ],
+    });
+    deps.showQuickPick.mockResolvedValueOnce(undefined);
+
+    const result = await createShowCurrentPageAttachmentsCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(result).toBeUndefined();
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "添付一覧の表示をキャンセルしました。",
+    );
+    expect(deps.openExternalUri).not.toHaveBeenCalled();
   });
 });
 

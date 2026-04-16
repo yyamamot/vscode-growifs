@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { normalizeCanonicalPath } from "../core/uri";
 
 export const GROWI_EXPLORER_VIEW_ID = "growi.explorer";
 
@@ -20,6 +21,10 @@ interface TreeEntryCandidate {
   uri: vscode.Uri;
   contextValue?: "growi.directoryPage";
 }
+
+const STALE_PAGE_DESCRIPTION = "remote changed";
+const STALE_PAGE_TOOLTIP =
+  "remote が更新されています。Refresh Current Page で再読込してください。";
 
 function toPrefixUri(prefix: string): vscode.Uri {
   return vscode.Uri.parse(prefix === "/" ? "growi:/" : `growi:${prefix}/`);
@@ -81,6 +86,28 @@ function createDirectoryPageItem(
 ): PrefixTreeItem {
   const item = createPageItem(uri, label);
   item.contextValue = "growi.directoryPage";
+  return item;
+}
+
+function isDecoratedPageItem(item: PrefixTreeItem): boolean {
+  return (
+    item.contextValue === "growi.page" ||
+    item.contextValue === "growi.directoryPage"
+  );
+}
+
+function applyStaleDecoration(
+  item: PrefixTreeItem,
+  canonicalPath: string,
+  staleCanonicalPaths: ReadonlySet<string>,
+): PrefixTreeItem {
+  if (!isDecoratedPageItem(item) || !staleCanonicalPaths.has(canonicalPath)) {
+    return item;
+  }
+
+  item.iconPath = new vscode.ThemeIcon("warning");
+  item.description = STALE_PAGE_DESCRIPTION;
+  item.tooltip = STALE_PAGE_TOOLTIP;
   return item;
 }
 
@@ -155,11 +182,38 @@ export class GrowiPrefixTreeDataProvider
   >();
 
   readonly onDidChangeTreeData = this.emitter.event;
+  private readonly staleCanonicalPaths = new Set<string>();
 
   constructor(private readonly deps: PrefixTreeDeps) {}
 
   refresh(item?: PrefixTreeItem): void {
     this.emitter.fire(item);
+  }
+
+  markCanonicalPathStale(canonicalPath: string): void {
+    const normalized = normalizeCanonicalPath(canonicalPath);
+    if (!normalized.ok) {
+      return;
+    }
+
+    this.staleCanonicalPaths.add(normalized.value);
+  }
+
+  clearStaleState(canonicalPath: string): void {
+    const normalized = normalizeCanonicalPath(canonicalPath);
+    if (!normalized.ok) {
+      return;
+    }
+
+    const prefix = normalized.value;
+    for (const staleCanonicalPath of [...this.staleCanonicalPaths]) {
+      if (
+        staleCanonicalPath === prefix ||
+        staleCanonicalPath.startsWith(`${prefix}/`)
+      ) {
+        this.staleCanonicalPaths.delete(staleCanonicalPath);
+      }
+    }
   }
 
   getTreeItem(element: PrefixTreeItem): vscode.TreeItem {
@@ -197,10 +251,20 @@ export class GrowiPrefixTreeDataProvider
       if (candidate.kind === "directory") {
         return createDirectoryItem(candidate.uri, candidate.label);
       }
+      const canonicalPath = normalizeCanonicalPath(candidate.uri.path);
+      const normalizedPath = canonicalPath.ok ? canonicalPath.value : undefined;
       if (candidate.contextValue === "growi.directoryPage") {
-        return createDirectoryPageItem(candidate.uri, candidate.label);
+        return applyStaleDecoration(
+          createDirectoryPageItem(candidate.uri, candidate.label),
+          normalizedPath ?? "",
+          this.staleCanonicalPaths,
+        );
       }
-      return createPageItem(candidate.uri, candidate.label);
+      return applyStaleDecoration(
+        createPageItem(candidate.uri, candidate.label),
+        normalizedPath ?? "",
+        this.staleCanonicalPaths,
+      );
     });
   }
 }

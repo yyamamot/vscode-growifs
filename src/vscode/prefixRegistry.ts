@@ -27,6 +27,13 @@ export interface PrefixRegistry {
     | { ok: true; value: string[]; cleared: boolean; removed: string[] }
     | { ok: false; reason: "InvalidBaseUrl" }
   >;
+  deletePrefix(
+    baseUrl: string | undefined,
+    rawPrefix: string,
+  ): Promise<
+    | { ok: true; value: string[]; removed: boolean }
+    | { ok: false; reason: "InvalidBaseUrl" | "InvalidPath" }
+  >;
 }
 
 interface PrefixRegistryState {
@@ -161,6 +168,35 @@ export function createPrefixRegistry(
         cleared: true,
         removed: [...current],
       } as const;
+    },
+
+    async deletePrefix(baseUrl: string | undefined, rawPrefix: string) {
+      const key = toBaseUrlKey(baseUrl);
+      if (!key) {
+        return { ok: false, reason: "InvalidBaseUrl" } as const;
+      }
+
+      const normalized = normalizeCanonicalPath(rawPrefix);
+      if (!normalized.ok) {
+        return { ok: false, reason: "InvalidPath" } as const;
+      }
+
+      const prefix = normalized.value;
+      const state = readState(workspaceState);
+      const current = state.byBaseUrl[key] ?? [];
+      const index = current.indexOf(prefix);
+      if (index === -1) {
+        return { ok: true, value: current, removed: false } as const;
+      }
+
+      const next = [...current.slice(0, index), ...current.slice(index + 1)];
+      if (next.length === 0) {
+        delete state.byBaseUrl[key];
+      } else {
+        state.byBaseUrl[key] = next;
+      }
+      await writeState(workspaceState, state);
+      return { ok: true, value: next, removed: true } as const;
     },
   };
 }

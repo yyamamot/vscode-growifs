@@ -1,5 +1,8 @@
+import path from "node:path";
+
 import type { StartEditBootstrapResult } from "./commands";
 import type {
+  GrowiAccessFailureReason,
   GrowiCurrentPageInfo,
   GrowiCurrentRevisionResult,
   GrowiEditSession,
@@ -218,6 +221,85 @@ function readLastUpdatedBy(page: JsonObject): string | undefined {
   );
 }
 
+function readNumberField(source: JsonObject, key: string): number | undefined {
+  const value = source[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function readAttachmentUrlField(source: JsonObject): string | undefined {
+  return (
+    readStringField(source, "downloadUrl") ??
+    readStringField(source, "url") ??
+    readStringField(source, "href") ??
+    readStringField(source, "filePath") ??
+    readStringField(source, "path")
+  );
+}
+
+function buildAttachmentSummary(
+  attachment: JsonObject,
+): GrowiAttachmentSummary | undefined {
+  const originalName =
+    readStringField(attachment, "originalName") ??
+    readStringField(attachment, "fileName") ??
+    readStringField(attachment, "filename") ??
+    readStringField(attachment, "name");
+  if (!originalName) {
+    return undefined;
+  }
+
+  const attachmentId =
+    readStringField(attachment, "_id") ??
+    readStringField(attachment, "id") ??
+    readStringField(attachment, "attachmentId") ??
+    originalName;
+  const explicitUrl = readAttachmentUrlField(attachment);
+  const fileFormat =
+    readStringField(attachment, "fileFormat") ??
+    readStringField(attachment, "format") ??
+    readStringField(attachment, "mimeType");
+  const fileSize =
+    readNumberField(attachment, "fileSize") ??
+    readNumberField(attachment, "size") ??
+    readNumberField(attachment, "bytes");
+
+  return {
+    attachmentId,
+    originalName,
+    downloadUrl:
+      explicitUrl ?? `/attachment/${encodeURIComponent(attachmentId)}`,
+    fileFormat,
+    fileSize,
+  };
+}
+
+function extractAttachmentArray(payload: JsonObject): JsonObject[] | undefined {
+  const candidates = [
+    payload.docs,
+    payload.attachments,
+    payload.files,
+    payload.data,
+    payload.items,
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter(isObjectRecord);
+    }
+  }
+  const paginateResult = payload.paginateResult;
+  if (isObjectRecord(paginateResult) && Array.isArray(paginateResult.docs)) {
+    return paginateResult.docs.filter(isObjectRecord);
+  }
+  return undefined;
+}
+
 function buildCurrentPageInfo(
   page: JsonObject,
   baseUrl: string,
@@ -288,6 +370,24 @@ type PageSnapshotDataResult =
         | "NotFound";
     };
 
+function buildHierarchyTemplateCandidatePaths(canonicalPath: string): string[] {
+  const parentPath = path.posix.dirname(canonicalPath);
+  const candidates = [path.posix.join(parentPath, "_template")];
+  const descendantTemplateRoots = [parentPath];
+
+  let currentPath = parentPath;
+  while (currentPath !== "/") {
+    currentPath = path.posix.dirname(currentPath);
+    descendantTemplateRoots.push(currentPath);
+  }
+
+  for (const rootPath of descendantTemplateRoots) {
+    candidates.push(path.posix.join(rootPath, "__template"));
+  }
+
+  return [...new Set(candidates)];
+}
+
 export type GrowiApiAdapter = {
   fetchPageSnapshot(
     canonicalPath: string,
@@ -320,11 +420,22 @@ export type GrowiApiAdapter = {
     baseUrl: string,
     apiToken: string,
   ): Promise<GrowiPageListResult>;
+  listAttachments(
+    pageId: string,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiAttachmentListResult>;
   createPage(
     canonicalPath: string,
+    body: string,
     baseUrl: string,
     apiToken: string,
   ): Promise<GrowiPageCreateResult>;
+  resolveCreatePageBody(
+    canonicalPath: string,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<string>;
   deletePage(
     input: {
       pageId: string;
@@ -370,7 +481,80 @@ export type GrowiApiAdapter = {
   ): Promise<GrowiPageWriteResult>;
 };
 
-export function createGrowiApiAdapter(): GrowiApiAdapter {
+export type GrowiAttachmentSummary = {
+  attachmentId: string;
+  originalName: string;
+  downloadUrl?: string;
+  fileFormat?: string;
+  fileSize?: number;
+};
+
+export type GrowiAttachmentListResult =
+  | { ok: true; attachments: GrowiAttachmentSummary[] }
+  | { ok: false; reason: GrowiAccessFailureReason };
+
+export interface GrowiApiDiagnosticsLogger {
+  log(message: string): void;
+  logStructured?(event: {
+    level: "debug" | "info" | "warn" | "error";
+    event: string;
+    operation: string;
+    entityType: string;
+    entityId: string;
+    virtualPath: string;
+    outcome: "started" | "succeeded" | "failed";
+    errorCode?: string;
+    message?: string;
+    details?: string;
+  }): void;
+}
+
+export interface GrowiApiAdapterOptions {
+  diagnostics?: GrowiApiDiagnosticsLogger;
+}
+
+function formatAttachmentArrayDiagnostics(payload: JsonObject): string {
+  const candidates = ["docs", "attachments", "files", "data", "items"];
+  const summary = candidates
+    .map((key) => {
+      const value = payload[key];
+      return `${key}=${Array.isArray(value) ? value.length : "missing"}`;
+    })
+    .join(" ");
+  const paginateResult = payload.paginateResult;
+  const paginateDocs =
+    isObjectRecord(paginateResult) && Array.isArray(paginateResult.docs)
+      ? paginateResult.docs.length
+      : "missing";
+  return `${summary} paginateResult.docs=${paginateDocs}`;
+}
+
+function sanitizeContentType(value: string | null): string {
+  return value?.split(";")[0]?.trim() || "missing";
+}
+
+function sanitizePayloadKeys(payload: JsonObject): string {
+  return Object.keys(payload).sort().join(",") || "none";
+}
+
+export function createGrowiApiAdapter(
+  options: GrowiApiAdapterOptions = {},
+): GrowiApiAdapter {
+  const logDiagnostic = (
+    message: string,
+    structured?: Parameters<
+      NonNullable<GrowiApiDiagnosticsLogger["logStructured"]>
+    >[0],
+  ): void => {
+    options.diagnostics?.log(message);
+    if (structured) {
+      options.diagnostics?.logStructured?.({
+        ...structured,
+        message,
+      });
+    }
+  };
+
   async function fetchPageMetadata(
     lookup:
       | { kind: "path"; canonicalPath: string }
@@ -390,11 +574,34 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
       }
   > {
     const requestInit = createGetRequestInit(apiToken);
+    const eventPrefix = lookup.kind === "pageId" ? "page.lookup" : "page.read";
+    const entityId =
+      lookup.kind === "pageId" ? lookup.pageId : lookup.canonicalPath;
+    const endpointPath = "/_api/v3/page";
+    logDiagnostic(`${eventPrefix} requested`, {
+      level: "info",
+      event: `${eventPrefix}.requested`,
+      operation: `api:${endpointPath}`,
+      entityType: "page",
+      entityId,
+      virtualPath: endpointPath,
+      outcome: "started",
+    });
 
     let pageEndpoint: URL;
     try {
       pageEndpoint = new URL("/_api/v3/page", baseUrl);
     } catch {
+      logDiagnostic(`${eventPrefix} failure=InvalidBaseUrl`, {
+        level: "error",
+        event: `${eventPrefix}.failed`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "failed",
+        errorCode: "InvalidBaseUrl",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
     if (lookup.kind === "path") {
@@ -407,26 +614,118 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
     try {
       pageResponse = await fetchWithTimeout(pageEndpoint, requestInit);
     } catch {
+      logDiagnostic(`${eventPrefix} failure=ConnectionFailed`, {
+        level: "error",
+        event: `${eventPrefix}.failed`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "failed",
+        errorCode: "ConnectionFailed",
+      });
       return { ok: false, reason: "ConnectionFailed" } as const;
     }
+    const sanitizedContentType = sanitizeContentType(
+      pageResponse.headers.get("content-type"),
+    );
+    logDiagnostic(
+      `${eventPrefix} response status=${pageResponse.status} contentType=${sanitizedContentType}`,
+      {
+        level: "info",
+        event: `${eventPrefix}.response`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "succeeded",
+        details: `status=${pageResponse.status} contentType=${sanitizedContentType}`,
+      },
+    );
 
     if (isLoginRedirectResponse(pageResponse)) {
+      logDiagnostic(`${eventPrefix} failure=LoginRedirect`, {
+        level: "error",
+        event: `${eventPrefix}.failed`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "failed",
+        errorCode: "LoginRedirect",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
     if (!pageResponse.ok) {
-      return classifyPageLookupFailureStatus(pageResponse.status);
+      const result = classifyPageLookupFailureStatus(pageResponse.status);
+      logDiagnostic(`${eventPrefix} failure=${result.reason}`, {
+        level: "error",
+        event: `${eventPrefix}.failed`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "failed",
+        errorCode: result.reason,
+        details: `status=${pageResponse.status}`,
+      });
+      return result;
     }
 
     const pagePayload = await parseJsonObject(pageResponse);
     if (!pagePayload) {
+      logDiagnostic(`${eventPrefix} failure=InvalidPayload parse=nonObject`, {
+        level: "error",
+        event: `${eventPrefix}.failed`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "failed",
+        errorCode: "InvalidPayload",
+        details: "parse=nonObject",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
+    logDiagnostic(
+      `${eventPrefix} payload keys=${sanitizePayloadKeys(pagePayload)}`,
+      {
+        level: "info",
+        event: `${eventPrefix}.payload`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "succeeded",
+        details: `keys=${sanitizePayloadKeys(pagePayload)}`,
+      },
+    );
 
     const page = pagePayload.page;
     if (!isObjectRecord(page)) {
+      logDiagnostic(`${eventPrefix} failure=InvalidPayload page=missing`, {
+        level: "error",
+        event: `${eventPrefix}.failed`,
+        operation: `api:${endpointPath}`,
+        entityType: "page",
+        entityId,
+        virtualPath: endpointPath,
+        outcome: "failed",
+        errorCode: "InvalidPayload",
+        details: "page=missing",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
 
+    logDiagnostic(`${eventPrefix} success`, {
+      level: "info",
+      event: `${eventPrefix}.succeeded`,
+      operation: `api:${endpointPath}`,
+      entityType: "page",
+      entityId,
+      virtualPath: endpointPath,
+      outcome: "succeeded",
+    });
     return { ok: true, page } as const;
   }
 
@@ -464,37 +763,165 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
         baseUrl,
       );
     } catch {
+      logDiagnostic("page.read.revision failure=InvalidBaseUrl", {
+        level: "error",
+        event: "page.read.revision.failed",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "failed",
+        errorCode: "InvalidBaseUrl",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
     revisionEndpoint.searchParams.set("pageId", pageId);
+    logDiagnostic("page.read.revision requested", {
+      level: "info",
+      event: "page.read.revision.requested",
+      operation: "api:/_api/v3/revisions/{id}",
+      entityType: "page",
+      entityId: pageId,
+      virtualPath: "/_api/v3/revisions/{id}",
+      outcome: "started",
+    });
 
     let revisionResponse: Response;
     try {
       revisionResponse = await fetchWithTimeout(revisionEndpoint, requestInit);
     } catch {
+      logDiagnostic("page.read.revision failure=ConnectionFailed", {
+        level: "error",
+        event: "page.read.revision.failed",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "failed",
+        errorCode: "ConnectionFailed",
+      });
       return { ok: false, reason: "ConnectionFailed" } as const;
     }
+    const sanitizedRevisionContentType = sanitizeContentType(
+      revisionResponse.headers.get("content-type"),
+    );
+    logDiagnostic(
+      `page.read.revision response status=${revisionResponse.status} contentType=${sanitizedRevisionContentType}`,
+      {
+        level: "info",
+        event: "page.read.revision.response",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "succeeded",
+        details: `status=${revisionResponse.status} contentType=${sanitizedRevisionContentType}`,
+      },
+    );
 
     if (isLoginRedirectResponse(revisionResponse)) {
+      logDiagnostic("page.read.revision failure=LoginRedirect", {
+        level: "error",
+        event: "page.read.revision.failed",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "failed",
+        errorCode: "LoginRedirect",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
     if (!revisionResponse.ok) {
-      return classifyPageSnapshotFailureStatus(revisionResponse.status);
+      const result = classifyPageSnapshotFailureStatus(revisionResponse.status);
+      logDiagnostic(`page.read.revision failure=${result.reason}`, {
+        level: "error",
+        event: "page.read.revision.failed",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "failed",
+        errorCode: result.reason,
+        details: `status=${revisionResponse.status}`,
+      });
+      return result;
     }
 
     const revisionPayload = await parseJsonObject(revisionResponse);
     if (!revisionPayload) {
+      logDiagnostic(
+        "page.read.revision failure=InvalidPayload parse=nonObject",
+        {
+          level: "error",
+          event: "page.read.revision.failed",
+          operation: "api:/_api/v3/revisions/{id}",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/revisions/{id}",
+          outcome: "failed",
+          errorCode: "InvalidPayload",
+          details: "parse=nonObject",
+        },
+      );
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
+    logDiagnostic(
+      `page.read.revision payload keys=${sanitizePayloadKeys(revisionPayload)}`,
+      {
+        level: "info",
+        event: "page.read.revision.payload",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "succeeded",
+        details: `keys=${sanitizePayloadKeys(revisionPayload)}`,
+      },
+    );
     const revisionData = revisionPayload.revision;
     if (!isObjectRecord(revisionData)) {
+      logDiagnostic(
+        "page.read.revision failure=InvalidPayload revision=missing",
+        {
+          level: "error",
+          event: "page.read.revision.failed",
+          operation: "api:/_api/v3/revisions/{id}",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/revisions/{id}",
+          outcome: "failed",
+          errorCode: "InvalidPayload",
+          details: "revision=missing",
+        },
+      );
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
 
     const baseBody = readStringField(revisionData, "body");
     if (baseBody === undefined) {
+      logDiagnostic("page.read.revision failure=InvalidPayload body=missing", {
+        level: "error",
+        event: "page.read.revision.failed",
+        operation: "api:/_api/v3/revisions/{id}",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/revisions/{id}",
+        outcome: "failed",
+        errorCode: "InvalidPayload",
+        details: "body=missing",
+      });
       return { ok: false, reason: "ApiNotSupported" } as const;
     }
+    logDiagnostic("page.read.revision success", {
+      level: "info",
+      event: "page.read.revision.succeeded",
+      operation: "api:/_api/v3/revisions/{id}",
+      entityType: "page",
+      entityId: pageId,
+      virtualPath: "/_api/v3/revisions/{id}",
+      outcome: "succeeded",
+    });
 
     return {
       ok: true,
@@ -570,12 +997,31 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
     async listPages(canonicalPrefixPath, baseUrl, apiToken) {
       const paths: string[] = [];
       const requestInit = createGetRequestInit(apiToken);
+      logDiagnostic("pages.list requested", {
+        level: "info",
+        event: "pages.list.requested",
+        operation: "api:/_api/v3/pages/list",
+        entityType: "prefix",
+        entityId: canonicalPrefixPath,
+        virtualPath: "/_api/v3/pages/list",
+        outcome: "started",
+      });
 
       for (let page = 1; ; page += 1) {
         let listEndpoint: URL;
         try {
           listEndpoint = new URL("/_api/v3/pages/list", baseUrl);
         } catch {
+          logDiagnostic("pages.list failure=InvalidBaseUrl", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "InvalidBaseUrl",
+          });
           return { ok: false, reason: "ApiNotSupported" } as const;
         }
         listEndpoint.searchParams.set("path", canonicalPrefixPath);
@@ -586,16 +1032,73 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
         try {
           listResponse = await fetchWithTimeout(listEndpoint, requestInit);
         } catch {
+          logDiagnostic("pages.list failure=ConnectionFailed", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "ConnectionFailed",
+          });
           return { ok: false, reason: "ConnectionFailed" } as const;
         }
+        logDiagnostic(
+          `pages.list response status=${listResponse.status} contentType=${sanitizeContentType(
+            listResponse.headers.get("content-type"),
+          )} page=${page}`,
+          {
+            level: "info",
+            event: "pages.list.response",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "succeeded",
+            details: `status=${listResponse.status} contentType=${sanitizeContentType(
+              listResponse.headers.get("content-type"),
+            )} page=${page}`,
+          },
+        );
 
         if (isLoginRedirectResponse(listResponse)) {
+          logDiagnostic("pages.list failure=LoginRedirect", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "LoginRedirect",
+          });
           return { ok: false, reason: "ApiNotSupported" } as const;
         }
         if (listResponse.status === 401) {
+          logDiagnostic("pages.list failure=InvalidApiToken", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "InvalidApiToken",
+          });
           return { ok: false, reason: "InvalidApiToken" } as const;
         }
         if (listResponse.status === 403) {
+          logDiagnostic("pages.list failure=PermissionDenied", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "PermissionDenied",
+          });
           return { ok: false, reason: "PermissionDenied" } as const;
         }
         if (
@@ -603,25 +1106,93 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
           listResponse.status === 404 ||
           listResponse.status === 405
         ) {
+          logDiagnostic("pages.list failure=ApiNotSupported", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "ApiNotSupported",
+            details: `status=${listResponse.status}`,
+          });
           return { ok: false, reason: "ApiNotSupported" } as const;
         }
 
         const payload = await parseJsonObject(listResponse);
         if (!payload) {
+          logDiagnostic("pages.list failure=InvalidPayload parse=nonObject", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "InvalidPayload",
+            details: "parse=nonObject",
+          });
           return { ok: false, reason: "ApiNotSupported" } as const;
         }
+        logDiagnostic(
+          `pages.list payload keys=${sanitizePayloadKeys(payload)}`,
+          {
+            level: "info",
+            event: "pages.list.payload",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "succeeded",
+            details: `keys=${sanitizePayloadKeys(payload)}`,
+          },
+        );
 
         const pages = payload.pages;
         if (!Array.isArray(pages)) {
+          logDiagnostic("pages.list failure=InvalidPayload pages=missing", {
+            level: "error",
+            event: "pages.list.failed",
+            operation: "api:/_api/v3/pages/list",
+            entityType: "prefix",
+            entityId: canonicalPrefixPath,
+            virtualPath: "/_api/v3/pages/list",
+            outcome: "failed",
+            errorCode: "InvalidPayload",
+            details: "pages=missing",
+          });
           return { ok: false, reason: "ApiNotSupported" } as const;
         }
 
         for (const pageData of pages) {
           if (!isObjectRecord(pageData)) {
+            logDiagnostic("pages.list failure=InvalidPayload entry=malformed", {
+              level: "error",
+              event: "pages.list.failed",
+              operation: "api:/_api/v3/pages/list",
+              entityType: "prefix",
+              entityId: canonicalPrefixPath,
+              virtualPath: "/_api/v3/pages/list",
+              outcome: "failed",
+              errorCode: "InvalidPayload",
+              details: "entry=malformed",
+            });
             return { ok: false, reason: "ApiNotSupported" } as const;
           }
           const path = readStringField(pageData, "path");
           if (!path) {
+            logDiagnostic("pages.list failure=InvalidPayload path=missing", {
+              level: "error",
+              event: "pages.list.failed",
+              operation: "api:/_api/v3/pages/list",
+              entityType: "prefix",
+              entityId: canonicalPrefixPath,
+              virtualPath: "/_api/v3/pages/list",
+              outcome: "failed",
+              errorCode: "InvalidPayload",
+              details: "path=missing",
+            });
             return { ok: false, reason: "ApiNotSupported" } as const;
           }
           paths.push(path);
@@ -632,10 +1203,234 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
         }
       }
 
+      logDiagnostic(`pages.list success count=${paths.length}`, {
+        level: "info",
+        event: "pages.list.succeeded",
+        operation: "api:/_api/v3/pages/list",
+        entityType: "prefix",
+        entityId: canonicalPrefixPath,
+        virtualPath: "/_api/v3/pages/list",
+        outcome: "succeeded",
+        details: `count=${paths.length}`,
+      });
       return { ok: true, paths } as const;
     },
 
-    async createPage(canonicalPath, baseUrl, apiToken) {
+    async listAttachments(pageId, baseUrl, apiToken) {
+      const requestInit = createGetRequestInit(apiToken);
+      logDiagnostic("attachment/list requested", {
+        level: "info",
+        event: "attachment.list.requested",
+        operation: "api:/_api/v3/attachment/list",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/attachment/list",
+        outcome: "started",
+      });
+
+      let attachmentsEndpoint: URL;
+      try {
+        attachmentsEndpoint = new URL("/_api/v3/attachment/list", baseUrl);
+      } catch {
+        logDiagnostic("attachment/list failure=InvalidBaseUrl", {
+          level: "error",
+          event: "attachment.list.failed",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "failed",
+          errorCode: "InvalidBaseUrl",
+        });
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      attachmentsEndpoint.searchParams.set("pageId", pageId);
+
+      let attachmentsResponse: Response;
+      try {
+        attachmentsResponse = await fetchWithTimeout(
+          attachmentsEndpoint,
+          requestInit,
+        );
+      } catch {
+        logDiagnostic("attachment/list failure=ConnectionFailed", {
+          level: "error",
+          event: "attachment.list.failed",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "failed",
+          errorCode: "ConnectionFailed",
+        });
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      const sanitizedContentType = sanitizeContentType(
+        attachmentsResponse.headers.get("content-type"),
+      );
+      logDiagnostic(
+        `attachment/list response status=${attachmentsResponse.status} contentType=${sanitizedContentType}`,
+        {
+          level: "info",
+          event: "attachment.list.response",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "succeeded",
+          details: `status=${attachmentsResponse.status} contentType=${sanitizedContentType}`,
+        },
+      );
+
+      if (isLoginRedirectResponse(attachmentsResponse)) {
+        logDiagnostic("attachment/list failure=LoginRedirect", {
+          level: "error",
+          event: "attachment.list.failed",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "failed",
+          errorCode: "LoginRedirect",
+        });
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (attachmentsResponse.status === 401) {
+        logDiagnostic("attachment/list failure=InvalidApiToken", {
+          level: "error",
+          event: "attachment.list.failed",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "failed",
+          errorCode: "InvalidApiToken",
+        });
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (attachmentsResponse.status === 403) {
+        logDiagnostic("attachment/list failure=PermissionDenied", {
+          level: "error",
+          event: "attachment.list.failed",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "failed",
+          errorCode: "PermissionDenied",
+        });
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
+      if (
+        !attachmentsResponse.ok ||
+        attachmentsResponse.status === 404 ||
+        attachmentsResponse.status === 405
+      ) {
+        logDiagnostic(
+          `attachment/list failure=ApiNotSupported status=${attachmentsResponse.status}`,
+          {
+            level: "error",
+            event: "attachment.list.failed",
+            operation: "api:/_api/v3/attachment/list",
+            entityType: "page",
+            entityId: pageId,
+            virtualPath: "/_api/v3/attachment/list",
+            outcome: "failed",
+            errorCode: "ApiNotSupported",
+            details: `status=${attachmentsResponse.status}`,
+          },
+        );
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const payload = await parseJsonObject(attachmentsResponse);
+      if (!payload) {
+        logDiagnostic(
+          "attachment/list failure=InvalidPayload parse=nonObject",
+          {
+            level: "error",
+            event: "attachment.list.failed",
+            operation: "api:/_api/v3/attachment/list",
+            entityType: "page",
+            entityId: pageId,
+            virtualPath: "/_api/v3/attachment/list",
+            outcome: "failed",
+            errorCode: "InvalidPayload",
+            details: "parse=nonObject",
+          },
+        );
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      const payloadKeys = Object.keys(payload).sort().join(",") || "none";
+      const arrayDiagnostics = formatAttachmentArrayDiagnostics(payload);
+      logDiagnostic(
+        `attachment/list payload keys=${payloadKeys} arrays=${arrayDiagnostics}`,
+        {
+          level: "info",
+          event: "attachment.list.payload",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "succeeded",
+          details: `keys=${payloadKeys} arrays=${arrayDiagnostics}`,
+        },
+      );
+
+      const attachmentEntries = extractAttachmentArray(payload);
+      if (!attachmentEntries) {
+        logDiagnostic("attachment/list failure=InvalidPayload arrays=missing", {
+          level: "error",
+          event: "attachment.list.failed",
+          operation: "api:/_api/v3/attachment/list",
+          entityType: "page",
+          entityId: pageId,
+          virtualPath: "/_api/v3/attachment/list",
+          outcome: "failed",
+          errorCode: "InvalidPayload",
+          details: "arrays=missing",
+        });
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const attachments: GrowiAttachmentSummary[] = [];
+      for (const attachment of attachmentEntries) {
+        const summary = buildAttachmentSummary(attachment);
+        if (!summary) {
+          logDiagnostic(
+            "attachment/list failure=InvalidPayload entry=malformed",
+            {
+              level: "error",
+              event: "attachment.list.failed",
+              operation: "api:/_api/v3/attachment/list",
+              entityType: "page",
+              entityId: pageId,
+              virtualPath: "/_api/v3/attachment/list",
+              outcome: "failed",
+              errorCode: "InvalidPayload",
+              details: "entry=malformed",
+            },
+          );
+          return { ok: false, reason: "ApiNotSupported" } as const;
+        }
+        attachments.push(summary);
+      }
+
+      logDiagnostic(`attachment/list success count=${attachments.length}`, {
+        level: "info",
+        event: "attachment.list.succeeded",
+        operation: "api:/_api/v3/attachment/list",
+        entityType: "page",
+        entityId: pageId,
+        virtualPath: "/_api/v3/attachment/list",
+        outcome: "succeeded",
+        details: `count=${attachments.length}`,
+      });
+      return { ok: true, attachments } as const;
+    },
+
+    async createPage(canonicalPath, body, baseUrl, apiToken) {
       let pageEndpoint: URL;
       try {
         pageEndpoint = new URL("/_api/v3/page", baseUrl);
@@ -647,7 +1442,7 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
       try {
         pageResponse = await fetchWithTimeout(pageEndpoint, {
           body: JSON.stringify({
-            body: "",
+            body,
             path: canonicalPath,
           }),
           headers: {
@@ -802,6 +1597,26 @@ export function createGrowiApiAdapter(): GrowiApiAdapter {
       }
 
       return { ok: true } as const;
+    },
+
+    async resolveCreatePageBody(canonicalPath, baseUrl, apiToken) {
+      for (const templatePath of buildHierarchyTemplateCandidatePaths(
+        canonicalPath,
+      )) {
+        const snapshot = await fetchPageSnapshotData(
+          templatePath,
+          baseUrl,
+          apiToken,
+        );
+        if (snapshot.ok) {
+          return snapshot.value.baseBody;
+        }
+        if (snapshot.reason !== "NotFound") {
+          return "";
+        }
+      }
+
+      return "";
     },
 
     async renamePage(input, baseUrl, apiToken) {

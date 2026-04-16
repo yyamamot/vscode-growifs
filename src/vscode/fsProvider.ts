@@ -85,7 +85,11 @@ export type GrowiPageWriter = {
 };
 
 export type GrowiPageCreator = {
-  createPage(canonicalPath: string): Promise<GrowiPageCreateResult>;
+  createPage(
+    canonicalPath: string,
+    body: string,
+  ): Promise<GrowiPageCreateResult>;
+  resolveCreatePageBody(canonicalPath: string): Promise<string>;
 };
 
 export type GrowiPageRenamer = {

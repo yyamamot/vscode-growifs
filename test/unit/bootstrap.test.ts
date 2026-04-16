@@ -1,3 +1,6 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => {
@@ -24,9 +27,47 @@ vi.mock("vscode", () => {
       fire = vi.fn();
       dispose = vi.fn();
     },
+    TreeItem: class {
+      label: string;
+      collapsibleState: number;
+      resourceUri?: { scheme: string; path: string; toString(): string };
+      contextValue?: string;
+      iconPath?: unknown;
+      description?: string;
+      tooltip?: unknown;
+      command?: { command: string; title: string; arguments?: unknown[] };
+
+      constructor(label: string, collapsibleState: number) {
+        this.label = label;
+        this.collapsibleState = collapsibleState;
+      }
+    },
+    ThemeIcon: class {
+      static File = { id: "file" };
+      static Folder = { id: "folder" };
+      static Warning = { id: "warning" };
+      id: string;
+
+      constructor(id: string) {
+        this.id = id;
+      }
+    },
+    TreeItemCollapsibleState: {
+      None: 0,
+      Collapsed: 1,
+      Expanded: 2,
+    },
+    FileType: {
+      File: 1,
+      Directory: 2,
+    },
     commands: {
       executeCommand: vi.fn(async () => {}),
       registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
+    },
+    StatusBarAlignment: {
+      Left: 1,
+      Right: 2,
     },
     ConfigurationTarget: {
       Global: "Global",
@@ -38,11 +79,41 @@ vi.mock("vscode", () => {
         scheme: "file",
         toString: () => `file:${value}`,
       })),
-      parse: vi.fn((value: string) => value),
+      joinPath: vi.fn((base: { fsPath: string }, ...segments: string[]) => ({
+        fsPath: path.join(base.fsPath, ...segments),
+        path: path.join(base.fsPath, ...segments),
+        scheme: "file",
+        toString: () => `file:${path.join(base.fsPath, ...segments)}`,
+      })),
+      parse: vi.fn((value: string) => {
+        const separator = value.indexOf(":");
+        const scheme = separator >= 0 ? value.slice(0, separator) : "";
+        const parsedPath = separator >= 0 ? value.slice(separator + 1) : value;
+        return {
+          scheme,
+          path: parsedPath,
+          toString: () => value,
+        };
+      }),
+    },
+    env: {
+      openExternal: vi.fn(async () => true),
     },
     window: {
       activeTextEditor: undefined,
+      createOutputChannel: vi.fn(() => ({
+        appendLine: vi.fn(),
+        dispose: vi.fn(),
+      })),
+      createStatusBarItem: vi.fn(() => ({
+        text: "",
+        command: undefined,
+        show: vi.fn(),
+        hide: vi.fn(),
+        dispose: vi.fn(),
+      })),
       registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
       showErrorMessage: vi.fn(),
       showInformationMessage: vi.fn(),
       showInputBox: vi.fn(),
@@ -57,6 +128,7 @@ vi.mock("vscode", () => {
         workspaceState.workspaceFolders = value;
       },
       fs: {
+        readDirectory: vi.fn(async () => []),
         readFile: vi.fn(async () => new TextEncoder().encode("")),
       },
       getConfiguration: vi.fn(() => ({
@@ -236,6 +308,9 @@ describe("bootstrap extension entrypoint", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    delete process.env.GROWI_RUNTIME_MODE;
+    delete process.env.GROWI_JSONL_PATH;
+    delete process.env.GROWI_RUNTIME_ROOT;
     const workspaceApi = vscode.workspace as unknown as {
       workspaceFolders: unknown[];
     };
@@ -272,6 +347,19 @@ describe("bootstrap extension entrypoint", () => {
       GROWI_COMMANDS.endEdit,
       expect.any(Function),
     );
+    expect(vscode.window.createOutputChannel).toHaveBeenCalledWith("GROWI");
+    const outputChannel = vi.mocked(vscode.window.createOutputChannel).mock
+      .results[0]?.value as
+      | { appendLine: ReturnType<typeof vi.fn> }
+      | undefined;
+    expect(outputChannel?.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining("runtime log status enabled=false"),
+    );
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      "setContext",
+      "growi.runtimeLogsEnabled",
+      false,
+    );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.showCurrentPageActions,
       expect.any(Function),
@@ -282,6 +370,14 @@ describe("bootstrap extension entrypoint", () => {
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.showRevisionHistoryDiff,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.clearRuntimeLogs,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.revealRuntimeLogs,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -298,6 +394,10 @@ describe("bootstrap extension entrypoint", () => {
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.explorerOpenPageItem,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.explorerOpenPageInBrowser,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -322,6 +422,14 @@ describe("bootstrap extension entrypoint", () => {
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.explorerShowCurrentPageInfo,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.explorerShowCurrentPageAttachments,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.showCurrentPageAttachments,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -386,6 +494,25 @@ describe("bootstrap extension entrypoint", () => {
     );
   });
 
+  it("shows a lock status bar item for growi pages in read mode", () => {
+    const { context } = createContext();
+
+    activate(context);
+
+    const statusBarItem = vi.mocked(vscode.window.createStatusBarItem).mock
+      .results[0]?.value as
+      | {
+          text?: string;
+          command?: string;
+          show: ReturnType<typeof vi.fn>;
+        }
+      | undefined;
+
+    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.command).toBe(GROWI_COMMANDS.startEdit);
+    expect(statusBarItem?.show).toHaveBeenCalled();
+  });
+
   it("registers the GROWI explorer tree data provider on activate", () => {
     const registerTreeDataProviderMock = vi.mocked(
       vscode.window.registerTreeDataProvider,
@@ -399,6 +526,382 @@ describe("bootstrap extension entrypoint", () => {
     expect(registerTreeDataProviderMock).toHaveBeenCalledWith(
       "growi.explorer",
       expect.any(Object),
+    );
+  });
+
+  it("marks the active growi page stale and clears it on refresh", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-1" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# body",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-2" },
+            updatedAt: "2026-03-08T09:05:00.000Z",
+            lastUpdateUser: { username: "bob" },
+          },
+        }),
+      );
+    const { context } = createContext({
+      fetchMock,
+      prefixes: ["/team/dev"],
+    });
+
+    activate(context);
+
+    const growiDocument = vscode.window.activeTextEditor?.document;
+    if (!growiDocument) {
+      throw new Error("Expected a growi document to be active");
+    }
+
+    const registeredProvider = vi.mocked(
+      vscode.workspace.registerFileSystemProvider,
+    ).mock.calls[0]?.[1] as unknown as {
+      readFile(uri: { path: string }): Promise<Uint8Array>;
+    };
+    const treeProvider = vi.mocked(vscode.window.registerTreeDataProvider).mock
+      .calls[0]?.[1] as unknown as {
+      getChildren(element?: {
+        kind: "directory" | "page";
+        uri: { path: string };
+        contextValue?: string;
+      }): Promise<
+        {
+          label?: string | { label: string };
+          kind: "directory" | "page";
+          uri: { path: string };
+          description?: string;
+          tooltip?: string;
+          iconPath?: { id: string };
+          contextValue?: string;
+        }[]
+      >;
+      markCanonicalPathStale(canonicalPath: string): void;
+      clearStaleState(canonicalPath: string): void;
+    };
+
+    vi.mocked(vscode.workspace.fs.readDirectory).mockImplementation(
+      async (uri: { path: string }) => {
+        if (uri.path === "/team/dev/" || uri.path === "/team/dev") {
+          return [["spec.md", vscode.FileType.File]];
+        }
+        return [];
+      },
+    );
+
+    await registeredProvider.readFile({
+      path: "/team/dev/spec.md",
+    } as never);
+
+    const growiEditorChangeListener = vi.mocked(
+      vscode.window.onDidChangeActiveTextEditor,
+    ).mock.calls[0]?.[0] as (editor: {
+      document: {
+        uri: { scheme: string; path: string };
+      };
+    }) => void;
+
+    growiEditorChangeListener({
+      document: {
+        uri: {
+          scheme: "file",
+          path: "/tmp/note.md",
+        },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    growiEditorChangeListener({
+      document: {
+        uri: {
+          scheme: "growi",
+          path: "/team/dev/spec.md",
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [root] = await treeProvider.getChildren();
+    const stalePage = (await treeProvider.getChildren(root)).find(
+      (item) => item.uri.path === "/team/dev/spec.md",
+    );
+    expect(stalePage).toBeDefined();
+    expect(stalePage?.description).toBe("remote changed");
+    expect(stalePage?.tooltip).toBe(
+      "remote が更新されています。Refresh Current Page で再読込してください。",
+    );
+    expect((stalePage?.iconPath as { id?: string } | undefined)?.id).toBe(
+      "warning",
+    );
+
+    (
+      vscode.workspace as unknown as {
+        textDocuments: { uri: { toString(): string } }[];
+      }
+    ).textDocuments = [{ uri: growiDocument.uri as never }];
+
+    treeProvider.clearStaleState("/team/dev/spec");
+
+    const freshPage = (await treeProvider.getChildren(root)).find(
+      (item) => item.uri.path === "/team/dev/spec.md",
+    );
+    expect(freshPage).toBeDefined();
+    expect(freshPage?.description).toBeUndefined();
+    expect(freshPage?.tooltip).toBeUndefined();
+    expect((freshPage?.iconPath as { id?: string } | undefined)?.id).not.toBe(
+      "warning",
+    );
+  });
+
+  it("reveals runtime log directory only in debug-f5 mode", async () => {
+    process.env.GROWI_RUNTIME_MODE = "debug-f5";
+    process.env.GROWI_JSONL_PATH = "/tmp/growi-runtime/runtime.jsonl";
+    const { context } = createContext();
+
+    activate(context);
+
+    const result = await resolveRegisteredCommand(
+      GROWI_COMMANDS.revealRuntimeLogs,
+    )();
+
+    expect(vscode.env.openExternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fsPath: "/tmp/growi-runtime",
+      }),
+    );
+    expect(result).toBe("/tmp/growi-runtime");
+
+    delete process.env.GROWI_RUNTIME_MODE;
+    delete process.env.GROWI_JSONL_PATH;
+  });
+
+  it("logs runtime status and write failure to output channel", async () => {
+    process.env.GROWI_RUNTIME_MODE = "debug-f5";
+    process.env.GROWI_JSONL_PATH = "/dev/null/runtime.jsonl";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-1" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# body",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          docs: [
+            {
+              _id: "attachment-1",
+              originalName: "diagram.png",
+              fileFormat: "image/png",
+              fileSize: 1024,
+              url: "/attachment/attachment-1",
+            },
+          ],
+        }),
+      );
+    const { context } = createContext({ fetchMock });
+
+    activate(context);
+    const registeredProvider = vi.mocked(
+      vscode.workspace.registerFileSystemProvider,
+    ).mock.calls[0]?.[1] as unknown as {
+      readFile(uri: { path: string }): Thenable<Uint8Array>;
+    };
+    expect(registeredProvider).toBeDefined();
+    await registeredProvider.readFile({ path: "/team/dev/spec.md" } as never);
+
+    await resolveRegisteredCommand(GROWI_COMMANDS.showCurrentPageAttachments)();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const outputChannel = vi.mocked(vscode.window.createOutputChannel).mock
+      .results[0]?.value as
+      | { appendLine: ReturnType<typeof vi.fn> }
+      | undefined;
+    const calls =
+      outputChannel?.appendLine.mock.calls.map(([value]) => String(value)) ??
+      [];
+    expect(
+      calls.some((value) => value.includes("runtime log status enabled=true")),
+    ).toBe(true);
+    expect(calls.join("\n")).not.toContain("Authorization");
+    expect(calls.join("\n")).not.toContain("Bearer");
+  });
+
+  it("writes command and external open trace for showCurrentPageAttachments", async () => {
+    process.env.GROWI_RUNTIME_MODE = "debug-f5";
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "growifs-runtime-"));
+    process.env.GROWI_JSONL_PATH = path.join(tempRoot, "runtime.jsonl");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-1" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# body",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          docs: [
+            {
+              _id: "attachment-1",
+              originalName: "diagram.png",
+              fileFormat: "image/png",
+              fileSize: 1024,
+              url: "/attachment/attachment-1",
+            },
+          ],
+        }),
+      );
+    const { context } = createContext({ fetchMock });
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
+      label: "diagram.png",
+      canonicalPath: "/team/dev/spec",
+      downloadUrl: "https://growi.example.com/attachment/attachment-1",
+    } as never);
+
+    activate(context);
+    const registeredProvider = vi.mocked(
+      vscode.workspace.registerFileSystemProvider,
+    ).mock.calls[0]?.[1] as unknown as {
+      readFile(uri: { path: string }): Thenable<Uint8Array>;
+    };
+    await registeredProvider.readFile({ path: "/team/dev/spec.md" } as never);
+    await resolveRegisteredCommand(GROWI_COMMANDS.showCurrentPageAttachments)();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const content = await readFile(process.env.GROWI_JSONL_PATH, "utf8");
+    expect(content).toContain('"event":"command.started"');
+    expect(content).toContain(
+      '"operation":"command:growi.showCurrentPageAttachments"',
+    );
+    expect(content).toContain('"event":"attachment.list.requested"');
+    expect(content).toContain('"event":"externalOpen.started"');
+    expect(content).toContain('"event":"externalOpen.succeeded"');
+    expect(content).toContain(
+      '"virtualPath":"growi.example.com/attachment/attachment-1"',
+    );
+    expect(content).toContain('"event":"command.succeeded"');
+    expect(content).not.toContain("Authorization");
+    expect(content).not.toContain("Bearer");
+  });
+
+  it("writes command and page read trace for openPage", async () => {
+    process.env.GROWI_RUNTIME_MODE = "debug-f5";
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "growifs-runtime-"));
+    process.env.GROWI_JSONL_PATH = path.join(tempRoot, "runtime.jsonl");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-1" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# body",
+          },
+        }),
+      );
+    const { context } = createContext({ fetchMock });
+
+    activate(context);
+    await resolveRegisteredCommand(GROWI_COMMANDS.openPage)("/team/dev/spec");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const content = await readFile(process.env.GROWI_JSONL_PATH, "utf8");
+    expect(content).toContain('"event":"command.started"');
+    expect(content).toContain('"operation":"command:growi.openPage"');
+    expect(content).toContain('"event":"command.succeeded"');
+  });
+
+  it("shows info for runtime log commands outside debug-f5 mode", async () => {
+    const { context } = createContext();
+    activate(context);
+
+    const reveal = await resolveRegisteredCommand(
+      GROWI_COMMANDS.revealRuntimeLogs,
+    )();
+    const cleared = await resolveRegisteredCommand(
+      GROWI_COMMANDS.clearRuntimeLogs,
+    )();
+
+    expect(reveal).toBeUndefined();
+    expect(cleared).toBe(0);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      "Runtime logs are available only in debug-f5 mode.",
+    );
+  });
+
+  it("shows runtime status when path is unresolved in debug-f5 mode", async () => {
+    process.env.GROWI_RUNTIME_MODE = "debug-f5";
+    process.env.GROWI_JSONL_PATH = ".growi-logs/runtime/runtime.jsonl";
+    const { context } = createContext();
+    activate(context);
+
+    const reveal = await resolveRegisteredCommand(
+      GROWI_COMMANDS.revealRuntimeLogs,
+    )();
+    const directory = await resolveRegisteredCommand(
+      "growi.__test.getResolvedRuntimeLogDirectory",
+    )();
+
+    expect(reveal).toBeUndefined();
+    expect(directory).toBe(
+      "unresolved: mode=debug-f5 configuredPath=.growi-logs/runtime/runtime.jsonl workspaceResolved=false",
+    );
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      "Runtime log path is not resolved yet. mode=debug-f5 configuredPath=.growi-logs/runtime/runtime.jsonl workspaceResolved=false",
     );
   });
 
@@ -541,7 +1044,17 @@ describe("bootstrap extension entrypoint", () => {
 
     await resolveRegisteredCommand(GROWI_COMMANDS.startEdit)();
 
+    const statusBarItem = vi.mocked(vscode.window.createStatusBarItem).mock
+      .results[0]?.value as
+      | {
+          text?: string;
+          command?: string;
+        }
+      | undefined;
+
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(statusBarItem?.text).toBe("$(unlock) 編集中");
+    expect(statusBarItem?.command).toBe(GROWI_COMMANDS.endEdit);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "https://growi.example.com/_api/v3/page?path=%2Fteam%2Fdev%2Fspec",
     );
@@ -806,7 +1319,12 @@ describe("bootstrap extension entrypoint", () => {
 
     await resolveRegisteredCommand(GROWI_COMMANDS.showBacklinks)();
 
-    expect(readFileMock).toHaveBeenCalledWith("growi:/team/dev/backlink.md");
+    expect(readFileMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheme: "growi",
+        path: "/team/dev/backlink.md",
+      }),
+    );
   });
 
   it("shows current page actions quick pick and delegates to existing commands", async () => {
@@ -832,6 +1350,10 @@ describe("bootstrap extension entrypoint", () => {
         {
           label: "ページ情報を表示",
           command: GROWI_COMMANDS.showCurrentPageInfo,
+        },
+        {
+          label: "添付一覧を表示",
+          command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
           label: "履歴差分を表示",

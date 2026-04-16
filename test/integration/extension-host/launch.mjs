@@ -17,6 +17,8 @@ const workspaceFilePath = path.join(
   os.tmpdir(),
   "vscode-growifs-integration.code-workspace",
 );
+const runtimeRootPath = path.join(os.tmpdir(), "vscode-growifs-runtime");
+const runtimeLogPath = path.join(runtimeRootPath, "runtime.jsonl");
 
 async function createTestExtensionRoot() {
   const sourceManifestPath = path.join(repoRoot, "package.json");
@@ -52,6 +54,7 @@ async function main() {
   const mockServer = await startMockGrowiServer();
   const extensionDevelopmentPath = await createTestExtensionRoot();
   await fs.mkdir(workspacePath, { recursive: true });
+  await fs.mkdir(runtimeRootPath, { recursive: true });
   await fs.writeFile(
     workspaceFilePath,
     `${JSON.stringify(
@@ -77,6 +80,9 @@ async function main() {
         GROWI_HOST_TEST_ADMIN_URL: mockServer.adminUrl,
         GROWI_HOST_TEST_BASE_URL: mockServer.baseUrl,
         GROWI_HOST_TEST_TOKEN: mockServer.token,
+        GROWI_RUNTIME_MODE: process.env.GROWI_RUNTIME_MODE ?? "debug-f5",
+        GROWI_RUNTIME_ROOT: process.env.GROWI_RUNTIME_ROOT ?? runtimeRootPath,
+        GROWI_JSONL_PATH: process.env.GROWI_JSONL_PATH ?? runtimeLogPath,
       },
       launchArgs: [workspaceFilePath],
     });
@@ -84,6 +90,7 @@ async function main() {
     await mockServer.stop();
     await fs.rm(extensionDevelopmentPath, { recursive: true, force: true });
     await fs.rm(workspaceFilePath, { force: true });
+    await fs.rm(runtimeRootPath, { recursive: true, force: true });
   }
 }
 

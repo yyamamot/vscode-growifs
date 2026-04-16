@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.5 (2026-04-16)
+
+- `Create Page` / `Create Here` で GROWI の階層テンプレートを適用し、`_template` 優先・祖先側 `__template` fallback で新規ページを作成できるように改善
+- status bar の編集状態表示を `$(lock) 閲覧中` / `$(unlock) 編集中` に更新し、クリックで Start Edit / End Edit を切り替えやすく改善
+- 現在ページの添付一覧を Quick Pick で表示し、選択した添付を GROWI Web として既定ブラウザで開ける導線を追加
+- F5 の debug runtime 時だけ有効な JSONL 診断ログを追加し、runtime log の保存先表示と削除 command を利用できるように改善
+- Explorer 右クリックの `ブラウザで表示` から、page、synthetic page、prefix root に対応する GROWI Web ページを既定ブラウザで開ける導線を追加
+- `GROWI` view title actions を icon 表示へ統一し、`Add Prefix`、`Refresh Listing`、`Clear Prefixes`、runtime logs 操作の横幅圧迫を軽減
+- README の導線説明を現行の `GROWI` view / Command Palette 中心の利用形態に合わせて整理
+
 ## 0.0.4 (2026-04-12)
 
 - 破壊的変更: `growi:` prefix を workspace root として扱う前提を廃止し、探索導線を Explorer 配下の `GROWI` view と Command Palette に一本化

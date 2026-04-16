@@ -18,6 +18,10 @@ import type {
   GrowiPageWriteResult,
   GrowiReadFailureReason,
 } from "./fsProvider";
+import type {
+  GrowiAttachmentListResult,
+  GrowiAttachmentSummary,
+} from "./growiApi";
 import {
   buildInstanceKey,
   buildMirrorManifestPath,
@@ -48,16 +52,20 @@ export const GROWI_COMMANDS = {
   deletePage: "growi.deletePage",
   renamePage: "growi.renamePage",
   clearPrefixes: "growi.clearPrefixes",
+  deletePrefix: "growi.deletePrefix",
   openPage: "growi.openPage",
   openPrefixRootPage: "growi.openPrefixRootPage",
   openDirectoryPage: "growi.openDirectoryPage",
   explorerOpenPageItem: "growi.explorerOpenPageItem",
+  explorerOpenPageInBrowser: "growi.explorerOpenPageInBrowser",
   explorerCreatePageHere: "growi.explorerCreatePageHere",
   explorerRenamePage: "growi.explorerRenamePage",
   explorerDeletePage: "growi.explorerDeletePage",
   explorerRefreshCurrentPage: "growi.explorerRefreshCurrentPage",
   explorerShowBacklinks: "growi.explorerShowBacklinks",
   explorerShowCurrentPageInfo: "growi.explorerShowCurrentPageInfo",
+  explorerShowCurrentPageAttachments:
+    "growi.explorerShowCurrentPageAttachments",
   explorerShowRevisionHistoryDiff: "growi.explorerShowRevisionHistoryDiff",
   explorerCreateLocalMirrorForCurrentPage:
     "growi.explorerCreateLocalMirrorForCurrentPage",
@@ -89,6 +97,8 @@ export const GROWI_COMMANDS = {
   showLocalRoundTripActions: "growi.showLocalMirrorActions",
   refreshCurrentPage: "growi.refreshCurrentPage",
   refreshListing: "growi.refreshListing",
+  clearRuntimeLogs: "growi.clearRuntimeLogs",
+  revealRuntimeLogs: "growi.revealRuntimeLogs",
   createLocalMirrorForCurrentPage: "growi.createLocalMirrorForCurrentPage",
   createLocalMirrorForCurrentPrefix: "growi.createLocalMirrorForCurrentPrefix",
   refreshLocalMirror: "growi.refreshLocalMirror",
@@ -102,6 +112,7 @@ export const GROWI_COMMANDS = {
   compareLocalBundleWithGrowi: "growi.compareLocalMirrorWithGrowi",
   uploadLocalBundleToGrowi: "growi.uploadLocalMirrorToGrowi",
   showCurrentPageInfo: "growi.showCurrentPageInfo",
+  showCurrentPageAttachments: "growi.showCurrentPageAttachments",
   showBacklinks: "growi.showBacklinks",
   showRevisionHistoryDiff: "growi.showRevisionHistoryDiff",
 } as const;
@@ -138,6 +149,12 @@ export interface CommandDeps {
     | { ok: true; value: string[]; cleared: boolean; removed: string[] }
     | { ok: false; reason: "InvalidBaseUrl" }
   >;
+  deletePrefix(
+    rawPrefix: string,
+  ): Promise<
+    | { ok: true; value: string[]; removed: boolean }
+    | { ok: false; reason: "InvalidBaseUrl" | "InvalidPath" }
+  >;
   executeCommand?(command: string, ...args: unknown[]): Promise<void>;
   bootstrapEditSession(
     canonicalPath: string,
@@ -158,7 +175,11 @@ export interface CommandDeps {
     | { ok: true; paths: string[] }
     | { ok: false; reason: GrowiAccessFailureReason }
   >;
-  createPage(canonicalPath: string): Promise<GrowiPageCreateResult>;
+  createPage(
+    canonicalPath: string,
+    body: string,
+  ): Promise<GrowiPageCreateResult>;
+  resolveCreatePageBody(canonicalPath: string): Promise<string>;
   deletePage(input: {
     pageId: string;
     revisionId: string;
@@ -173,9 +194,11 @@ export interface CommandDeps {
     mode: "page" | "subtree";
   }): Promise<GrowiPageRenameResult>;
   listRevisions(pageId: string): Promise<GrowiRevisionListResult>;
+  listAttachments(pageId: string): Promise<GrowiAttachmentListResult>;
   findOpenTextDocument(path: string): { isDirty: boolean } | undefined;
   findOpenTextDocumentByUri(uri: UriLike): { isDirty: boolean } | undefined;
   openUri(uri: string): Promise<void>;
+  openExternalUri(uri: string): Promise<void>;
   openLocalFile(path: string): Promise<void>;
   openDiff(leftUri: UriLike, rightUri: UriLike, title: string): Promise<void>;
   openChanges?(
@@ -240,12 +263,16 @@ export interface CommandDeps {
     items: readonly (
       | BacklinkQuickPickItem
       | CurrentPageActionQuickPickItem
+      | AttachmentQuickPickItem
+      | OpenPageQuickPickItem
       | RevisionQuickPickItem
     )[],
     options: { placeHolder: string },
   ): Promise<
     | BacklinkQuickPickItem
     | CurrentPageActionQuickPickItem
+    | AttachmentQuickPickItem
+    | OpenPageQuickPickItem
     | RevisionQuickPickItem
     | undefined
   >;
@@ -288,6 +315,14 @@ export interface CurrentPageActionQuickPickItem {
   command: string;
 }
 
+export interface AttachmentQuickPickItem {
+  label: string;
+  description?: string;
+  detail?: string;
+  attachmentId: string;
+  downloadUrl: string;
+}
+
 export interface RevisionQuickPickItem {
   label: string;
   description?: string;
@@ -295,6 +330,15 @@ export interface RevisionQuickPickItem {
   revisionId: string;
   createdAt: string;
   author: string;
+}
+
+export interface OpenPageQuickPickItem {
+  label: string;
+  description?: string;
+  detail?: string;
+  canonicalPath?: string;
+  action?: "directInput";
+  alwaysShow?: boolean;
 }
 
 interface BundleCompareResult {
@@ -525,6 +569,10 @@ const CLEAR_PREFIXES_NO_TARGET_MESSAGE =
   "現在の接続先に削除対象の Prefix はありません。";
 const CLEAR_PREFIXES_SUCCESS_MESSAGE =
   "現在の接続先に登録された GROWI Prefix を削除しました。";
+const DELETE_PREFIX_INVALID_TARGET_MESSAGE =
+  "削除対象の Prefix root ではありません。";
+const DELETE_PREFIX_NO_TARGET_MESSAGE = "対象 Prefix は登録されていません。";
+const DELETE_PREFIX_SUCCESS_MESSAGE = "対象 Prefix を削除しました。";
 const GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE =
   "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
 const GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE =
@@ -548,10 +596,30 @@ const OPEN_PREFIX_ROOT_PAGE_INVALID_TARGET_MESSAGE =
   "Open Prefix Root Page は登録済み Prefix root でのみ実行できます。";
 const OPEN_DIRECTORY_PAGE_INVALID_TARGET_MESSAGE =
   "Open Directory Page は実ページを持つ growi: ディレクトリでのみ実行できます。";
+const EXPLORER_OPEN_PAGE_IN_BROWSER_INVALID_TARGET_MESSAGE =
+  "ブラウザで表示 は growi: ページ、growi: ディレクトリページ、growi: prefix root でのみ実行できます。";
 const SHOW_CURRENT_PAGE_INFO_INVALID_TARGET_MESSAGE =
   "Show Current Page Info は growi: ページでのみ実行できます。";
 const SHOW_CURRENT_PAGE_INFO_UNAVAILABLE_MESSAGE =
   "現在ページメタ情報を取得できませんでした。ページを開き直して再実行してください。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_INVALID_TARGET_MESSAGE =
+  "添付一覧は growi: ページまたは growi: ディレクトリページでのみ実行できます。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_UNAVAILABLE_MESSAGE =
+  "現在ページメタ情報を取得できないため添付一覧を表示できません。ページを開き直して再実行してください。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_LIST_API_NOT_SUPPORTED_MESSAGE =
+  "添付一覧 API が未対応のため添付一覧を表示できません。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_CONNECTION_FAILED_MESSAGE =
+  "GROWI への接続に失敗したため添付一覧を表示できませんでした。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_NO_ATTACHMENTS_MESSAGE =
+  "現在ページに添付はありません。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_NO_OPENABLE_ATTACHMENTS_MESSAGE =
+  "ブラウザで表示できる添付はありません。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_CANCELED_MESSAGE =
+  "添付一覧の表示をキャンセルしました。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_OPEN_FAILED_MESSAGE =
+  "添付のブラウザ表示に失敗しました。";
+const SHOW_CURRENT_PAGE_ATTACHMENTS_PLACEHOLDER =
+  "添付一覧からブラウザで表示する添付を選択してください。";
 const SHOW_CURRENT_PAGE_ACTIONS_INVALID_TARGET_MESSAGE =
   "現在ページメニューは growi: ページでのみ実行できます。";
 const SHOW_CURRENT_PAGE_ACTIONS_PLACEHOLDER =
@@ -572,6 +640,11 @@ const SHOW_REVISION_HISTORY_DIFF_OPEN_DIFF_FAILED_MESSAGE =
   "履歴差分ビューを開けませんでした。";
 const SHOW_REVISION_HISTORY_DIFF_REVISION_PLACEHOLDER =
   "比較したい revision を選択してください。";
+const OPEN_PAGE_QUICK_PICK_PLACEHOLDER =
+  "登録済み Prefix 配下からページを絞り込んで選択してください。";
+const OPEN_PAGE_DIRECT_INPUT_LABEL = "URL / path を直接入力";
+const OPEN_PAGE_DIRECT_INPUT_DESCRIPTION =
+  "候補に無いページは直接入力で開きます。";
 const SHOW_LOCAL_ROUND_TRIP_ACTIONS_INVALID_TARGET_MESSAGE =
   "ローカル操作メニューは growi: ページでのみ実行できます。";
 const SHOW_LOCAL_ROUND_TRIP_ACTIONS_PLACEHOLDER =
@@ -1407,6 +1480,88 @@ async function openResolvedGrowiPage(
   }
 }
 
+function buildBrowserUrl(
+  baseUrl: string,
+  canonicalPath: string,
+): string | undefined {
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(baseUrl);
+  } catch {
+    return undefined;
+  }
+
+  const basePathname =
+    parsedBaseUrl.pathname === "/"
+      ? "/"
+      : parsedBaseUrl.pathname.endsWith("/")
+        ? parsedBaseUrl.pathname
+        : `${parsedBaseUrl.pathname}/`;
+  const canonicalSuffix = canonicalPath === "/" ? "" : canonicalPath.slice(1);
+  parsedBaseUrl.pathname =
+    canonicalSuffix.length === 0
+      ? basePathname
+      : `${basePathname}${canonicalSuffix}`;
+  return parsedBaseUrl.toString();
+}
+
+function resolveAttachmentBrowserUrl(
+  downloadUrl: string | undefined,
+  baseUrl?: string,
+): string | undefined {
+  if (!downloadUrl) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(downloadUrl);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+    return undefined;
+  } catch {
+    // Fall through and resolve relative URLs against the configured base URL.
+  }
+
+  if (!baseUrl) {
+    return undefined;
+  }
+
+  try {
+    const resolved = new URL(downloadUrl, baseUrl);
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
+      return undefined;
+    }
+    return resolved.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function formatAttachmentSize(size: number | undefined): string | undefined {
+  if (size === undefined) {
+    return undefined;
+  }
+  return `${size} bytes`;
+}
+
+function mapAttachmentSummaryToQuickPickItem(
+  attachment: GrowiAttachmentSummary,
+  browserUrl: string,
+): AttachmentQuickPickItem {
+  const details = [
+    attachment.fileFormat,
+    formatAttachmentSize(attachment.fileSize),
+  ].filter((value): value is string => Boolean(value));
+  return {
+    label: attachment.originalName,
+    description: details.length > 0 ? details.join(" ・ ") : undefined,
+    detail: browserUrl,
+    attachmentId: attachment.attachmentId,
+    downloadUrl: browserUrl,
+  };
+}
+
 function resolvePrefixRootCanonicalPath(
   target:
     | string
@@ -1485,6 +1640,15 @@ type ExplorerCommandTarget =
     }
   | undefined;
 
+type PrefixRootCommandTarget =
+  | string
+  | UriLike
+  | {
+      uri?: UriLike;
+      contextValue?: string;
+    }
+  | undefined;
+
 type MirrorCommandTarget =
   | UriLike
   | {
@@ -1517,6 +1681,44 @@ function resolveExplorerTargetUri(
   }
 
   return toGrowiPageUri(canonicalPath);
+}
+
+function resolveExplorerBrowserTargetCanonicalPath(
+  target: ExplorerCommandTarget,
+): string | undefined {
+  if (typeof target === "string") {
+    const normalized = normalizeCanonicalPath(target);
+    return normalized.ok ? normalized.value : undefined;
+  }
+
+  const commandUri = resolveCommandUri(target);
+  if (!commandUri || commandUri.scheme !== "growi") {
+    return undefined;
+  }
+
+  if (
+    typeof target === "object" &&
+    target !== null &&
+    "contextValue" in target &&
+    target.contextValue === "growi.directory"
+  ) {
+    return undefined;
+  }
+
+  if (
+    typeof target === "object" &&
+    target !== null &&
+    "contextValue" in target &&
+    target.contextValue === "growi.prefixRoot"
+  ) {
+    return resolvePrefixRootCanonicalPath({ uri: commandUri });
+  }
+
+  if (commandUri.path.endsWith("/")) {
+    return undefined;
+  }
+
+  return resolveCurrentPageCanonicalPath(commandUri);
 }
 
 function resolveMirrorRequestScope(
@@ -1860,6 +2062,65 @@ export function createClearPrefixesCommand(deps: CommandDeps) {
   };
 }
 
+function resolvePrefixRootDeletionCanonicalPath(
+  target: PrefixRootCommandTarget,
+): string | undefined {
+  if (typeof target === "string") {
+    const normalized = normalizeCanonicalPath(target);
+    return normalized.ok ? normalized.value : undefined;
+  }
+
+  if (
+    typeof target === "object" &&
+    target !== null &&
+    "contextValue" in target &&
+    target.contextValue !== undefined &&
+    target.contextValue !== "growi.prefixRoot"
+  ) {
+    return undefined;
+  }
+
+  const commandUri = resolveCommandUri(target);
+  if (
+    !commandUri ||
+    commandUri.scheme !== "growi" ||
+    !commandUri.path.endsWith("/")
+  ) {
+    return undefined;
+  }
+
+  return resolvePrefixRootCanonicalPath({ uri: commandUri });
+}
+
+export function createDeletePrefixCommand(deps: CommandDeps) {
+  return async function deletePrefix(
+    target?: PrefixRootCommandTarget,
+  ): Promise<void> {
+    const canonicalPath = resolvePrefixRootDeletionCanonicalPath(target);
+    if (!canonicalPath) {
+      deps.showErrorMessage(DELETE_PREFIX_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    const result = await deps.deletePrefix(canonicalPath);
+    if (!result.ok) {
+      if (result.reason === "InvalidBaseUrl") {
+        deps.showErrorMessage(ADD_PREFIX_INVALID_BASE_URL_MESSAGE);
+        return;
+      }
+      deps.showErrorMessage(DELETE_PREFIX_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    if (!result.removed) {
+      deps.showInformationMessage(DELETE_PREFIX_NO_TARGET_MESSAGE);
+      return;
+    }
+
+    deps.showInformationMessage(DELETE_PREFIX_SUCCESS_MESSAGE);
+  };
+}
+
 export function createOpenPageCommand(deps: CommandDeps) {
   return async function openPage(
     injectedInput?:
@@ -1871,12 +2132,7 @@ export function createOpenPageCommand(deps: CommandDeps) {
     const inputFromCommand = resolveCommandInput(injectedInput);
     const input =
       inputFromCommand ??
-      (await deps.showInputBox({
-        placeHolder:
-          "https://growi.example.com/67ca... or /team/dev/spec or /67ca...",
-        prompt: "GROWI の URL、permalink、またはページパスを入力してください",
-        title: "GROWI: Open Page",
-      }));
+      (await selectOpenPageCandidateOrPromptDirectInput(deps));
 
     if (input === undefined) {
       return;
@@ -1894,6 +2150,102 @@ export function createOpenPageCommand(deps: CommandDeps) {
 
     await openResolvedGrowiPage(deps, parsed.value);
   };
+}
+
+async function selectOpenPageCandidateOrPromptDirectInput(
+  deps: CommandDeps,
+): Promise<string | undefined> {
+  const candidateItems = await buildOpenPageQuickPickItems(deps);
+  if (candidateItems.length === 0) {
+    return await promptOpenPageInput(deps);
+  }
+
+  const selected = await deps.showQuickPick(
+    [
+      ...candidateItems,
+      {
+        label: OPEN_PAGE_DIRECT_INPUT_LABEL,
+        description: OPEN_PAGE_DIRECT_INPUT_DESCRIPTION,
+        action: "directInput",
+        alwaysShow: true,
+      },
+    ],
+    { placeHolder: OPEN_PAGE_QUICK_PICK_PLACEHOLDER },
+  );
+
+  if (selected === undefined) {
+    return undefined;
+  }
+
+  if ("action" in selected && selected.action === "directInput") {
+    return await promptOpenPageInput(deps);
+  }
+
+  if (
+    "canonicalPath" in selected &&
+    typeof selected.canonicalPath === "string"
+  ) {
+    return selected.canonicalPath;
+  }
+
+  return undefined;
+}
+
+async function buildOpenPageQuickPickItems(
+  deps: CommandDeps,
+): Promise<OpenPageQuickPickItem[]> {
+  const prefixes = deps.getRegisteredPrefixes();
+  if (prefixes.length === 0) {
+    return [];
+  }
+
+  const listedPages = await Promise.all(
+    prefixes.map(async (prefix) => await deps.listPages(prefix)),
+  );
+  const canonicalPaths = new Set<string>();
+
+  for (const result of listedPages) {
+    if (!result.ok) {
+      continue;
+    }
+
+    for (const canonicalPath of result.paths) {
+      canonicalPaths.add(canonicalPath);
+    }
+  }
+
+  return [...canonicalPaths]
+    .sort((left, right) => {
+      const labelOrder = getOpenPageCandidateLabel(left).localeCompare(
+        getOpenPageCandidateLabel(right),
+        "ja",
+      );
+      return labelOrder !== 0 ? labelOrder : left.localeCompare(right, "ja");
+    })
+    .map((canonicalPath) => ({
+      label: getOpenPageCandidateLabel(canonicalPath),
+      description: canonicalPath,
+      canonicalPath,
+    }));
+}
+
+function getOpenPageCandidateLabel(canonicalPath: string): string {
+  if (canonicalPath === "/") {
+    return "/";
+  }
+
+  return canonicalPath.split("/").filter(Boolean).at(-1) ?? canonicalPath;
+}
+
+async function promptOpenPageInput(
+  deps: CommandDeps,
+): Promise<string | undefined> {
+  return await deps.showInputBox({
+    placeHolder:
+      "https://growi.example.com/67ca... or /team/dev/spec or /67ca...",
+    prompt: "GROWI の URL、permalink、またはページパスを入力してください",
+    title: "GROWI: Open Page",
+  });
 }
 
 export function createCreatePageCommand(deps: CommandDeps) {
@@ -1927,7 +2279,8 @@ export function createCreatePageCommand(deps: CommandDeps) {
     }
 
     const canonicalPath = normalized.value;
-    const created = await deps.createPage(canonicalPath);
+    const createBody = await deps.resolveCreatePageBody(canonicalPath);
+    const created = await deps.createPage(canonicalPath, createBody);
     if (!created.ok) {
       deps.showErrorMessage(
         mapCreatePageFailureReasonToMessage(created.reason),
@@ -2314,6 +2667,35 @@ export function createExplorerOpenPageItemCommand(deps: CommandDeps) {
   };
 }
 
+export function createExplorerOpenPageInBrowserCommand(deps: CommandDeps) {
+  return async function explorerOpenPageInBrowser(
+    target?: ExplorerCommandTarget,
+  ): Promise<string | undefined> {
+    const canonicalPath = resolveExplorerBrowserTargetCanonicalPath(target);
+    if (!canonicalPath) {
+      deps.showErrorMessage(
+        EXPLORER_OPEN_PAGE_IN_BROWSER_INVALID_TARGET_MESSAGE,
+      );
+      return undefined;
+    }
+
+    const baseUrl = deps.getBaseUrl()?.trim();
+    if (!baseUrl) {
+      deps.showErrorMessage(GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE);
+      return undefined;
+    }
+
+    const url = buildBrowserUrl(baseUrl, canonicalPath);
+    if (!url) {
+      deps.showErrorMessage(GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE);
+      return undefined;
+    }
+
+    await deps.openExternalUri(url);
+    return url;
+  };
+}
+
 function ensureDirectoryInitialValue(canonicalPath: string): string {
   return canonicalPath === "/" ? canonicalPath : `${canonicalPath}/`;
 }
@@ -2364,6 +2746,15 @@ export function createExplorerShowCurrentPageInfoCommand(deps: CommandDeps) {
   return createExplorerDelegatingCommand(
     deps,
     GROWI_COMMANDS.showCurrentPageInfo,
+  );
+}
+
+export function createExplorerShowCurrentPageAttachmentsCommand(
+  deps: CommandDeps,
+) {
+  return createExplorerDelegatingCommand(
+    deps,
+    GROWI_COMMANDS.showCurrentPageAttachments,
   );
 }
 
@@ -2743,6 +3134,101 @@ export function createShowCurrentPageInfoCommand(deps: CommandDeps) {
   };
 }
 
+function mapShowCurrentPageAttachmentsFailureToMessage(
+  reason: GrowiAccessFailureReason,
+): string {
+  return mapAccessFailureReasonToMessage(reason, {
+    baseUrlNotConfigured: GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE,
+    apiTokenNotConfigured: GENERIC_API_TOKEN_NOT_CONFIGURED_MESSAGE,
+    invalidApiToken: GENERIC_INVALID_API_TOKEN_MESSAGE,
+    permissionDenied: GENERIC_PERMISSION_DENIED_MESSAGE,
+    apiNotSupported:
+      SHOW_CURRENT_PAGE_ATTACHMENTS_LIST_API_NOT_SUPPORTED_MESSAGE,
+    connectionFailed: SHOW_CURRENT_PAGE_ATTACHMENTS_CONNECTION_FAILED_MESSAGE,
+  });
+}
+
+export function createShowCurrentPageAttachmentsCommand(deps: CommandDeps) {
+  return async function showCurrentPageAttachments(
+    target?: ExplorerCommandTarget,
+  ): Promise<string | undefined> {
+    const targetUri = resolveCommandUri(
+      typeof target === "string" ? undefined : target,
+    );
+    const effectiveUri = targetUri ?? deps.getActiveEditorUri();
+    const canonicalPath = resolveCurrentPageCanonicalPath(effectiveUri);
+    if (!canonicalPath || !effectiveUri) {
+      deps.showErrorMessage(
+        SHOW_CURRENT_PAGE_ATTACHMENTS_INVALID_TARGET_MESSAGE,
+      );
+      return undefined;
+    }
+
+    const pageInfo = deps.getCurrentPageInfo(canonicalPath);
+    if (!pageInfo) {
+      deps.showErrorMessage(SHOW_CURRENT_PAGE_ATTACHMENTS_UNAVAILABLE_MESSAGE);
+      return undefined;
+    }
+
+    const attachments = await deps.listAttachments(pageInfo.pageId);
+    if (!attachments.ok) {
+      deps.showErrorMessage(
+        mapShowCurrentPageAttachmentsFailureToMessage(attachments.reason),
+      );
+      return undefined;
+    }
+    if (attachments.attachments.length === 0) {
+      deps.showInformationMessage(
+        SHOW_CURRENT_PAGE_ATTACHMENTS_NO_ATTACHMENTS_MESSAGE,
+      );
+      return undefined;
+    }
+
+    const baseUrl = deps.getBaseUrl()?.trim();
+    const quickPickItems = attachments.attachments
+      .slice()
+      .sort((left, right) =>
+        left.originalName.localeCompare(right.originalName),
+      )
+      .map((attachment) => {
+        const browserUrl = resolveAttachmentBrowserUrl(
+          attachment.downloadUrl,
+          baseUrl,
+        );
+        if (!browserUrl) {
+          return undefined;
+        }
+        return mapAttachmentSummaryToQuickPickItem(attachment, browserUrl);
+      })
+      .filter((item): item is AttachmentQuickPickItem => Boolean(item));
+
+    if (quickPickItems.length === 0) {
+      deps.showInformationMessage(
+        SHOW_CURRENT_PAGE_ATTACHMENTS_NO_OPENABLE_ATTACHMENTS_MESSAGE,
+      );
+      return undefined;
+    }
+
+    const selected = (await deps.showQuickPick(quickPickItems, {
+      placeHolder: SHOW_CURRENT_PAGE_ATTACHMENTS_PLACEHOLDER,
+    })) as AttachmentQuickPickItem | undefined;
+    if (!selected) {
+      deps.showInformationMessage(
+        SHOW_CURRENT_PAGE_ATTACHMENTS_CANCELED_MESSAGE,
+      );
+      return undefined;
+    }
+
+    try {
+      await deps.openExternalUri(selected.downloadUrl);
+      return selected.downloadUrl;
+    } catch {
+      deps.showErrorMessage(SHOW_CURRENT_PAGE_ATTACHMENTS_OPEN_FAILED_MESSAGE);
+      return undefined;
+    }
+  };
+}
+
 function mapRevisionSummaryToQuickPickItem(
   revision: GrowiRevisionSummary,
 ): RevisionQuickPickItem {
@@ -2901,6 +3387,10 @@ export function createShowCurrentPageActionsCommand(
         {
           label: "ページ情報を表示",
           command: GROWI_COMMANDS.showCurrentPageInfo,
+        },
+        {
+          label: "添付一覧を表示",
+          command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
           label: "履歴差分を表示",

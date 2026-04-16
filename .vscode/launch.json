@@ -5,8 +5,12 @@
       "name": "Run Extension",
       "type": "extensionHost",
       "request": "launch",
-      "preLaunchTask": "pnpm: build",
       "runtimeExecutable": "${execPath}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "GROWI_RUNTIME_MODE": "debug-f5",
+        "GROWI_JSONL_PATH": "${workspaceFolder}/.growi-logs/runtime/runtime.jsonl"
+      },
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
         "${workspaceFolder}/vscode-growifs.code-workspace",

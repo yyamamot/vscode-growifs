@@ -22,6 +22,8 @@ vi.mock("vscode", () => {
     resourceUri?: { scheme: string; path: string; toString(): string };
     contextValue?: string;
     iconPath?: unknown;
+    description?: string;
+    tooltip?: unknown;
     command?: { command: string; title: string; arguments?: unknown[] };
 
     constructor(label: string, collapsibleState: number) {
@@ -47,9 +49,15 @@ vi.mock("vscode", () => {
       File: 1,
       Directory: 2,
     },
-    ThemeIcon: {
-      File: { id: "file" },
-      Folder: { id: "folder" },
+    ThemeIcon: class {
+      static File = { id: "file" };
+      static Folder = { id: "folder" };
+      static Warning = { id: "warning" };
+      id: string;
+
+      constructor(id: string) {
+        this.id = id;
+      }
     },
     TreeItem,
     TreeItemCollapsibleState: {
@@ -188,6 +196,57 @@ describe("GrowiPrefixTreeDataProvider", () => {
       title: "Open GROWI Page",
       arguments: [page.uri],
     });
+  });
+
+  it("marks page items stale with warning decoration", async () => {
+    const provider = createGrowiPrefixTreeDataProvider({
+      getRegisteredPrefixes: () => ["/team/dev"],
+      readDirectory: vi.fn(async () =>
+        createDirectoryEntries([["spec.md", vscode.FileType.File]]),
+      ),
+    });
+
+    provider.markCanonicalPathStale("/team/dev/spec");
+
+    const [root] = await provider.getChildren();
+    const stalePage = (await provider.getChildren(root)).find(
+      (item) => item.uri.path === "/team/dev/spec.md",
+    );
+
+    expect(stalePage?.label).toBe("spec.md");
+    expect(stalePage?.contextValue).toBe("growi.page");
+    expect((stalePage?.iconPath as { id?: string } | undefined)?.id).toBe(
+      "warning",
+    );
+    expect(stalePage?.description).toBe("remote changed");
+    expect(stalePage?.tooltip).toBe(
+      "remote が更新されています。Refresh Current Page で再読込してください。",
+    );
+  });
+
+  it("clears stale decorations for matching canonical paths", async () => {
+    const provider = createGrowiPrefixTreeDataProvider({
+      getRegisteredPrefixes: () => ["/team"],
+      readDirectory: vi.fn(async () =>
+        createDirectoryEntries([
+          ["dev", vscode.FileType.Directory],
+          ["dev.md", vscode.FileType.File],
+        ]),
+      ),
+    });
+
+    provider.markCanonicalPathStale("/team/dev");
+    provider.clearStaleState("/team");
+
+    const [root] = await provider.getChildren();
+    const children = await provider.getChildren(root);
+    const stalePage = children.find((item) => item.uri.path === "/team/dev.md");
+
+    expect((stalePage?.iconPath as { id?: string } | undefined)?.id).not.toBe(
+      "warning",
+    );
+    expect(stalePage?.description).toBeUndefined();
+    expect(stalePage?.tooltip).toBeUndefined();
   });
 
   it("fires refresh events", async () => {

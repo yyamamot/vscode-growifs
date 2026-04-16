@@ -14,6 +14,22 @@ const DEFAULT_PAGES = [
     body: "# spec page",
     updatedAt: "2026-03-08T00:01:00.000Z",
     updatedBy: "spec-owner",
+    attachments: [
+      {
+        attachmentId: "attachment-1",
+        originalName: "spec-report.pdf",
+        fileFormat: "application/pdf",
+        fileSize: 2048,
+        downloadUrl: "attachment/spec-report.pdf",
+      },
+      {
+        attachmentId: "attachment-2",
+        originalName: "diagram.png",
+        fileFormat: "image/png",
+        fileSize: 1024,
+        downloadUrl: "/attachment/diagram.png",
+      },
+    ],
   },
   {
     path: "/team/dev/guide",
@@ -104,6 +120,30 @@ function toFixture(pages = DEFAULT_PAGES) {
       updatedAt: page.updatedAt,
       updatedBy: page.updatedBy,
       revisions,
+      attachments: Array.isArray(page.attachments)
+        ? page.attachments.map((attachment, attachmentIndex) => ({
+            attachmentId:
+              typeof attachment.attachmentId === "string"
+                ? attachment.attachmentId
+                : `attachment-${index + 1}-${attachmentIndex + 1}`,
+            originalName:
+              typeof attachment.originalName === "string"
+                ? attachment.originalName
+                : `attachment-${index + 1}-${attachmentIndex + 1}`,
+            fileFormat:
+              typeof attachment.fileFormat === "string"
+                ? attachment.fileFormat
+                : undefined,
+            fileSize:
+              typeof attachment.fileSize === "number"
+                ? attachment.fileSize
+                : undefined,
+            downloadUrl:
+              typeof attachment.downloadUrl === "string"
+                ? attachment.downloadUrl
+                : undefined,
+          }))
+        : [],
     };
     pageByPath.set(canonicalPath, entry);
     pageById.set(pageId, entry);
@@ -132,6 +172,7 @@ export async function startMockGrowiServer(options = {}) {
     page: 0,
     revision: 0,
     revisionList: 0,
+    attachmentList: 0,
     list: 0,
     write: 0,
   };
@@ -507,6 +548,31 @@ export async function startMockGrowiServer(options = {}) {
       return;
     }
 
+    if (method === "GET" && url.pathname === "/_api/v3/attachment/list") {
+      requestStats.attachmentList += 1;
+      const pageId = url.searchParams.get("pageId");
+      if (!pageId) {
+        writeJson(res, 400, { ok: false, error: "InvalidQuery" });
+        return;
+      }
+      const page = fixture.pageById.get(pageId);
+      if (!page) {
+        writeJson(res, 404, { ok: false, error: "NotFound" });
+        return;
+      }
+      writeJson(res, 200, {
+        ok: true,
+        docs: page.attachments.map((attachment) => ({
+          _id: attachment.attachmentId,
+          originalName: attachment.originalName,
+          fileFormat: attachment.fileFormat,
+          fileSize: attachment.fileSize,
+          downloadUrl: attachment.downloadUrl,
+        })),
+      });
+      return;
+    }
+
     if (method === "GET" && url.pathname.startsWith("/_api/v3/revisions/")) {
       requestStats.revision += 1;
       const revisionId = decodeURIComponent(
@@ -657,6 +723,7 @@ export async function startMockGrowiServer(options = {}) {
       requestStats.page = 0;
       requestStats.revision = 0;
       requestStats.revisionList = 0;
+      requestStats.attachmentList = 0;
       requestStats.list = 0;
       requestStats.write = 0;
       authMode = "normal";
@@ -705,6 +772,7 @@ export async function startMockGrowiServer(options = {}) {
           requestStats.page = 0;
           requestStats.revision = 0;
           requestStats.revisionList = 0;
+          requestStats.attachmentList = 0;
           requestStats.list = 0;
           requestStats.write = 0;
           writeJson(res, 200, { ok: true });

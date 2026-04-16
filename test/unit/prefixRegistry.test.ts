@@ -130,4 +130,47 @@ describe("prefixRegistry", () => {
       removed: [],
     });
   });
+
+  it("deletes a single prefix only for the current baseUrl", async () => {
+    const workspaceState = new InMemoryWorkspaceState();
+    const registry = createPrefixRegistry(workspaceState);
+
+    await registry.addPrefix("https://a.example.com/", "/team/a");
+    await registry.addPrefix("https://a.example.com/", "/team/b");
+    await registry.addPrefix("https://b.example.com/", "/team/c");
+
+    const deleted = await registry.deletePrefix(
+      "https://a.example.com/",
+      "/team/a",
+    );
+
+    expect(deleted).toEqual({
+      ok: true,
+      value: ["/team/b"],
+      removed: true,
+    });
+    expect(registry.getPrefixes("https://a.example.com/")).toEqual(["/team/b"]);
+    expect(registry.getPrefixes("https://b.example.com/")).toEqual(["/team/c"]);
+  });
+
+  it("returns a no-op when the target prefix is not registered", async () => {
+    const workspaceState = new InMemoryWorkspaceState();
+    const registry = createPrefixRegistry(workspaceState);
+
+    await registry.addPrefix("https://growi.example.com/", "/team/dev");
+
+    const deleted = await registry.deletePrefix(
+      "https://growi.example.com/",
+      "/team/ops",
+    );
+
+    expect(deleted).toEqual({
+      ok: true,
+      value: ["/team/dev"],
+      removed: false,
+    });
+    expect(registry.getPrefixes("https://growi.example.com/")).toEqual([
+      "/team/dev",
+    ]);
+  });
 });
