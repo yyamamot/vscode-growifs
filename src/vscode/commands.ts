@@ -35,6 +35,16 @@ import {
   planMirrorRelativeFilePaths,
   serializeMirrorManifest,
 } from "./localRoundTrip";
+import type {
+  MirrorCompareScmResource,
+  MirrorCompareScmState,
+} from "./mirrorCompareScm";
+import {
+  evaluateLoadedMirrorPageStatus,
+  type LoadedMirrorSelection,
+  lookupMirrorManifestSelection,
+  type MirrorRequestScope,
+} from "./mirrorCompareStatus";
 import { findBacklinks } from "./pageSearch";
 import {
   buildGrowiRevisionUri,
@@ -48,8 +58,10 @@ export const GROWI_COMMANDS = {
   configureApiToken: "growi.configureApiToken",
   openReadme: "growi.openReadme",
   addPrefix: "growi.addPrefix",
+  addCurrentPageBookmark: "growi.addCurrentPageBookmark",
   createPage: "growi.createPage",
   deletePage: "growi.deletePage",
+  removeCurrentPageBookmark: "growi.removeCurrentPageBookmark",
   renamePage: "growi.renamePage",
   clearPrefixes: "growi.clearPrefixes",
   deletePrefix: "growi.deletePrefix",
@@ -99,11 +111,15 @@ export const GROWI_COMMANDS = {
   refreshListing: "growi.refreshListing",
   clearRuntimeLogs: "growi.clearRuntimeLogs",
   revealRuntimeLogs: "growi.revealRuntimeLogs",
+  showBookmarks: "growi.showBookmarks",
   createLocalMirrorForCurrentPage: "growi.createLocalMirrorForCurrentPage",
   createLocalMirrorForCurrentPrefix: "growi.createLocalMirrorForCurrentPrefix",
   refreshLocalMirror: "growi.refreshLocalMirror",
   compareLocalMirrorWithGrowi: "growi.compareLocalMirrorWithGrowi",
   uploadLocalMirrorToGrowi: "growi.uploadLocalMirrorToGrowi",
+  scmCompareMirrorAgain: "growi.scmCompareMirrorAgain",
+  scmUploadMirrorResources: "growi.scmUploadMirrorResources",
+  scmTakeRemoteMirrorResources: "growi.scmTakeRemoteMirrorResources",
   downloadCurrentPageToLocalFile: "growi.createLocalMirrorForCurrentPage",
   compareLocalWorkFileWithCurrentPage: "growi.compareLocalMirrorWithGrowi",
   uploadExportedLocalFileToGrowi: "growi.uploadLocalMirrorToGrowi",
@@ -134,6 +150,29 @@ export interface InputBoxOptionsLike {
 }
 
 export interface CommandDeps {
+  addBookmark(
+    canonicalPath: string,
+    pageId?: string,
+  ): Promise<
+    | {
+        ok: true;
+        value: readonly BookmarkListEntry[];
+        added: boolean;
+      }
+    | {
+        ok: false;
+        reason:
+          | "InvalidBaseUrl"
+          | "InvalidPath"
+          | "BaseUrlNotConfigured"
+          | "ApiTokenNotConfigured"
+          | "InvalidApiToken"
+          | "PermissionDenied"
+          | "ApiNotSupported"
+          | "ConnectionFailed"
+          | "NotFound";
+      }
+  >;
   addPrefix(rawPrefix: string): Promise<
     | { ok: true; value: string[]; added: boolean }
     | {
@@ -148,6 +187,29 @@ export interface CommandDeps {
   clearPrefixes(): Promise<
     | { ok: true; value: string[]; cleared: boolean; removed: string[] }
     | { ok: false; reason: "InvalidBaseUrl" }
+  >;
+  deleteBookmark(
+    canonicalPath: string,
+    pageId?: string,
+  ): Promise<
+    | {
+        ok: true;
+        value: readonly BookmarkListEntry[];
+        removed: boolean;
+      }
+    | {
+        ok: false;
+        reason:
+          | "InvalidBaseUrl"
+          | "InvalidPath"
+          | "BaseUrlNotConfigured"
+          | "ApiTokenNotConfigured"
+          | "InvalidApiToken"
+          | "PermissionDenied"
+          | "ApiNotSupported"
+          | "ConnectionFailed"
+          | "NotFound";
+      }
   >;
   deletePrefix(
     rawPrefix: string,
@@ -166,7 +228,24 @@ export interface CommandDeps {
   getEditSession(canonicalPath: string): GrowiEditSession | undefined;
   getCurrentPageInfo(canonicalPath: string): CurrentPageInfo | undefined;
   getLocalWorkspaceRoot(): string | undefined;
+  getBookmarks(): Promise<
+    | {
+        ok: true;
+        value: readonly BookmarkListEntry[];
+      }
+    | {
+        ok: false;
+        reason:
+          | "BaseUrlNotConfigured"
+          | "ApiTokenNotConfigured"
+          | "InvalidApiToken"
+          | "PermissionDenied"
+          | "ApiNotSupported"
+          | "ConnectionFailed";
+      }
+  >;
   getRegisteredPrefixes(): string[];
+  isBookmarked(canonicalPath: string): boolean;
   invalidateReadDirectoryCache(canonicalDirectoryPath: string): void;
   invalidateReadFileCache(canonicalPath: string): void;
   listPages(
@@ -205,6 +284,9 @@ export interface CommandDeps {
     title: string,
     resources: readonly ChangesResourceTuple[],
   ): Promise<void>;
+  clearMirrorCompareSourceControlState?(): void;
+  clearMirrorCompareTreeSnapshotState?(): void;
+  getMirrorCompareSourceControlState?(): MirrorCompareScmState | undefined;
   readLocalFile(path: string): Promise<string>;
   refreshOpenGrowiPage(
     canonicalPath: string,
@@ -245,6 +327,18 @@ export interface CommandDeps {
   showInputBox(
     options: InputBoxOptionsLike,
   ): PromiseLike<string | undefined> | undefined;
+  showBookmarkQuickPick(
+    items: readonly BookmarkQuickPickItem[],
+    options: { placeHolder: string },
+  ): Promise<BookmarkQuickPickSelection | undefined>;
+  showOpenPageQuickPick(
+    items: readonly OpenPageSearchEntry[],
+    options: {
+      placeHolder: string;
+      directInputLabel: string;
+      directInputDescription: string;
+    },
+  ): Promise<string | { action: "directInput" } | undefined>;
   showClearPrefixesConfirmation(
     baseUrl: string,
     prefixes: readonly string[],
@@ -276,6 +370,8 @@ export interface CommandDeps {
     | RevisionQuickPickItem
     | undefined
   >;
+  setMirrorCompareSourceControlState?(input: MirrorCompareScmState): void;
+  setMirrorCompareTreeSnapshotState?(input: MirrorCompareScmState): void;
   showWarningMessage(message: string): void;
   storeSecret(key: string, value: string): Promise<void>;
   setEditSession(canonicalPath: string, editSession: GrowiEditSession): void;
@@ -315,6 +411,29 @@ export interface CurrentPageActionQuickPickItem {
   command: string;
 }
 
+export interface BookmarkQuickPickItem {
+  label: string;
+  description?: string;
+  detail?: string;
+  canonicalPath: string;
+  addedAt: string;
+  pageId: string;
+  status?: "normal" | "outsidePrefix" | "unresolvable";
+}
+
+export interface BookmarkQuickPickSelection {
+  action: "open" | "remove";
+  canonicalPath: string;
+  pageId: string;
+}
+
+export interface BookmarkListEntry {
+  canonicalPath: string;
+  addedAt: string;
+  pageId: string;
+  status?: "normal" | "outsidePrefix" | "unresolvable";
+}
+
 export interface AttachmentQuickPickItem {
   label: string;
   description?: string;
@@ -341,7 +460,16 @@ export interface OpenPageQuickPickItem {
   alwaysShow?: boolean;
 }
 
-interface BundleCompareResult {
+export interface OpenPageSearchEntry {
+  label: string;
+  description: string;
+  canonicalPath: string;
+  basenameLower: string;
+  canonicalPathLower: string;
+  pathSegmentsLower: readonly string[];
+}
+
+export interface BundleCompareResult {
   canonicalPath: string;
   status:
     | "Unchanged"
@@ -352,8 +480,7 @@ interface BundleCompareResult {
     | "MissingLocal";
 }
 
-type ChangesResourceTuple = readonly [UriLike, UriLike, UriLike];
-type MirrorRequestScope = "page" | "subtree";
+export type ChangesResourceTuple = readonly [UriLike, UriLike, UriLike];
 
 interface BundleUploadResult {
   canonicalPath: string;
@@ -365,21 +492,19 @@ interface BundleUploadResult {
     | "MissingLocal";
 }
 
-interface LoadedMirrorSelection {
-  workspaceRoot: string;
-  baseUrl: string;
-  manifestPath: string;
-  manifest: MirrorManifest;
-  instanceKey: string;
-  requestedCanonicalPath: string;
-  requestedScope: MirrorRequestScope;
-  effectiveRootCanonicalPath: string;
-  selectedPages: MirrorManifestPage[];
-  reusedAncestorPrefix: boolean;
+interface TakeRemoteMirrorResult {
+  canonicalPath: string;
+  status:
+    | "TakenRemote"
+    | "Unchanged"
+    | "LocalChanged"
+    | "MissingRemote"
+    | "MissingLocal";
 }
 
 interface CurrentPageActionsCommandDeps {
   getActiveEditorUri(): UriLike | undefined;
+  isBookmarked?(canonicalPath: string): boolean;
   executeCommand(command: string, ...args: unknown[]): Promise<void>;
   showErrorMessage(message: string): void;
   showQuickPick(
@@ -475,6 +600,8 @@ const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_SUCCESS_MESSAGE =
   "既存 prefix mirror 内の現在ページ配下ローカルミラーを同期しました。";
 const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE =
   "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存してください。";
+const SHOW_BOOKMARKS_STATUS_OUTSIDE_PREFIX = "状態: prefix未登録";
+const SHOW_BOOKMARKS_STATUS_UNRESOLVABLE = "状態: 開けない";
 const COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE =
   "Compare Local Mirror with GROWI は growi: ページでのみ実行できます。";
 const COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
@@ -624,6 +751,18 @@ const SHOW_CURRENT_PAGE_ACTIONS_INVALID_TARGET_MESSAGE =
   "現在ページメニューは growi: ページでのみ実行できます。";
 const SHOW_CURRENT_PAGE_ACTIONS_PLACEHOLDER =
   "現在ページに対して実行する操作を選択してください。";
+const ADD_CURRENT_PAGE_BOOKMARK_INVALID_TARGET_MESSAGE =
+  "Add Current Page to Bookmarks は growi: ページでのみ実行できます。";
+const ADD_CURRENT_PAGE_BOOKMARK_SUCCESS_MESSAGE =
+  "現在ページをブックマークに追加しました。";
+const ADD_CURRENT_PAGE_BOOKMARK_DUPLICATE_MESSAGE =
+  "現在ページは既にブックマーク済みです。";
+const REMOVE_CURRENT_PAGE_BOOKMARK_INVALID_TARGET_MESSAGE =
+  "Remove Current Page from Bookmarks は growi: ページでのみ実行できます。";
+const REMOVE_CURRENT_PAGE_BOOKMARK_SUCCESS_MESSAGE =
+  "ブックマークから削除しました。";
+const REMOVE_CURRENT_PAGE_BOOKMARK_NOT_FOUND_MESSAGE =
+  "対象ページはブックマークされていません。";
 const SHOW_REVISION_HISTORY_DIFF_INVALID_TARGET_MESSAGE =
   "Show Revision History Diff は growi: ページでのみ実行できます。";
 const SHOW_REVISION_HISTORY_DIFF_UNAVAILABLE_MESSAGE =
@@ -645,6 +784,10 @@ const OPEN_PAGE_QUICK_PICK_PLACEHOLDER =
 const OPEN_PAGE_DIRECT_INPUT_LABEL = "URL / path を直接入力";
 const OPEN_PAGE_DIRECT_INPUT_DESCRIPTION =
   "候補に無いページは直接入力で開きます。";
+const SHOW_BOOKMARKS_PLACEHOLDER = "ブックマークからページを選択してください。";
+const SHOW_BOOKMARKS_EMPTY_MESSAGE =
+  "ブックマークはありません。現在ページで Add Current Page to Bookmarks を実行してください。";
+const SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX = "追加日時:";
 const SHOW_LOCAL_ROUND_TRIP_ACTIONS_INVALID_TARGET_MESSAGE =
   "ローカル操作メニューは growi: ページでのみ実行できます。";
 const SHOW_LOCAL_ROUND_TRIP_ACTIONS_PLACEHOLDER =
@@ -707,6 +850,38 @@ const UPLOAD_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE =
   "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Upload Local Mirror to GROWI を実行できません。prefix mirror を見直してください。";
 const UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE =
   "GROWI への mirror upload は成功しましたが manifest の更新に一部失敗しました。次回 upload 前に再度 Sync Local Mirror を実行してください。";
+const SCM_COMPARE_AGAIN_NO_STATE_MESSAGE =
+  "SCM 上に再比較対象の snapshot はありません。先に Compare Local Mirror with GROWI を実行してください。";
+const SCM_UPLOAD_LOCAL_CHANGES_NO_STATE_MESSAGE =
+  "SCM 上に Local Changes の compare snapshot はありません。先に Compare Local Mirror with GROWI を実行してください。";
+const SCM_UPLOAD_LOCAL_CHANGES_EMPTY_MESSAGE =
+  "SCM 上に反映対象の Local Changes はありません。";
+const SCM_TAKE_REMOTE_CHANGES_NO_STATE_MESSAGE =
+  "SCM 上に Remote Changes の compare snapshot はありません。先に Compare Local Mirror with GROWI を実行してください。";
+const SCM_TAKE_REMOTE_CHANGES_EMPTY_MESSAGE =
+  "SCM 上に取り込み対象の Remote Changes はありません。";
+const TAKE_REMOTE_CHANGES_NO_LOCAL_WORKSPACE_MESSAGE =
+  "ローカル file: workspace/folder が開かれていないため Take Remote Changes を実行できません。先に file: workspace/folder を開いてください。";
+const TAKE_REMOTE_CHANGES_READ_MANIFEST_FAILED_MESSAGE =
+  ".growi-mirror.json の読み込みに失敗したため Take Remote Changes を実行できませんでした。先に Sync Local Mirror を実行してください。";
+const TAKE_REMOTE_CHANGES_INVALID_MANIFEST_MESSAGE =
+  ".growi-mirror.json の GROWI metadata を読み取れないため Take Remote Changes を実行できません。再度 Sync Local Mirror を実行してください。";
+const TAKE_REMOTE_CHANGES_INVALID_BASE_URL_MESSAGE =
+  "GROWI base URL が未設定のため Take Remote Changes を実行できません。先に Configure Base URL を実行してください。";
+const TAKE_REMOTE_CHANGES_BASE_URL_MISMATCH_MESSAGE =
+  "mirror の GROWI base URL が現在設定と一致しないため Take Remote Changes を実行できません。接続先を確認してください。";
+const TAKE_REMOTE_CHANGES_MIRROR_NOT_FOUND_MESSAGE =
+  "対象の local mirror が見つからないため Take Remote Changes を実行できませんでした。先に Sync Local Mirror を実行してください。";
+const TAKE_REMOTE_CHANGES_REUSED_PREFIX_SKIPPED_MESSAGE =
+  "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Take Remote Changes を実行できません。prefix mirror を見直してください。";
+const TAKE_REMOTE_CHANGES_NOT_FOUND_MESSAGE =
+  "取り込み対象のページが見つからないため Take Remote Changes を実行できませんでした。";
+const TAKE_REMOTE_CHANGES_API_NOT_SUPPORTED_MESSAGE =
+  "本文取得 API が未対応のため Take Remote Changes を実行できませんでした。";
+const TAKE_REMOTE_CHANGES_CONNECTION_FAILED_MESSAGE =
+  "GROWI への接続に失敗したため Take Remote Changes を実行できませんでした。";
+const TAKE_REMOTE_CHANGES_WRITE_FAILED_MESSAGE =
+  "リモート変更の取り込みに失敗しました。";
 const REFRESH_LOCAL_MIRROR_INVALID_TARGET_MESSAGE =
   "Refresh Local Mirror は growi: ページでのみ実行できます。";
 const REFRESH_LOCAL_MIRROR_NO_LOCAL_WORKSPACE_MESSAGE =
@@ -1184,6 +1359,27 @@ function formatBundleUploadSummary(
   return [
     "Upload Local Mirror to GROWI を完了しました。",
     ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
+  ].join("\n");
+}
+
+function formatTakeRemoteSummary(
+  results: readonly TakeRemoteMirrorResult[],
+): string {
+  return [
+    "Take Remote Changes を完了しました。",
+    ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
+  ].join("\n");
+}
+
+function formatScmSelectionSkippedSummary(
+  operation: "Upload Local Changes" | "Take Remote Changes",
+  resources: readonly MirrorCompareScmResource[],
+): string {
+  return [
+    `${operation} では一部選択項目を対象外として skip しました。`,
+    ...resources.map(
+      (resource) => `${resource.status}: ${resource.canonicalPath}`,
+    ),
   ].join("\n");
 }
 
@@ -2155,45 +2351,31 @@ export function createOpenPageCommand(deps: CommandDeps) {
 async function selectOpenPageCandidateOrPromptDirectInput(
   deps: CommandDeps,
 ): Promise<string | undefined> {
-  const candidateItems = await buildOpenPageQuickPickItems(deps);
-  if (candidateItems.length === 0) {
+  const candidateEntries = await buildOpenPageSearchEntries(deps);
+  if (candidateEntries.length === 0) {
     return await promptOpenPageInput(deps);
   }
 
-  const selected = await deps.showQuickPick(
-    [
-      ...candidateItems,
-      {
-        label: OPEN_PAGE_DIRECT_INPUT_LABEL,
-        description: OPEN_PAGE_DIRECT_INPUT_DESCRIPTION,
-        action: "directInput",
-        alwaysShow: true,
-      },
-    ],
-    { placeHolder: OPEN_PAGE_QUICK_PICK_PLACEHOLDER },
-  );
+  const selected = await deps.showOpenPageQuickPick(candidateEntries, {
+    placeHolder: OPEN_PAGE_QUICK_PICK_PLACEHOLDER,
+    directInputLabel: OPEN_PAGE_DIRECT_INPUT_LABEL,
+    directInputDescription: OPEN_PAGE_DIRECT_INPUT_DESCRIPTION,
+  });
 
   if (selected === undefined) {
     return undefined;
   }
 
-  if ("action" in selected && selected.action === "directInput") {
+  if (typeof selected !== "string" && selected.action === "directInput") {
     return await promptOpenPageInput(deps);
   }
 
-  if (
-    "canonicalPath" in selected &&
-    typeof selected.canonicalPath === "string"
-  ) {
-    return selected.canonicalPath;
-  }
-
-  return undefined;
+  return typeof selected === "string" ? selected : undefined;
 }
 
-async function buildOpenPageQuickPickItems(
+async function buildOpenPageSearchEntries(
   deps: CommandDeps,
-): Promise<OpenPageQuickPickItem[]> {
+): Promise<OpenPageSearchEntry[]> {
   const prefixes = deps.getRegisteredPrefixes();
   if (prefixes.length === 0) {
     return [];
@@ -2222,11 +2404,7 @@ async function buildOpenPageQuickPickItems(
       );
       return labelOrder !== 0 ? labelOrder : left.localeCompare(right, "ja");
     })
-    .map((canonicalPath) => ({
-      label: getOpenPageCandidateLabel(canonicalPath),
-      description: canonicalPath,
-      canonicalPath,
-    }));
+    .map(buildOpenPageSearchEntry);
 }
 
 function getOpenPageCandidateLabel(canonicalPath: string): string {
@@ -2235,6 +2413,117 @@ function getOpenPageCandidateLabel(canonicalPath: string): string {
   }
 
   return canonicalPath.split("/").filter(Boolean).at(-1) ?? canonicalPath;
+}
+
+export function buildOpenPageSearchEntry(
+  canonicalPath: string,
+): OpenPageSearchEntry {
+  const label = getOpenPageCandidateLabel(canonicalPath);
+
+  return {
+    label,
+    description: canonicalPath,
+    canonicalPath,
+    basenameLower: label.toLocaleLowerCase("ja"),
+    canonicalPathLower: canonicalPath.toLocaleLowerCase("ja"),
+    pathSegmentsLower: canonicalPath
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => segment.toLocaleLowerCase("ja")),
+  };
+}
+
+export function rankOpenPageSearchEntries(
+  entries: readonly OpenPageSearchEntry[],
+  query: string,
+): OpenPageQuickPickItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase("ja");
+  if (normalizedQuery.length === 0) {
+    return entries.map(toOpenPageQuickPickItem);
+  }
+
+  return entries
+    .map((entry) => ({
+      entry,
+      rank: getOpenPageSearchRank(entry, normalizedQuery),
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        entry: OpenPageSearchEntry;
+        rank: number;
+      } => candidate.rank !== undefined,
+    )
+    .sort((left, right) => {
+      if (left.rank !== right.rank) {
+        return left.rank - right.rank;
+      }
+
+      const labelOrder = left.entry.label.localeCompare(
+        right.entry.label,
+        "ja",
+      );
+      if (labelOrder !== 0) {
+        return labelOrder;
+      }
+
+      return left.entry.canonicalPath.localeCompare(
+        right.entry.canonicalPath,
+        "ja",
+      );
+    })
+    .map(({ entry }) => toOpenPageQuickPickItem(entry));
+}
+
+function toOpenPageQuickPickItem(
+  entry: OpenPageSearchEntry,
+): OpenPageQuickPickItem {
+  return {
+    label: entry.label,
+    description: entry.description,
+    canonicalPath: entry.canonicalPath,
+  };
+}
+
+function getOpenPageSearchRank(
+  entry: OpenPageSearchEntry,
+  normalizedQuery: string,
+): number | undefined {
+  if (entry.basenameLower === normalizedQuery) {
+    return 0;
+  }
+
+  if (entry.basenameLower.startsWith(normalizedQuery)) {
+    return 1;
+  }
+
+  if (
+    entry.pathSegmentsLower.some((segment) =>
+      segment.startsWith(normalizedQuery),
+    )
+  ) {
+    return 2;
+  }
+
+  if (entry.basenameLower.includes(normalizedQuery)) {
+    return 3;
+  }
+
+  if (entry.canonicalPathLower.includes(normalizedQuery)) {
+    return 4;
+  }
+
+  return undefined;
+}
+
+export function isOpenPageDirectInputPreferred(query: string): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase("ja");
+  return (
+    normalizedQuery.startsWith("/") ||
+    normalizedQuery.startsWith("http://") ||
+    normalizedQuery.startsWith("https://")
+  );
 }
 
 async function promptOpenPageInput(
@@ -3366,6 +3655,7 @@ export function createShowCurrentPageActionsCommand(
       return;
     }
 
+    const isBookmarked = deps.isBookmarked?.(canonicalPath) ?? false;
     const selected = (await deps.showQuickPick(
       [
         {
@@ -3393,6 +3683,12 @@ export function createShowCurrentPageActionsCommand(
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
+          label: isBookmarked ? "ブックマークから削除" : "ブックマークに追加",
+          command: isBookmarked
+            ? GROWI_COMMANDS.removeCurrentPageBookmark
+            : GROWI_COMMANDS.addCurrentPageBookmark,
+        },
+        {
           label: "履歴差分を表示",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
@@ -3417,6 +3713,164 @@ export function createShowCurrentPageActionsCommand(
     }
 
     await deps.executeCommand(selected.command, targetUri);
+  };
+}
+
+export function createAddCurrentPageBookmarkCommand(
+  deps: Pick<
+    CommandDeps,
+    | "addBookmark"
+    | "getActiveEditorUri"
+    | "getCurrentPageInfo"
+    | "refreshPrefixTree"
+    | "showErrorMessage"
+    | "showInformationMessage"
+  >,
+) {
+  return async function addCurrentPageBookmark(
+    target?: UriLike | { uri?: UriLike },
+  ): Promise<void> {
+    const targetUri = resolveCommandUri(target) ?? deps.getActiveEditorUri();
+    const canonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+    if (!canonicalPath || !targetUri) {
+      deps.showErrorMessage(ADD_CURRENT_PAGE_BOOKMARK_INVALID_TARGET_MESSAGE);
+      return;
+    }
+
+    const pageId = deps.getCurrentPageInfo(canonicalPath)?.pageId;
+    const result = await deps.addBookmark(canonicalPath, pageId);
+    if (!result.ok) {
+      deps.showErrorMessage(GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE);
+      return;
+    }
+
+    if (!result.added) {
+      deps.showInformationMessage(ADD_CURRENT_PAGE_BOOKMARK_DUPLICATE_MESSAGE);
+      return;
+    }
+
+    deps.refreshPrefixTree();
+    deps.showInformationMessage(ADD_CURRENT_PAGE_BOOKMARK_SUCCESS_MESSAGE);
+  };
+}
+
+export function createRemoveCurrentPageBookmarkCommand(
+  deps: Pick<
+    CommandDeps,
+    | "deleteBookmark"
+    | "getActiveEditorUri"
+    | "getCurrentPageInfo"
+    | "refreshPrefixTree"
+    | "showErrorMessage"
+    | "showInformationMessage"
+  >,
+) {
+  return async function removeCurrentPageBookmark(
+    target?: UriLike | { uri?: UriLike },
+  ): Promise<void> {
+    const targetUri = resolveCommandUri(target) ?? deps.getActiveEditorUri();
+    const canonicalPath = resolveCurrentPageCanonicalPath(targetUri);
+    if (!canonicalPath || !targetUri) {
+      deps.showErrorMessage(
+        REMOVE_CURRENT_PAGE_BOOKMARK_INVALID_TARGET_MESSAGE,
+      );
+      return;
+    }
+
+    const pageId = deps.getCurrentPageInfo(canonicalPath)?.pageId;
+    const result = await deps.deleteBookmark(canonicalPath, pageId);
+    if (!result.ok) {
+      deps.showErrorMessage(GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE);
+      return;
+    }
+
+    if (!result.removed) {
+      deps.showInformationMessage(
+        REMOVE_CURRENT_PAGE_BOOKMARK_NOT_FOUND_MESSAGE,
+      );
+      return;
+    }
+
+    deps.refreshPrefixTree();
+    deps.showInformationMessage(REMOVE_CURRENT_PAGE_BOOKMARK_SUCCESS_MESSAGE);
+  };
+}
+
+export function createShowBookmarksCommand(
+  deps: Pick<
+    CommandDeps,
+    | "deleteBookmark"
+    | "getBookmarks"
+    | "openUri"
+    | "refreshPrefixTree"
+    | "showBookmarkQuickPick"
+    | "showErrorMessage"
+    | "showInformationMessage"
+  >,
+) {
+  const formatBookmarkDetail = (bookmark: BookmarkListEntry) => {
+    if (bookmark.status === "unresolvable") {
+      return `${SHOW_BOOKMARKS_STATUS_UNRESOLVABLE} ・ ${SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX} ${bookmark.addedAt}`;
+    }
+    if (bookmark.status === "outsidePrefix") {
+      return `${SHOW_BOOKMARKS_STATUS_OUTSIDE_PREFIX} ・ ${SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX} ${bookmark.addedAt}`;
+    }
+    return `${SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX} ${bookmark.addedAt}`;
+  };
+
+  return async function showBookmarks(): Promise<void> {
+    const bookmarksResult = await deps.getBookmarks();
+    if (!bookmarksResult.ok) {
+      deps.showErrorMessage(GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE);
+      return;
+    }
+
+    const bookmarks = bookmarksResult.value;
+    if (bookmarks.length === 0) {
+      deps.showInformationMessage(SHOW_BOOKMARKS_EMPTY_MESSAGE);
+      return;
+    }
+
+    const selection = await deps.showBookmarkQuickPick(
+      bookmarks.map((bookmark) => ({
+        label: getOpenPageCandidateLabel(bookmark.canonicalPath),
+        description: bookmark.canonicalPath,
+        detail: formatBookmarkDetail(bookmark),
+        canonicalPath: bookmark.canonicalPath,
+        addedAt: bookmark.addedAt,
+        pageId: bookmark.pageId,
+        status: bookmark.status,
+      })),
+      { placeHolder: SHOW_BOOKMARKS_PLACEHOLDER },
+    );
+
+    if (!selection) {
+      return;
+    }
+
+    if (selection.action === "remove") {
+      const result = await deps.deleteBookmark(
+        selection.canonicalPath,
+        selection.pageId,
+      );
+      if (!result.ok) {
+        deps.showErrorMessage(GENERIC_BASE_URL_NOT_CONFIGURED_MESSAGE);
+        return;
+      }
+
+      if (!result.removed) {
+        deps.showInformationMessage(
+          REMOVE_CURRENT_PAGE_BOOKMARK_NOT_FOUND_MESSAGE,
+        );
+        return;
+      }
+
+      deps.refreshPrefixTree();
+      deps.showInformationMessage(REMOVE_CURRENT_PAGE_BOOKMARK_SUCCESS_MESSAGE);
+      return;
+    }
+
+    await deps.openUri(buildGrowiUri(selection.canonicalPath));
   };
 }
 
@@ -3692,130 +4146,38 @@ async function loadMirrorManifest(
     reusedPrefixSkippedMessage: string;
   },
 ): Promise<LoadedMirrorSelection | undefined> {
-  const workspaceRoot = deps.getLocalWorkspaceRoot();
-  if (!workspaceRoot) {
+  const loaded = await lookupMirrorManifestSelection(deps, {
+    requestedCanonicalPath: input.requestedCanonicalPath,
+    requestedScope: input.requestedScope,
+    allowAncestorReuse: input.allowAncestorReuse,
+  });
+  if (loaded.ok) {
+    return loaded.value;
+  }
+
+  if (loaded.reason === "NoWorkspace") {
     deps.showErrorMessage(input.noWorkspaceMessage);
     return undefined;
   }
-
-  const baseUrl = deps.getBaseUrl()?.trim();
-  if (!baseUrl) {
+  if (loaded.reason === "BaseUrlNotConfigured") {
     deps.showErrorMessage(input.invalidBaseUrlMessage);
     return undefined;
   }
-
-  for (const {
-    instanceKey,
-    manifestPath: exactManifestPath,
-  } of listMirrorManifestCandidates(
-    workspaceRoot,
-    baseUrl,
-    input.requestedCanonicalPath,
-  )) {
-    let rawManifest: string | undefined;
-    try {
-      rawManifest = await deps.readLocalFile(exactManifestPath);
-    } catch {
-      rawManifest = undefined;
-    }
-
-    if (rawManifest === undefined) {
-      continue;
-    }
-    const parsedManifest = parseMirrorManifest(rawManifest);
-    if (!parsedManifest.ok) {
-      deps.showErrorMessage(input.invalidManifestMessage);
-      return undefined;
-    }
-    if (parsedManifest.value.baseUrl !== baseUrl) {
-      deps.showErrorMessage(input.baseUrlMismatchMessage);
-      return undefined;
-    }
-
-    return {
-      workspaceRoot,
-      baseUrl,
-      manifestPath: exactManifestPath,
-      manifest: parsedManifest.value,
-      instanceKey,
-      requestedCanonicalPath: input.requestedCanonicalPath,
-      requestedScope: input.requestedScope,
-      effectiveRootCanonicalPath: parsedManifest.value.rootCanonicalPath,
-      selectedPages: parsedManifest.value.pages,
-      reusedAncestorPrefix: false,
-    };
+  if (loaded.reason === "InvalidManifest") {
+    deps.showErrorMessage(input.invalidManifestMessage);
+    return undefined;
   }
-
+  if (loaded.reason === "BaseUrlMismatch") {
+    deps.showErrorMessage(input.baseUrlMismatchMessage);
+    return undefined;
+  }
+  if (loaded.reason === "ReusedPrefixSkipped") {
+    deps.showErrorMessage(input.reusedPrefixSkippedMessage);
+    return undefined;
+  }
   if (!input.allowAncestorReuse) {
     deps.showErrorMessage(input.readManifestFailedMessage);
     return undefined;
-  }
-
-  for (const ancestorPath of listAncestorCanonicalPaths(
-    input.requestedCanonicalPath,
-  )) {
-    for (const { instanceKey, manifestPath } of listMirrorManifestCandidates(
-      workspaceRoot,
-      baseUrl,
-      ancestorPath,
-    )) {
-      let ancestorRawManifest: string;
-      try {
-        ancestorRawManifest = await deps.readLocalFile(manifestPath);
-      } catch {
-        continue;
-      }
-
-      const parsedManifest = parseMirrorManifest(ancestorRawManifest);
-      if (!parsedManifest.ok) {
-        deps.showErrorMessage(input.invalidManifestMessage);
-        return undefined;
-      }
-      if (parsedManifest.value.baseUrl !== baseUrl) {
-        deps.showErrorMessage(input.baseUrlMismatchMessage);
-        return undefined;
-      }
-      if (parsedManifest.value.mode !== "prefix") {
-        continue;
-      }
-
-      const selectedPages = parsedManifest.value.pages.filter((page) =>
-        input.requestedScope === "page"
-          ? page.canonicalPath === input.requestedCanonicalPath
-          : isWithinCanonicalSubtree(
-              page.canonicalPath,
-              input.requestedCanonicalPath,
-            ),
-      );
-      if (selectedPages.length > 0) {
-        return {
-          workspaceRoot,
-          baseUrl,
-          manifestPath,
-          manifest: parsedManifest.value,
-          instanceKey,
-          requestedCanonicalPath: input.requestedCanonicalPath,
-          requestedScope: input.requestedScope,
-          effectiveRootCanonicalPath: parsedManifest.value.rootCanonicalPath,
-          selectedPages,
-          reusedAncestorPrefix: true,
-        };
-      }
-
-      const skippedPages = (parsedManifest.value.skippedPages ?? []).filter(
-        (page) =>
-          input.requestedScope === "page"
-            ? page.canonicalPath === input.requestedCanonicalPath
-            : isWithinCanonicalSubtree(
-                page.canonicalPath,
-                input.requestedCanonicalPath,
-              ),
-      );
-      if (skippedPages.length > 0) {
-        deps.showErrorMessage(input.reusedPrefixSkippedMessage);
-        return undefined;
-      }
-    }
   }
 
   deps.showErrorMessage(input.mirrorNotFoundMessage);
@@ -3825,10 +4187,16 @@ async function loadMirrorManifest(
 async function compareMirror(
   deps: CommandDeps,
   target?: MirrorCommandTarget,
+  options: {
+    openChangesEditor?: boolean;
+  } = {},
 ): Promise<BundleCompareResult[] | undefined> {
+  const shouldOpenChangesEditor = options.openChangesEditor ?? true;
   const targetUri = resolveMirrorTargetUri(target) ?? deps.getActiveEditorUri();
   const requestedCanonicalPath = resolveCurrentPageCanonicalPath(targetUri);
   if (!requestedCanonicalPath) {
+    deps.clearMirrorCompareSourceControlState?.();
+    deps.clearMirrorCompareTreeSnapshotState?.();
     deps.showErrorMessage(COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE);
     return undefined;
   }
@@ -3849,49 +4217,22 @@ async function compareMirror(
       COMPARE_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE,
   });
   if (!loaded) {
+    deps.clearMirrorCompareSourceControlState?.();
+    deps.clearMirrorCompareTreeSnapshotState?.();
     return undefined;
   }
 
   const results: BundleCompareResult[] = [];
   const skippedDiffResults: BundleCompareResult[] = [];
   const diffResources: ChangesResourceTuple[] = [];
+  const scmResources: MirrorCompareScmResource[] = [];
   for (const page of loaded.selectedPages) {
-    const _localFilePath = buildMirrorLocalFilePath(
-      loaded.workspaceRoot,
-      loaded.baseUrl,
-      loaded.manifest.rootCanonicalPath,
-      page.relativeFilePath,
-    );
-    const sourceLocalFilePath = buildMirrorLocalFilePathWithInstanceKey(
-      loaded.workspaceRoot,
-      loaded.instanceKey,
-      loaded.manifest.rootCanonicalPath,
-      page.relativeFilePath,
-    );
-
-    let localBody: string;
-    try {
-      localBody = await deps.readLocalFile(sourceLocalFilePath);
-    } catch {
-      results.push({
-        canonicalPath: page.canonicalPath,
-        status: "MissingLocal",
-      });
-      continue;
-    }
-
-    const localChanged = hashBody(localBody) !== page.contentHash;
-    const currentSnapshot = await deps.bootstrapEditSession(page.canonicalPath);
-    if (!currentSnapshot.ok) {
-      if (currentSnapshot.reason === "NotFound") {
-        results.push({
-          canonicalPath: page.canonicalPath,
-          status: "MissingRemote",
-        });
-        continue;
-      }
+    const evaluated = await evaluateLoadedMirrorPageStatus(deps, loaded, page);
+    if (!evaluated.ok) {
+      deps.clearMirrorCompareSourceControlState?.();
+      deps.clearMirrorCompareTreeSnapshotState?.();
       deps.showErrorMessage(
-        mapSnapshotFailureToMessage(currentSnapshot, {
+        mapReadFailureReasonToMessage(evaluated.reason, {
           apiNotSupported: DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE,
           connectionFailed: DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE,
           notFound: DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE,
@@ -3900,19 +4241,8 @@ async function compareMirror(
       return undefined;
     }
 
-    const remoteChanged =
-      currentSnapshot.value.pageId !== page.pageId ||
-      currentSnapshot.value.baseRevisionId !== page.baseRevisionId;
-    const result: BundleCompareResult = {
-      canonicalPath: page.canonicalPath,
-      status: localChanged
-        ? remoteChanged
-          ? "Conflict"
-          : "LocalChanged"
-        : remoteChanged
-          ? "RemoteChanged"
-          : "Unchanged",
-    };
+    const result = evaluated.value.result;
+    const sourceLocalFilePath = evaluated.value.localFilePath;
     results.push(result);
 
     if (
@@ -3925,11 +4255,17 @@ async function compareMirror(
         path: sourceLocalFilePath,
         fsPath: sourceLocalFilePath,
       } as const;
-      diffResources.push([
+      const remoteUri = {
+        scheme: "growi",
+        path: `${page.canonicalPath}.md`,
+      } as const;
+      diffResources.push([localFileUri, remoteUri, localFileUri]);
+      scmResources.push({
+        canonicalPath: page.canonicalPath,
+        status: result.status,
         localFileUri,
-        { scheme: "growi", path: `${page.canonicalPath}.md` },
-        localFileUri,
-      ]);
+        remoteUri,
+      });
     }
   }
 
@@ -3940,6 +4276,11 @@ async function compareMirror(
   }
 
   if (diffResources.length === 0) {
+    deps.clearMirrorCompareSourceControlState?.();
+    deps.clearMirrorCompareTreeSnapshotState?.();
+    if (!shouldOpenChangesEditor) {
+      return results;
+    }
     if (skippedDiffResults.length > 0) {
       deps.showWarningMessage(
         [
@@ -3953,14 +4294,30 @@ async function compareMirror(
     return results;
   }
 
-  try {
-    await openChangesEditor(deps, buildMirrorDiffTitle(loaded), diffResources);
-  } catch {
-    deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE);
-    return undefined;
+  if (shouldOpenChangesEditor) {
+    try {
+      await openChangesEditor(
+        deps,
+        buildMirrorDiffTitle(loaded),
+        diffResources,
+      );
+    } catch {
+      deps.clearMirrorCompareSourceControlState?.();
+      deps.clearMirrorCompareTreeSnapshotState?.();
+      deps.showErrorMessage(COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE);
+      return undefined;
+    }
   }
 
-  if (skippedDiffResults.length > 0) {
+  const compareSnapshotState = {
+    currentCanonicalPath: requestedCanonicalPath,
+    targetScope: requestedScope,
+    resources: scmResources,
+  } satisfies MirrorCompareScmState;
+  deps.setMirrorCompareSourceControlState?.(compareSnapshotState);
+  deps.setMirrorCompareTreeSnapshotState?.(compareSnapshotState);
+
+  if (shouldOpenChangesEditor && skippedDiffResults.length > 0) {
     deps.showWarningMessage(
       formatBundleCompareSkippedSummary(skippedDiffResults),
     );
@@ -3968,10 +4325,148 @@ async function compareMirror(
   return results;
 }
 
+function dedupeMirrorCompareScmResources(
+  resources: readonly MirrorCompareScmResource[],
+): MirrorCompareScmResource[] {
+  const deduped = new Map<string, MirrorCompareScmResource>();
+  for (const resource of resources) {
+    deduped.set(`${resource.status}:${resource.canonicalPath}`, resource);
+  }
+  return [...deduped.values()];
+}
+
+async function takeRemoteMirrorPage(
+  deps: CommandDeps,
+  canonicalPath: string,
+): Promise<TakeRemoteMirrorResult | undefined> {
+  const loaded = await loadMirrorManifest(deps, {
+    requestedCanonicalPath: canonicalPath,
+    requestedScope: "page",
+    allowAncestorReuse: true,
+    noWorkspaceMessage: TAKE_REMOTE_CHANGES_NO_LOCAL_WORKSPACE_MESSAGE,
+    readManifestFailedMessage: TAKE_REMOTE_CHANGES_READ_MANIFEST_FAILED_MESSAGE,
+    invalidManifestMessage: TAKE_REMOTE_CHANGES_INVALID_MANIFEST_MESSAGE,
+    invalidBaseUrlMessage: TAKE_REMOTE_CHANGES_INVALID_BASE_URL_MESSAGE,
+    baseUrlMismatchMessage: TAKE_REMOTE_CHANGES_BASE_URL_MISMATCH_MESSAGE,
+    mirrorNotFoundMessage: TAKE_REMOTE_CHANGES_MIRROR_NOT_FOUND_MESSAGE,
+    reusedPrefixSkippedMessage:
+      TAKE_REMOTE_CHANGES_REUSED_PREFIX_SKIPPED_MESSAGE,
+  });
+  if (!loaded) {
+    return undefined;
+  }
+
+  const page = loaded.selectedPages.find(
+    (candidate) => candidate.canonicalPath === canonicalPath,
+  );
+  if (!page) {
+    return {
+      canonicalPath,
+      status: "MissingLocal",
+    };
+  }
+
+  const sourceLocalFilePath = buildMirrorLocalFilePathWithInstanceKey(
+    loaded.workspaceRoot,
+    loaded.instanceKey,
+    loaded.manifest.rootCanonicalPath,
+    page.relativeFilePath,
+  );
+  if (deps.findOpenTextDocument(sourceLocalFilePath)?.isDirty) {
+    return {
+      canonicalPath: page.canonicalPath,
+      status: "LocalChanged",
+    };
+  }
+
+  let localBody: string;
+  try {
+    localBody = await deps.readLocalFile(sourceLocalFilePath);
+  } catch {
+    return {
+      canonicalPath: page.canonicalPath,
+      status: "MissingLocal",
+    };
+  }
+
+  if (hashBody(localBody) !== page.contentHash) {
+    return {
+      canonicalPath: page.canonicalPath,
+      status: "LocalChanged",
+    };
+  }
+
+  const currentSnapshot = await deps.bootstrapEditSession(page.canonicalPath);
+  if (!currentSnapshot.ok) {
+    if (currentSnapshot.reason === "NotFound") {
+      return {
+        canonicalPath: page.canonicalPath,
+        status: "MissingRemote",
+      };
+    }
+    deps.showErrorMessage(
+      mapSnapshotFailureToMessage(currentSnapshot, {
+        apiNotSupported: TAKE_REMOTE_CHANGES_API_NOT_SUPPORTED_MESSAGE,
+        connectionFailed: TAKE_REMOTE_CHANGES_CONNECTION_FAILED_MESSAGE,
+        notFound: TAKE_REMOTE_CHANGES_NOT_FOUND_MESSAGE,
+      }),
+    );
+    return undefined;
+  }
+
+  if (
+    currentSnapshot.value.pageId === page.pageId &&
+    currentSnapshot.value.baseRevisionId === page.baseRevisionId
+  ) {
+    return {
+      canonicalPath: page.canonicalPath,
+      status: "Unchanged",
+    };
+  }
+
+  const nextExportedAt = new Date().toISOString();
+  const updatedPages = loaded.manifest.pages.map((candidate) =>
+    candidate.canonicalPath === page.canonicalPath
+      ? {
+          ...candidate,
+          pageId: currentSnapshot.value.pageId,
+          baseRevisionId: currentSnapshot.value.baseRevisionId,
+          exportedAt: nextExportedAt,
+          contentHash: hashBody(currentSnapshot.value.baseBody),
+        }
+      : candidate,
+  );
+
+  try {
+    await deps.writeLocalFile(
+      sourceLocalFilePath,
+      currentSnapshot.value.baseBody,
+    );
+    await deps.writeLocalFile(
+      loaded.manifestPath,
+      serializeMirrorManifest({
+        ...loaded.manifest,
+        exportedAt: nextExportedAt,
+        pages: updatedPages,
+      }),
+    );
+  } catch {
+    deps.showErrorMessage(TAKE_REMOTE_CHANGES_WRITE_FAILED_MESSAGE);
+    return undefined;
+  }
+
+  return {
+    canonicalPath: page.canonicalPath,
+    status: "TakenRemote",
+  };
+}
+
 async function uploadMirror(
   deps: CommandDeps,
   target?: MirrorCommandTarget,
+  options: { announce?: boolean } = {},
 ): Promise<BundleUploadResult[] | undefined> {
+  const announce = options.announce ?? true;
   const targetUri = resolveMirrorTargetUri(target) ?? deps.getActiveEditorUri();
   const requestedCanonicalPath = resolveCurrentPageCanonicalPath(targetUri);
   if (!requestedCanonicalPath) {
@@ -4136,6 +4631,9 @@ async function uploadMirror(
   }
 
   const summary = formatBundleUploadSummary(results);
+  if (!announce) {
+    return results;
+  }
   if (postUploadWarnings.length > 0) {
     deps.showWarningMessage([summary, ...postUploadWarnings].join("\n"));
     return results;
@@ -4290,6 +4788,9 @@ export function createRefreshLocalMirrorCommand(deps: CommandDeps) {
 export function createCompareLocalBundleWithGrowiCommand(deps: CommandDeps) {
   return async function compareLocalBundleWithGrowi(
     target?: MirrorCommandTarget,
+    options?: {
+      openChangesEditor?: boolean;
+    },
   ): Promise<BundleCompareResult[] | undefined> {
     return await compareMirror(
       deps,
@@ -4306,6 +4807,7 @@ export function createCompareLocalBundleWithGrowiCommand(deps: CommandDeps) {
               : target) as UriLike | undefined,
             scope: "subtree",
           },
+      options,
     );
   };
 }
@@ -4330,6 +4832,180 @@ export function createUploadLocalBundleToGrowiCommand(deps: CommandDeps) {
             scope: "subtree",
           },
     );
+  };
+}
+
+export function createScmCompareMirrorAgainCommand(deps: CommandDeps) {
+  const compareLocalBundleWithGrowi =
+    createCompareLocalBundleWithGrowiCommand(deps);
+
+  return async function scmCompareMirrorAgain(): Promise<
+    BundleCompareResult[] | undefined
+  > {
+    const currentState = deps.getMirrorCompareSourceControlState?.();
+    if (!currentState) {
+      deps.showInformationMessage(SCM_COMPARE_AGAIN_NO_STATE_MESSAGE);
+      return undefined;
+    }
+
+    return await compareLocalBundleWithGrowi({
+      uri: toGrowiPageUri(currentState.currentCanonicalPath),
+      scope: currentState.targetScope,
+    });
+  };
+}
+
+export function createScmUploadMirrorResourcesCommand(deps: CommandDeps) {
+  return async function scmUploadMirrorResources(
+    resources?: readonly MirrorCompareScmResource[],
+  ): Promise<BundleUploadResult[] | undefined> {
+    const currentState = deps.getMirrorCompareSourceControlState?.();
+    if (!resources?.length && !currentState) {
+      deps.showInformationMessage(SCM_UPLOAD_LOCAL_CHANGES_NO_STATE_MESSAGE);
+      return undefined;
+    }
+
+    const requestedResources = dedupeMirrorCompareScmResources(
+      resources?.length
+        ? resources
+        : (currentState?.resources.filter(
+            (resource) => resource.status === "LocalChanged",
+          ) ?? []),
+    );
+    const skippedResources = requestedResources.filter(
+      (resource) => resource.status !== "LocalChanged",
+    );
+    const targetResources = requestedResources.filter(
+      (resource) => resource.status === "LocalChanged",
+    );
+
+    if (targetResources.length === 0) {
+      if (skippedResources.length > 0) {
+        deps.showWarningMessage(
+          formatScmSelectionSkippedSummary(
+            "Upload Local Changes",
+            skippedResources,
+          ),
+        );
+      } else {
+        deps.showInformationMessage(SCM_UPLOAD_LOCAL_CHANGES_EMPTY_MESSAGE);
+      }
+      return [];
+    }
+
+    const results: BundleUploadResult[] = [];
+    let aborted = false;
+    for (const resource of targetResources) {
+      const pageResults = await uploadMirror(
+        deps,
+        {
+          uri: toGrowiPageUri(resource.canonicalPath),
+          scope: "page",
+        },
+        {
+          announce: false,
+        },
+      );
+      if (!pageResults) {
+        aborted = true;
+        break;
+      }
+      results.push(...pageResults);
+    }
+
+    const summaryLines = [formatBundleUploadSummary(results)];
+    if (skippedResources.length > 0) {
+      summaryLines.push(
+        formatScmSelectionSkippedSummary(
+          "Upload Local Changes",
+          skippedResources,
+        ),
+      );
+    }
+    if (aborted) {
+      summaryLines.unshift("Upload Local Changes は途中で中断しました。");
+    }
+
+    if (aborted || skippedResources.length > 0) {
+      deps.showWarningMessage(summaryLines.join("\n"));
+    } else {
+      deps.showInformationMessage(summaryLines.join("\n"));
+    }
+    return results;
+  };
+}
+
+export function createScmTakeRemoteMirrorResourcesCommand(deps: CommandDeps) {
+  return async function scmTakeRemoteMirrorResources(
+    resources?: readonly MirrorCompareScmResource[],
+  ): Promise<TakeRemoteMirrorResult[] | undefined> {
+    const currentState = deps.getMirrorCompareSourceControlState?.();
+    if (!resources?.length && !currentState) {
+      deps.showInformationMessage(SCM_TAKE_REMOTE_CHANGES_NO_STATE_MESSAGE);
+      return undefined;
+    }
+
+    const requestedResources = dedupeMirrorCompareScmResources(
+      resources?.length
+        ? resources
+        : (currentState?.resources.filter(
+            (resource) => resource.status === "RemoteChanged",
+          ) ?? []),
+    );
+    const skippedResources = requestedResources.filter(
+      (resource) => resource.status !== "RemoteChanged",
+    );
+    const targetResources = requestedResources.filter(
+      (resource) => resource.status === "RemoteChanged",
+    );
+
+    if (targetResources.length === 0) {
+      if (skippedResources.length > 0) {
+        deps.showWarningMessage(
+          formatScmSelectionSkippedSummary(
+            "Take Remote Changes",
+            skippedResources,
+          ),
+        );
+      } else {
+        deps.showInformationMessage(SCM_TAKE_REMOTE_CHANGES_EMPTY_MESSAGE);
+      }
+      return [];
+    }
+
+    const results: TakeRemoteMirrorResult[] = [];
+    let aborted = false;
+    for (const resource of targetResources) {
+      const pageResult = await takeRemoteMirrorPage(
+        deps,
+        resource.canonicalPath,
+      );
+      if (!pageResult) {
+        aborted = true;
+        break;
+      }
+      results.push(pageResult);
+    }
+
+    const summaryLines = [formatTakeRemoteSummary(results)];
+    if (skippedResources.length > 0) {
+      summaryLines.push(
+        formatScmSelectionSkippedSummary(
+          "Take Remote Changes",
+          skippedResources,
+        ),
+      );
+    }
+    if (aborted) {
+      summaryLines.unshift("Take Remote Changes は途中で中断しました。");
+    }
+
+    if (aborted || skippedResources.length > 0) {
+      deps.showWarningMessage(summaryLines.join("\n"));
+    } else {
+      deps.showInformationMessage(summaryLines.join("\n"));
+    }
+    return results;
   };
 }
 

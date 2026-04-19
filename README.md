@@ -22,7 +22,7 @@ Explorer の `GROWI` view では、登録した探索起点、synthetic page ite
 - `growi:` は VS Code 上で GROWI ページを仮想ファイルとして開くための内部スキームです。通常操作は Explorer の `GROWI` view と Command Palette から実行します。
 - ページの作成・名前変更・削除は `GROWI: Create Page` / `Rename Page` / `Delete Page` に加え、current page actions や Explorer 右クリックからも実行できます。
 - local mirror は GROWI ページをローカルファイルへ書き出して作業する補助経路です。`Sync Local Mirror`、`Compare Local Mirror with GROWI`、`Upload Local Mirror to GROWI` で扱います。
-- Explorer の右クリックでは、実ページに対して `ブラウザで表示`、ページに対して `ローカルミラーを同期 / 比較 / 反映`、directory / prefix root に対して `配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映` を使えます。
+- Explorer の右クリックでは、実ページに対して `ブラウザで表示`、ページに対して `ローカルミラーを同期 / 比較 / 反映`、prefix root に対して `配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映`、通常 directory に対して `配下のローカルミラーを比較 / 配下のローカルミラーを反映` を使えます。
 - wiki 内リンク移動は、Markdown の絶対ページパス形式リンクと same-instance URL に限定して扱います。
 
 ## Installation
@@ -83,7 +83,7 @@ Explorer の `GROWI` view では、welcome から `Open Page` / `Add Prefix` / `
   </a>
 </p>
 
-prefix root では `/sample` のような directory 行を残したまま、配下に `__sample__.md` を表示します。ページ行では `ブラウザで表示`、`ここに作成`、`ページ名を変更`、`ページを削除`、`ローカルミラーを同期 / 比較 / 反映` を使えます。prefix root でも `ブラウザで表示` を使えます。directory 行では `配下をローカルミラーに同期 / 比較 / 反映` を使います。
+prefix root では `/sample` のような directory 行を残したまま、配下に `__sample__.md` を表示します。ページ行では `ブラウザで表示`、`ここに作成`、`ページ名を変更`、`ページを削除`、`ローカルミラーを同期 / 比較 / 反映` を使えます。prefix root でも `ブラウザで表示` を使え、右クリックから `配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映` を実行できます。通常の directory 行では `配下のローカルミラーを比較 / 反映` を使います。
 
 `GROWI: Create Page` は、新規ページを作成してそのまま編集を始めるときの入口です。
 
@@ -99,7 +99,7 @@ prefix root では `/sample` のような directory 行を残したまま、配�
 2. `Compare Local Mirror with GROWI` で差分を見る
 3. `Upload Local Mirror to GROWI` で反映する
 
-ページを右クリックしたときは `ローカルミラーを同期 / 比較 / 反映`、directory や prefix root を右クリックしたときは `配下をローカルミラーに同期 / 比較 / 反映` を使います。
+ページを右クリックしたときは `ローカルミラーを同期 / 比較 / 反映`、prefix root を右クリックしたときは `配下をローカルミラーに同期 / 比較 / 反映`、通常 directory を右クリックしたときは `配下のローカルミラーを比較 / 反映` を使います。
 
 `Sync Local Mirror` は、まだ mirror が無ければ作成し、既にあれば更新します。ローカルに未反映の変更があるときは、先に `Compare` や `Upload` を使います。
 
@@ -118,7 +118,9 @@ mirror を作ると、`.growi-mirrors/<instanceKey>/...` 配下に `__sample__.m
   </a>
 </p>
 
-`Compare Local Mirror with GROWI` を使うと、VS Code の diff 画面で差分を確認できます。
+`Compare Local Mirror with GROWI` を使うと、VS Code の diff 画面で差分を確認できます。Source Control view は `GROWI Mirror Compare` repository として最後に成功した compare 結果を保持し、変更件数と一覧、`Compare Again` / `Upload Local Changes` / `Take Remote Changes` の操作ハブになります。Git repository が無い workspace でも動作します。
+
+Explorer の opened page 表示は、mirror manifest が利用できる場合に `Local Changes` / `Remote Changes` / `Conflicts` を使い、mirror が使えない場合だけ `remote newer` へ fallback します。さらに `Compare Local Mirror with GROWI` の成功後は、最後に比較した subtree の snapshot が TreeView にも反映されます。`remote newer` は「remote の revision が local base revision より新しい」ことだけを示す簡易表示です。
 
 ## Features
 
@@ -174,8 +176,19 @@ mirror を作ると、`.growi-mirrors/<instanceKey>/...` 配下に `__sample__.m
 | --- | --- | --- | --- |
 | 現在ページ mirror を同期 | `GROWI: Sync Local Mirror for Current Page` | `__<page>__.md` と `mode: "page"` manifest を作成または更新したいとき | `.growi-mirrors/<instanceKey>/<rootCanonicalPath>/` に canonical path 相対で本文を配置し、`/` だけは `__root__.md` を使います |
 | prefix mirror を同期 | `GROWI: Sync Local Mirror for Current Prefix` | 現在ページ配下を最大 50 pages mirror したいとき | manifest の `mode: "prefix"` と `pages[]` を作成または更新します |
-| mirror を比較 | `GROWI: Compare Local Mirror with GROWI` | manifest に基づく status を確認したいとき | `unchanged` / `modified locally` / `remote changed` / `conflict` / `missing locally` / `missing remote` を判定し diff 可能ページを VS Code diff で開きます |
+| mirror を比較 | `GROWI: Compare Local Mirror with GROWI` | manifest に基づく status を確認したいとき | `unchanged` / `modified locally` / `remote changed` / `conflict` / `missing locally` / `missing remote` を判定し diff 可能ページを VS Code diff で開きます。Source Control view は最後に成功した compare snapshot を `Local Changes` / `Remote Changes` / `Conflicts` と件数付きで保持します |
 | mirror を GROWI へ反映 | `GROWI: Upload Local Mirror to GROWI` | changed pages だけを GROWI に送信したいとき | conflict / missing remote は skip し、成功ページの manifest を更新します |
+
+Source Control view は最後に成功した compare snapshot を保持します。Explorer も同じ compare snapshot を TreeView annotation と icon に反映しますが、active page だけは current-page live status が優先されるため、状況によっては Source Control view と完全一致しない場合があります。
+
+各操作は次の役割です。
+
+- `Compare Again`: 最後に比較した page / prefix を同じ scope で再比較します。
+- `Upload Local Changes`: `Local Changes` にある page だけを GROWI へ反映します。
+- `Take Remote Changes`: `Remote Changes` にある page だけを local mirror に取り込み、該当 page の manifest entry を更新します。
+`Take Remote Changes` は `Refresh Local Mirror` の別名ではありません。`Refresh Local Mirror` は mirror 全体を再取得するため local change が 1 件でも残っていると拒否しますが、`Take Remote Changes` は `Remote Changes` の page だけを個別に取り込みます。
+
+`Remote Changes` は本文差分そのものではなく、manifest が記録した remote revision と現在の remote revision の不一致を示します。remote 側で再保存されて revision だけが進んだ場合は、VS Code diff に可視差分がなくても `Remote Changes` として表示されることがあります。
 
 ### 補助情報を見る
 
@@ -220,6 +233,9 @@ mirror を作ると、`.growi-mirrors/<instanceKey>/...` 配下に `__sample__.m
 | 編集できない | 対象が既存ページか、`Start Edit` を実行したかを確認する | 通常の保存だけでは更新できません |
 | `GROWI: Upload Local Mirror to GROWI` が失敗する | manifest がこの拡張で生成されたものか、`baseUrl` や `pages[].contentHash` が最新かを確認する | remote が先行更新している場合は manifest 再生成が必要です |
 | `GROWI: Compare Local Mirror with GROWI` または `Sync Local Mirror` が失敗する | `.growi-mirror.json` manifest が missing / invalid / baseUrl mismatch ではないかを確認する | `Sync Local Mirror` を再実行することで manifest を再生成してください |
+| Source Control view に何も出ない | 直前に `GROWI: Compare Local Mirror with GROWI` を成功させたか、compare 対象に `Local Changes` / `Remote Changes` / `Conflicts` があったかを確認する | SCM 補助表示は Git repository 初期化を必要とせず、最後に成功した compare snapshot を保持します |
+| TreeView の annotation が Source Control view とずれる | 直前の compare snapshot が古くないか、active page に live status が上書きされていないかを確認する | compare を再実行すると SCM と TreeView の snapshot は同時に更新されます |
+| `Take Remote Changes` が期待どおり動かない | 対象 page が `Remote Changes` にあるか、mirror manifest がこの拡張で生成されたものか、Base URL が現在設定と一致しているかを確認する | `Take Remote Changes` は `Remote Changes` の page だけを対象にし、`Local Changes` や `Conflicts` は取り込みません |
 | 履歴差分が開けない | `/_api/v3/revisions/list` と `/_api/v3/revisions/{revisionId}` が使えるか確認する | revision 一覧 API 未対応環境では使えません |
 | diagnostics が出る | 未解決内部リンク、未取得画像、draw.io embed のいずれかを確認する | diagnostics は `growi:` 文書上だけで表示します |
 

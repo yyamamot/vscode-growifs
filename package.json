@@ -7,7 +7,7 @@
   "categories": [
     "Other"
   ],
-  "version": "0.0.5",
+  "version": "0.0.6",
   "license": "MIT",
   "icon": "assets/icon.png",
   "repository": {
@@ -22,6 +22,7 @@
     "onCommand:growi.configureApiToken",
     "onCommand:growi.openReadme",
     "onCommand:growi.addPrefix",
+    "onCommand:growi.addCurrentPageBookmark",
     "onCommand:growi.openPrefixRootPage",
     "onCommand:growi.openDirectoryPage",
     "onCommand:growi.explorerOpenPageItem",
@@ -44,6 +45,7 @@
     "onCommand:growi.deletePrefix",
     "onCommand:growi.createPage",
     "onCommand:growi.deletePage",
+    "onCommand:growi.removeCurrentPageBookmark",
     "onCommand:growi.renamePage",
     "onCommand:growi.openPage",
     "onCommand:growi.startEdit",
@@ -54,11 +56,14 @@
     "onCommand:growi.refreshListing",
     "onCommand:growi.clearRuntimeLogs",
     "onCommand:growi.revealRuntimeLogs",
+    "onCommand:growi.showBookmarks",
     "onCommand:growi.createLocalMirrorForCurrentPage",
     "onCommand:growi.createLocalMirrorForCurrentPrefix",
     "onCommand:growi.refreshLocalMirror",
     "onCommand:growi.compareLocalMirrorWithGrowi",
     "onCommand:growi.uploadLocalMirrorToGrowi",
+    "onCommand:growi.scmUploadMirrorResources",
+    "onCommand:growi.scmTakeRemoteMirrorResources",
     "onCommand:growi.showCurrentPageInfo",
     "onCommand:growi.showCurrentPageAttachments",
     "onCommand:growi.showBacklinks",
@@ -85,8 +90,16 @@
         "shortTitle": "Create Page"
       },
       {
+        "command": "growi.addCurrentPageBookmark",
+        "title": "ブックマークに追加"
+      },
+      {
         "command": "growi.deletePage",
         "title": "GROWI: Delete Page"
+      },
+      {
+        "command": "growi.removeCurrentPageBookmark",
+        "title": "ブックマークから削除"
       },
       {
         "command": "growi.renamePage",
@@ -177,7 +190,8 @@
       {
         "command": "growi.openPage",
         "title": "GROWI: Open Page",
-        "shortTitle": "Open Page"
+        "shortTitle": "Open Page",
+        "icon": "$(search)"
       },
       {
         "command": "growi.startEdit",
@@ -190,6 +204,11 @@
       {
         "command": "growi.showCurrentPageActions",
         "title": "GROWI: Show Current Page Actions"
+      },
+      {
+        "command": "growi.showBookmarks",
+        "title": "GROWI: Show Bookmarks",
+        "icon": "$(bookmark)"
       },
       {
         "command": "growi.showLocalMirrorActions",
@@ -256,6 +275,21 @@
         "title": "GROWI: Upload Local Mirror to GROWI"
       },
       {
+        "command": "growi.scmUploadMirrorResources",
+        "title": "Upload Local Changes",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "growi.scmCompareMirrorAgain",
+        "title": "Compare Again",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "growi.scmTakeRemoteMirrorResources",
+        "title": "Take Remote Changes",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "growi.showCurrentPageInfo",
         "title": "GROWI: Show Current Page Info"
       },
@@ -295,29 +329,39 @@
     "menus": {
       "view/title": [
         {
+          "command": "growi.openPage",
+          "when": "view == growi.explorer",
+          "group": "navigation@1"
+        },
+        {
           "command": "growi.addPrefix",
           "when": "view == growi.explorer",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "growi.refreshListing",
           "when": "view == growi.explorer",
-          "group": "navigation"
+          "group": "navigation@3"
+        },
+        {
+          "command": "growi.showBookmarks",
+          "when": "view == growi.explorer",
+          "group": "navigation@4"
         },
         {
           "command": "growi.clearPrefixes",
           "when": "view == growi.explorer",
-          "group": "navigation"
+          "group": "navigation@5"
         },
         {
           "command": "growi.clearRuntimeLogs",
           "when": "view == growi.explorer && growi.runtimeLogsEnabled",
-          "group": "navigation@4"
+          "group": "navigation@6"
         },
         {
           "command": "growi.revealRuntimeLogs",
           "when": "view == growi.explorer && growi.runtimeLogsEnabled",
-          "group": "navigation@5"
+          "group": "navigation@7"
         }
       ],
       "commandPalette": [
@@ -328,6 +372,59 @@
         {
           "command": "growi.revealRuntimeLogs",
           "when": "growi.runtimeLogsEnabled"
+        },
+        {
+          "command": "growi.scmUploadMirrorResources",
+          "when": "false"
+        },
+        {
+          "command": "growi.scmCompareMirrorAgain",
+          "when": "false"
+        },
+        {
+          "command": "growi.scmTakeRemoteMirrorResources",
+          "when": "false"
+        }
+      ],
+      "scm/repository": [
+        {
+          "command": "growi.scmCompareMirrorAgain",
+          "when": "scmProvider == growifs-mirror-compare",
+          "group": "inline@1"
+        },
+        {
+          "command": "growi.scmUploadMirrorResources",
+          "when": "scmProvider == growifs-mirror-compare",
+          "group": "inline@2"
+        },
+        {
+          "command": "growi.scmTakeRemoteMirrorResources",
+          "when": "scmProvider == growifs-mirror-compare",
+          "group": "inline@3"
+        }
+      ],
+      "scm/resourceGroup/context": [
+        {
+          "command": "growi.scmUploadMirrorResources",
+          "when": "scmProvider == growifs-mirror-compare && scmResourceGroup == changes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "growi.scmTakeRemoteMirrorResources",
+          "when": "scmProvider == growifs-mirror-compare && scmResourceGroup == remoteChanged",
+          "group": "navigation@1"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "growi.scmUploadMirrorResources",
+          "when": "scmProvider == growifs-mirror-compare && scmResourceState == growifs.localChanged",
+          "group": "navigation@1"
+        },
+        {
+          "command": "growi.scmTakeRemoteMirrorResources",
+          "when": "scmProvider == growifs-mirror-compare && scmResourceState == growifs.remoteChanged",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -352,14 +449,19 @@
           "group": "a_mutate@1"
         },
         {
+          "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
+          "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+          "group": "b_localOpsSync@1"
+        },
+        {
           "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
           "when": "view == growi.explorer && viewItem == growi.prefixRoot",
-          "group": "b_localOpsCompare@1"
+          "group": "c_localOpsCompare@1"
         },
         {
           "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi",
           "when": "view == growi.explorer && viewItem == growi.prefixRoot",
-          "group": "c_localOpsUpload@1"
+          "group": "d_localOpsUpload@1"
         },
         {
           "command": "growi.deletePrefix",
@@ -368,142 +470,162 @@
         },
         {
           "command": "growi.explorerOpenPageInBrowser",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "navigation@1"
         },
         {
           "command": "growi.explorerOpenPageItem",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "navigation@2"
         },
         {
           "command": "growi.explorerRefreshCurrentPage",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "a_openView@1"
         },
         {
           "command": "growi.explorerShowBacklinks",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "a_openView@2"
         },
         {
           "command": "growi.explorerShowCurrentPageInfo",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "a_openView@3"
         },
         {
           "command": "growi.explorerShowCurrentPageAttachments",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "a_openView@4"
         },
         {
           "command": "growi.explorerShowRevisionHistoryDiff",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "a_openView@5"
         },
         {
           "command": "growi.explorerCreatePageHere",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "b_mutate@1"
         },
         {
           "command": "growi.explorerRenamePage",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "b_mutate@2"
         },
         {
-          "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+          "command": "growi.addCurrentPageBookmark",
           "when": "view == growi.explorer && viewItem == growi.page",
+          "group": "b_mutate@3"
+        },
+        {
+          "command": "growi.removeCurrentPageBookmark",
+          "when": "view == growi.explorer && viewItem == growi.pageBookmarked",
+          "group": "b_mutate@3"
+        },
+        {
+          "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "c_localOpsSync@1"
         },
         {
           "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "c_localOpsSync@2"
         },
         {
           "command": "growi.explorerCompareLocalMirrorWithGrowi",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "d_localOpsCompare@1"
         },
         {
           "command": "growi.explorerUploadLocalMirrorToGrowi",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "e_localOpsUpload@1"
         },
         {
           "command": "growi.explorerDeletePage",
-          "when": "view == growi.explorer && viewItem == growi.page",
+          "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
           "group": "z_danger@1"
         },
         {
           "command": "growi.explorerOpenPageInBrowser",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "navigation@1"
         },
         {
           "command": "growi.explorerOpenPageItem",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "navigation@2"
         },
         {
           "command": "growi.explorerRefreshCurrentPage",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "a_openView@1"
         },
         {
           "command": "growi.explorerShowBacklinks",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "a_openView@2"
         },
         {
           "command": "growi.explorerShowCurrentPageInfo",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "a_openView@3"
         },
         {
           "command": "growi.explorerShowCurrentPageAttachments",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "a_openView@4"
         },
         {
           "command": "growi.explorerShowRevisionHistoryDiff",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "a_openView@5"
         },
         {
           "command": "growi.explorerCreatePageHere",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "b_mutate@1"
         },
         {
           "command": "growi.explorerRenamePage",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "b_mutate@2"
         },
         {
-          "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+          "command": "growi.addCurrentPageBookmark",
           "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "group": "b_mutate@3"
+        },
+        {
+          "command": "growi.removeCurrentPageBookmark",
+          "when": "view == growi.explorer && viewItem == growi.directoryPageBookmarked",
+          "group": "b_mutate@3"
+        },
+        {
+          "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "c_localOpsSync@1"
         },
         {
           "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "c_localOpsSync@2"
         },
         {
           "command": "growi.explorerCompareLocalMirrorWithGrowi",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "d_localOpsCompare@1"
         },
         {
           "command": "growi.explorerUploadLocalMirrorToGrowi",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "e_localOpsUpload@1"
         },
         {
           "command": "growi.explorerDeletePage",
-          "when": "view == growi.explorer && viewItem == growi.directoryPage",
+          "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
           "group": "z_danger@1"
         },
         {
@@ -514,12 +636,12 @@
         {
           "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
           "when": "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
-          "group": "b_localOpsCompare@1"
+          "group": "c_localOpsCompare@1"
         },
         {
           "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi",
           "when": "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
-          "group": "c_localOpsUpload@1"
+          "group": "d_localOpsUpload@1"
         }
       ]
     },

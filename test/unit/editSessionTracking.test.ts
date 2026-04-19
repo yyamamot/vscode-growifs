@@ -720,6 +720,9 @@ describe("edit session dirty tracking", () => {
 
     await Promise.resolve();
 
-    expect(vscodeSpies.executeCommand).not.toHaveBeenCalled();
+    expect(vscodeSpies.executeCommand).not.toHaveBeenCalledWith(
+      "editor.fold",
+      expect.anything(),
+    );
   });
 });

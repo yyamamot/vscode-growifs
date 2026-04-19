@@ -40,3 +40,7 @@ yarn-error.log*
 # Worker runtime artifacts
 .ai/tmp/
 .growi-logs/
+
+# growifs
+.growi-mirros
+

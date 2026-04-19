@@ -1,10 +1,13 @@
 import * as vscode from "vscode";
 import { normalizeCanonicalPath } from "../core/uri";
+import type { MirrorCompareScmState } from "./mirrorCompareScm";
+import type { OpenedPageDecorationStatus } from "./pageFreshnessService";
 
 export const GROWI_EXPLORER_VIEW_ID = "growi.explorer";
 
 export interface PrefixTreeDeps {
   getRegisteredPrefixes(): readonly string[];
+  isBookmarked(canonicalPath: string): boolean;
   readDirectory(
     uri: vscode.Uri,
   ): Thenable<readonly [string, vscode.FileType][]>;
@@ -19,12 +22,34 @@ interface TreeEntryCandidate {
   kind: "directory" | "page";
   label: string;
   uri: vscode.Uri;
-  contextValue?: "growi.directoryPage";
+  isDirectoryPage?: boolean;
 }
 
-const STALE_PAGE_DESCRIPTION = "remote changed";
-const STALE_PAGE_TOOLTIP =
-  "remote が更新されています。Refresh Current Page で再読込してください。";
+const PAGE_DECORATION_PRESENTATIONS: Record<
+  Exclude<OpenedPageDecorationStatus, "none">,
+  { description: string; tooltip: string }
+> = {
+  remoteNewer: {
+    description: "remote newer",
+    tooltip:
+      "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
+  },
+  localChanges: {
+    description: "Local Changes",
+    tooltip:
+      "local mirror に未反映の変更があります。Compare Local Mirror with GROWI または Upload Local Mirror to GROWI で確認してください。",
+  },
+  remoteChanges: {
+    description: "Remote Changes",
+    tooltip:
+      "remote 側の変更が local mirror に未取り込みです。Compare Local Mirror with GROWI または Take Remote Changes で確認してください。",
+  },
+  conflicts: {
+    description: "Conflicts",
+    tooltip:
+      "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+  },
+};
 
 function toPrefixUri(prefix: string): vscode.Uri {
   return vscode.Uri.parse(prefix === "/" ? "growi:/" : `growi:${prefix}/`);
@@ -62,7 +87,21 @@ function createPrefixRootItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   return item;
 }
 
-function createPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
+function buildPageContextValue(
+  kind: "page" | "directoryPage",
+  isBookmarked: boolean,
+): string {
+  if (kind === "page") {
+    return isBookmarked ? "growi.pageBookmarked" : "growi.page";
+  }
+  return isBookmarked ? "growi.directoryPageBookmarked" : "growi.directoryPage";
+}
+
+function createPageItem(
+  uri: vscode.Uri,
+  label: string,
+  isBookmarked: boolean,
+): PrefixTreeItem {
   const item = new vscode.TreeItem(
     label,
     vscode.TreeItemCollapsibleState.None,
@@ -70,7 +109,7 @@ function createPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   item.kind = "page";
   item.uri = uri;
   item.resourceUri = uri;
-  item.contextValue = "growi.page";
+  item.contextValue = buildPageContextValue("page", isBookmarked);
   item.iconPath = vscode.ThemeIcon.File;
   item.command = {
     command: "vscode.open",
@@ -83,31 +122,40 @@ function createPageItem(uri: vscode.Uri, label: string): PrefixTreeItem {
 function createDirectoryPageItem(
   uri: vscode.Uri,
   label: string,
+  isBookmarked: boolean,
 ): PrefixTreeItem {
-  const item = createPageItem(uri, label);
-  item.contextValue = "growi.directoryPage";
+  const item = createPageItem(uri, label, isBookmarked);
+  item.contextValue = buildPageContextValue("directoryPage", isBookmarked);
   return item;
 }
 
 function isDecoratedPageItem(item: PrefixTreeItem): boolean {
   return (
     item.contextValue === "growi.page" ||
-    item.contextValue === "growi.directoryPage"
+    item.contextValue === "growi.pageBookmarked" ||
+    item.contextValue === "growi.directoryPage" ||
+    item.contextValue === "growi.directoryPageBookmarked"
   );
 }
 
-function applyStaleDecoration(
+function applyOpenedPageDecoration(
   item: PrefixTreeItem,
   canonicalPath: string,
-  staleCanonicalPaths: ReadonlySet<string>,
+  pageDecorationStatuses: ReadonlyMap<string, OpenedPageDecorationStatus>,
 ): PrefixTreeItem {
-  if (!isDecoratedPageItem(item) || !staleCanonicalPaths.has(canonicalPath)) {
+  if (!isDecoratedPageItem(item)) {
     return item;
   }
 
+  const status = pageDecorationStatuses.get(canonicalPath);
+  if (!status || status === "none") {
+    return item;
+  }
+
+  const presentation = PAGE_DECORATION_PRESENTATIONS[status];
   item.iconPath = new vscode.ThemeIcon("warning");
-  item.description = STALE_PAGE_DESCRIPTION;
-  item.tooltip = STALE_PAGE_TOOLTIP;
+  item.description = presentation.description;
+  item.tooltip = presentation.tooltip;
   return item;
 }
 
@@ -154,7 +202,7 @@ function buildChildCandidates(
           kind: "page",
           label: getReservedDirectoryPageLabel(canonicalPath),
           uri: toChildUri(parent, `${name}.md`, vscode.FileType.File),
-          contextValue: "growi.directoryPage",
+          isDirectoryPage: true,
         });
       }
       continue;
@@ -182,7 +230,14 @@ export class GrowiPrefixTreeDataProvider
   >();
 
   readonly onDidChangeTreeData = this.emitter.event;
-  private readonly staleCanonicalPaths = new Set<string>();
+  private readonly livePageDecorationStatuses = new Map<
+    string,
+    OpenedPageDecorationStatus
+  >();
+  private readonly compareSnapshotDecorationStatuses = new Map<
+    string,
+    Exclude<OpenedPageDecorationStatus, "none" | "remoteNewer">
+  >();
 
   constructor(private readonly deps: PrefixTreeDeps) {}
 
@@ -190,13 +245,47 @@ export class GrowiPrefixTreeDataProvider
     this.emitter.fire(item);
   }
 
-  markCanonicalPathStale(canonicalPath: string): void {
+  setPageDecorationStatus(
+    canonicalPath: string,
+    status: OpenedPageDecorationStatus,
+  ): void {
     const normalized = normalizeCanonicalPath(canonicalPath);
     if (!normalized.ok) {
       return;
     }
 
-    this.staleCanonicalPaths.add(normalized.value);
+    if (status === "none") {
+      this.livePageDecorationStatuses.delete(normalized.value);
+      return;
+    }
+
+    this.livePageDecorationStatuses.set(normalized.value, status);
+  }
+
+  setCompareSnapshot(state: MirrorCompareScmState): void {
+    this.compareSnapshotDecorationStatuses.clear();
+    for (const resource of state.resources) {
+      const normalized = normalizeCanonicalPath(resource.canonicalPath);
+      if (!normalized.ok) {
+        continue;
+      }
+      this.compareSnapshotDecorationStatuses.set(
+        normalized.value,
+        resource.status === "LocalChanged"
+          ? "localChanges"
+          : resource.status === "RemoteChanged"
+            ? "remoteChanges"
+            : "conflicts",
+      );
+    }
+  }
+
+  clearCompareSnapshot(): void {
+    this.compareSnapshotDecorationStatuses.clear();
+  }
+
+  markCanonicalPathStale(canonicalPath: string): void {
+    this.setPageDecorationStatus(canonicalPath, "remoteNewer");
   }
 
   clearStaleState(canonicalPath: string): void {
@@ -206,12 +295,14 @@ export class GrowiPrefixTreeDataProvider
     }
 
     const prefix = normalized.value;
-    for (const staleCanonicalPath of [...this.staleCanonicalPaths]) {
+    for (const staleCanonicalPath of [
+      ...this.livePageDecorationStatuses.keys(),
+    ]) {
       if (
         staleCanonicalPath === prefix ||
         staleCanonicalPath.startsWith(`${prefix}/`)
       ) {
-        this.staleCanonicalPaths.delete(staleCanonicalPath);
+        this.livePageDecorationStatuses.delete(staleCanonicalPath);
       }
     }
   }
@@ -243,29 +334,57 @@ export class GrowiPrefixTreeDataProvider
         uri: vscode.Uri.parse(
           canonicalPath === "/" ? "growi:/.md" : `growi:${canonicalPath}.md`,
         ),
-        contextValue: "growi.directoryPage",
+        isDirectoryPage: true,
       });
     }
 
+    const decorationStatuses = this.buildDecorationStatuses();
     return candidates.map((candidate) => {
       if (candidate.kind === "directory") {
         return createDirectoryItem(candidate.uri, candidate.label);
       }
       const canonicalPath = normalizeCanonicalPath(candidate.uri.path);
       const normalizedPath = canonicalPath.ok ? canonicalPath.value : undefined;
-      if (candidate.contextValue === "growi.directoryPage") {
-        return applyStaleDecoration(
-          createDirectoryPageItem(candidate.uri, candidate.label),
+      const bookmarked = normalizedPath
+        ? this.deps.isBookmarked(normalizedPath)
+        : false;
+      if (candidate.isDirectoryPage) {
+        return applyOpenedPageDecoration(
+          createDirectoryPageItem(candidate.uri, candidate.label, bookmarked),
           normalizedPath ?? "",
-          this.staleCanonicalPaths,
+          decorationStatuses,
         );
       }
-      return applyStaleDecoration(
-        createPageItem(candidate.uri, candidate.label),
+      return applyOpenedPageDecoration(
+        createPageItem(candidate.uri, candidate.label, bookmarked),
         normalizedPath ?? "",
-        this.staleCanonicalPaths,
+        decorationStatuses,
       );
     });
+  }
+
+  private buildDecorationStatuses(): ReadonlyMap<
+    string,
+    OpenedPageDecorationStatus
+  > {
+    const merged = new Map<string, OpenedPageDecorationStatus>();
+
+    for (const [canonicalPath, status] of this
+      .compareSnapshotDecorationStatuses) {
+      merged.set(canonicalPath, status);
+    }
+
+    for (const [canonicalPath, status] of this.livePageDecorationStatuses) {
+      if (status === "remoteNewer") {
+        if (!merged.has(canonicalPath)) {
+          merged.set(canonicalPath, status);
+        }
+        continue;
+      }
+      merged.set(canonicalPath, status);
+    }
+
+    return merged;
   }
 }
 

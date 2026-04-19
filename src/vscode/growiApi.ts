@@ -14,6 +14,7 @@ import type {
   GrowiPageRenameMode,
   GrowiPageRenameResult,
   GrowiPageWriteResult,
+  GrowiReadFailureReason,
 } from "./fsProvider";
 import type {
   GrowiRevisionListResult,
@@ -233,6 +234,14 @@ function readNumberField(source: JsonObject, key: string): number | undefined {
   return undefined;
 }
 
+function readBooleanField(
+  source: JsonObject,
+  key: string,
+): boolean | undefined {
+  const value = source[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function readAttachmentUrlField(source: JsonObject): string | undefined {
   return (
     readStringField(source, "downloadUrl") ??
@@ -278,6 +287,67 @@ function buildAttachmentSummary(
     fileFormat,
     fileSize,
   };
+}
+
+function extractBookmarkEntries(
+  payload: JsonObject,
+): GrowiBookmarkEntry[] | undefined {
+  const candidates = [
+    payload.bookmarks,
+    payload.userRootBookmarks,
+    isObjectRecord(payload.userRootBookmarks)
+      ? payload.userRootBookmarks.bookmarks
+      : undefined,
+  ];
+
+  const bookmarkArray = candidates.find((value) => Array.isArray(value));
+  if (!Array.isArray(bookmarkArray)) {
+    return undefined;
+  }
+
+  const entries: GrowiBookmarkEntry[] = [];
+  for (const bookmark of bookmarkArray) {
+    if (!isObjectRecord(bookmark)) {
+      return undefined;
+    }
+    const page = bookmark.page;
+    if (!isObjectRecord(page)) {
+      return undefined;
+    }
+    const canonicalPath = readStringField(page, "path");
+    const pageId = readStringField(page, "_id") ?? readStringField(page, "id");
+    const addedAt =
+      readStringField(bookmark, "createdAt") ??
+      readStringField(bookmark, "updatedAt") ??
+      readStringField(page, "updatedAt") ??
+      readStringField(page, "createdAt");
+    if (!canonicalPath || !pageId || !addedAt) {
+      return undefined;
+    }
+    entries.push({ canonicalPath, pageId, addedAt });
+  }
+
+  return entries;
+}
+
+function classifyBookmarkFailureStatus(status: number): {
+  ok: false;
+  reason:
+    | "NotFound"
+    | "InvalidApiToken"
+    | "PermissionDenied"
+    | "ApiNotSupported";
+} {
+  if (status === 404) {
+    return { ok: false, reason: "NotFound" };
+  }
+  if (status === 401) {
+    return { ok: false, reason: "InvalidApiToken" };
+  }
+  if (status === 403) {
+    return { ok: false, reason: "PermissionDenied" };
+  }
+  return { ok: false, reason: "ApiNotSupported" };
 }
 
 function extractAttachmentArray(payload: JsonObject): JsonObject[] | undefined {
@@ -389,6 +459,21 @@ function buildHierarchyTemplateCandidatePaths(canonicalPath: string): string[] {
 }
 
 export type GrowiApiAdapter = {
+  getCurrentUser(
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<
+    | { ok: true; userId: string }
+    | { ok: false; reason: GrowiAccessFailureReason }
+  >;
+  getPageInfo(
+    canonicalPath: string,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<
+    | { ok: true; pageInfo?: GrowiCurrentPageInfo }
+    | { ok: false; reason: GrowiReadFailureReason }
+  >;
   fetchPageSnapshot(
     canonicalPath: string,
     baseUrl: string,
@@ -425,6 +510,22 @@ export type GrowiApiAdapter = {
     baseUrl: string,
     apiToken: string,
   ): Promise<GrowiAttachmentListResult>;
+  listBookmarks(
+    userId: string,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiBookmarkListResult>;
+  getBookmarkInfo(
+    pageId: string,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiBookmarkInfoResult>;
+  updateBookmark(
+    pageId: string,
+    shouldBookmark: boolean,
+    baseUrl: string,
+    apiToken: string,
+  ): Promise<GrowiBookmarkUpdateResult>;
   createPage(
     canonicalPath: string,
     body: string,
@@ -492,6 +593,24 @@ export type GrowiAttachmentSummary = {
 export type GrowiAttachmentListResult =
   | { ok: true; attachments: GrowiAttachmentSummary[] }
   | { ok: false; reason: GrowiAccessFailureReason };
+
+export type GrowiBookmarkEntry = {
+  canonicalPath: string;
+  pageId: string;
+  addedAt: string;
+};
+
+export type GrowiBookmarkListResult =
+  | { ok: true; bookmarks: GrowiBookmarkEntry[] }
+  | { ok: false; reason: GrowiAccessFailureReason };
+
+export type GrowiBookmarkInfoResult =
+  | { ok: true; isBookmarked: boolean; pageId: string }
+  | { ok: false; reason: GrowiReadFailureReason };
+
+export type GrowiBookmarkUpdateResult =
+  | { ok: true }
+  | { ok: false; reason: GrowiReadFailureReason };
 
 export interface GrowiApiDiagnosticsLogger {
   log(message: string): void;
@@ -936,6 +1055,69 @@ export function createGrowiApiAdapter(
   }
 
   return {
+    async getCurrentUser(baseUrl, apiToken) {
+      const requestInit = createGetRequestInit(apiToken);
+      let endpoint: URL;
+      try {
+        endpoint = new URL("/_api/v3/personal-setting", baseUrl);
+      } catch {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(endpoint, requestInit);
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(response)) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (response.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (response.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
+      if (!response.ok || response.status === 404 || response.status === 405) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const payload = await parseJsonObject(response);
+      if (!payload) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const currentUser = payload.currentUser;
+      if (!isObjectRecord(currentUser)) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      const userId =
+        readStringField(currentUser, "_id") ??
+        readStringField(currentUser, "id");
+      if (!userId) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      return { ok: true, userId } as const;
+    },
+
+    async getPageInfo(canonicalPath, baseUrl, apiToken) {
+      const pageResult = await fetchPageMetadata(
+        { kind: "path", canonicalPath },
+        baseUrl,
+        apiToken,
+      );
+      if (!pageResult.ok) {
+        return pageResult;
+      }
+      return {
+        ok: true,
+        pageInfo: buildCurrentPageInfo(pageResult.page, baseUrl),
+      } as const;
+    },
+
     async fetchPageSnapshot(canonicalPath, baseUrl, apiToken) {
       const snapshot = await fetchPageSnapshotData(
         canonicalPath,
@@ -1428,6 +1610,128 @@ export function createGrowiApiAdapter(
         details: `count=${attachments.length}`,
       });
       return { ok: true, attachments } as const;
+    },
+
+    async listBookmarks(userId, baseUrl, apiToken) {
+      const requestInit = createGetRequestInit(apiToken);
+      let endpoint: URL;
+      try {
+        endpoint = new URL(
+          `/_api/v3/bookmarks/${encodeURIComponent(userId)}`,
+          baseUrl,
+        );
+      } catch {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(endpoint, requestInit);
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(response)) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (response.status === 401) {
+        return { ok: false, reason: "InvalidApiToken" } as const;
+      }
+      if (response.status === 403) {
+        return { ok: false, reason: "PermissionDenied" } as const;
+      }
+      if (!response.ok || response.status === 404 || response.status === 405) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const payload = await parseJsonObject(response);
+      if (!payload) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const bookmarks = extractBookmarkEntries(payload);
+      if (!bookmarks) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      return {
+        ok: true,
+        bookmarks: bookmarks.sort((left, right) =>
+          right.addedAt.localeCompare(left.addedAt),
+        ),
+      } as const;
+    },
+
+    async getBookmarkInfo(pageId, baseUrl, apiToken) {
+      const requestInit = createGetRequestInit(apiToken);
+      let endpoint: URL;
+      try {
+        endpoint = new URL("/_api/v3/bookmarks/info", baseUrl);
+      } catch {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      endpoint.searchParams.set("pageId", pageId);
+
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(endpoint, requestInit);
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(response)) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (!response.ok) {
+        return classifyBookmarkFailureStatus(response.status);
+      }
+
+      const payload = await parseJsonObject(response);
+      if (!payload) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      const isBookmarked = readBooleanField(payload, "isBookmarked");
+      const responsePageId = readStringField(payload, "pageId") ?? pageId;
+      if (isBookmarked === undefined || !responsePageId) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      return { ok: true, isBookmarked, pageId: responsePageId } as const;
+    },
+
+    async updateBookmark(pageId, shouldBookmark, baseUrl, apiToken) {
+      let endpoint: URL;
+      try {
+        endpoint = new URL("/_api/v3/bookmarks", baseUrl);
+      } catch {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(endpoint, {
+          body: JSON.stringify({ pageId, bool: shouldBookmark }),
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${apiToken}`,
+            "Content-Type": "application/json",
+          },
+          method: "PUT",
+          redirect: "manual",
+        });
+      } catch {
+        return { ok: false, reason: "ConnectionFailed" } as const;
+      }
+
+      if (isLoginRedirectResponse(response)) {
+        return { ok: false, reason: "ApiNotSupported" } as const;
+      }
+      if (!response.ok) {
+        return classifyBookmarkFailureStatus(response.status);
+      }
+
+      return { ok: true } as const;
     },
 
     async createPage(canonicalPath, body, baseUrl, apiToken) {

@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  type BookmarkListEntry,
+  buildOpenPageSearchEntry,
   type CommandDeps,
+  createAddCurrentPageBookmarkCommand,
   createAddPrefixCommand,
   createClearPrefixesCommand,
   createCompareLocalBundleWithGrowiCommand,
@@ -36,8 +39,13 @@ import {
   createOpenPrefixRootPageCommand,
   createRefreshCurrentPageCommand,
   createRefreshListingCommand,
+  createRemoveCurrentPageBookmarkCommand,
   createRenamePageCommand,
+  createScmCompareMirrorAgainCommand,
+  createScmTakeRemoteMirrorResourcesCommand,
+  createScmUploadMirrorResourcesCommand,
   createShowBacklinksCommand,
+  createShowBookmarksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageAttachmentsCommand,
   createShowCurrentPageInfoCommand,
@@ -47,7 +55,9 @@ import {
   createUploadLocalBundleToGrowiCommand,
   GROWI_COMMANDS,
   GROWI_SECRET_KEYS,
+  isOpenPageDirectInputPreferred,
   normalizeBaseUrl,
+  rankOpenPageSearchEntries,
   type StartEditBootstrapResult,
   type UriLike,
 } from "../../src/vscode/commands";
@@ -62,8 +72,53 @@ function createDeps() {
     ReturnType<CommandDeps["listAttachments"]>
   >;
   type RevisionReadResult = Awaited<ReturnType<CommandDeps["readRevision"]>>;
+  type BookmarkListResult = Awaited<ReturnType<CommandDeps["getBookmarks"]>>;
+  type BookmarkQuickPickResult = Awaited<
+    ReturnType<CommandDeps["showBookmarkQuickPick"]>
+  >;
+  type OpenPageQuickPickResult = Awaited<
+    ReturnType<CommandDeps["showOpenPageQuickPick"]>
+  >;
+  type MirrorCompareSourceControlState = ReturnType<
+    NonNullable<CommandDeps["getMirrorCompareSourceControlState"]>
+  >;
 
   return {
+    addBookmark: vi.fn(
+      async (
+        canonicalPath: string,
+        pageId?: string,
+      ): Promise<
+        | {
+            ok: true;
+            value: readonly BookmarkListEntry[];
+            added: boolean;
+          }
+        | {
+            ok: false;
+            reason:
+              | "InvalidBaseUrl"
+              | "InvalidPath"
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed"
+              | "NotFound";
+          }
+      > => ({
+        ok: true,
+        value: [
+          {
+            canonicalPath,
+            addedAt: "2026-04-17T00:00:00.000Z",
+            pageId: pageId ?? "page-1",
+          },
+        ],
+        added: true,
+      }),
+    ),
     addPrefix: vi.fn(
       async (
         _rawPrefix: string,
@@ -156,6 +211,41 @@ function createDeps() {
         | { ok: false; reason: "InvalidBaseUrl" }
       > => ({ ok: true, value: [], cleared: true, removed: ["/team/dev"] }),
     ),
+    deleteBookmark: vi.fn(
+      async (
+        canonicalPath: string,
+        pageId?: string,
+      ): Promise<
+        | {
+            ok: true;
+            value: readonly BookmarkListEntry[];
+            removed: boolean;
+          }
+        | {
+            ok: false;
+            reason:
+              | "InvalidBaseUrl"
+              | "InvalidPath"
+              | "BaseUrlNotConfigured"
+              | "ApiTokenNotConfigured"
+              | "InvalidApiToken"
+              | "PermissionDenied"
+              | "ApiNotSupported"
+              | "ConnectionFailed"
+              | "NotFound";
+          }
+      > => ({
+        ok: true,
+        value: [
+          {
+            canonicalPath,
+            addedAt: "2026-04-17T00:00:00.000Z",
+            pageId: pageId ?? "page-1",
+          },
+        ],
+        removed: true,
+      }),
+    ),
     deletePrefix: vi.fn(
       async (
         _rawPrefix: string,
@@ -198,7 +288,14 @@ function createDeps() {
         | undefined => undefined,
     ),
     getLocalWorkspaceRoot: vi.fn((): string | undefined => "/workspace"),
+    getBookmarks: vi.fn(
+      async (): Promise<BookmarkListResult> => ({
+        ok: true,
+        value: [],
+      }),
+    ),
     getRegisteredPrefixes: vi.fn((): string[] => []),
+    isBookmarked: vi.fn((_canonicalPath: string) => false),
     invalidateReadDirectoryCache: vi.fn(),
     invalidateReadFileCache: vi.fn(),
     listPages: vi.fn(
@@ -260,6 +357,11 @@ function createDeps() {
         _resources: readonly [UriLike, UriLike, UriLike][],
       ): Promise<void> => {},
     ),
+    clearMirrorCompareSourceControlState: vi.fn(),
+    clearMirrorCompareTreeSnapshotState: vi.fn(),
+    getMirrorCompareSourceControlState: vi.fn<
+      () => MirrorCompareSourceControlState
+    >(() => undefined),
     openLocalFile: vi.fn(async (_path: string): Promise<void> => {}),
     openUri: vi.fn(async (_uri: string): Promise<void> => {}),
     openExternalUri: vi.fn(async (_uri: string): Promise<void> => {}),
@@ -353,6 +455,12 @@ function createDeps() {
     showInputBox: vi.fn(
       async (_options): Promise<string | undefined> => undefined,
     ),
+    showBookmarkQuickPick: vi.fn(
+      async (): Promise<BookmarkQuickPickResult> => undefined,
+    ),
+    showOpenPageQuickPick: vi.fn(
+      async (): Promise<OpenPageQuickPickResult> => undefined,
+    ),
     showClearPrefixesConfirmation: vi.fn(
       async (
         _baseUrl: string,
@@ -372,6 +480,8 @@ function createDeps() {
         _options: { placeHolder: string },
       ): Promise<QuickPickResult> => undefined,
     ),
+    setMirrorCompareSourceControlState: vi.fn(),
+    setMirrorCompareTreeSnapshotState: vi.fn(),
     showWarningMessage: vi.fn(),
     storeSecret: vi.fn(
       async (_key: string, _value: string): Promise<void> => {},
@@ -1233,36 +1343,34 @@ describe("createOpenPageCommand", () => {
       ok: true,
       paths: ["/team/dev/guide", "/team/dev/spec"],
     });
-    deps.showQuickPick.mockResolvedValue({
-      label: "spec",
-      description: "/team/dev/spec",
-      canonicalPath: "/team/dev/spec",
-    });
+    deps.showOpenPageQuickPick.mockResolvedValue("/team/dev/spec");
 
     await createOpenPageCommand(deps)();
 
-    expect(deps.showQuickPick).toHaveBeenCalledWith(
+    expect(deps.showOpenPageQuickPick).toHaveBeenCalledWith(
       [
         {
           label: "guide",
           description: "/team/dev/guide",
           canonicalPath: "/team/dev/guide",
+          basenameLower: "guide",
+          canonicalPathLower: "/team/dev/guide",
+          pathSegmentsLower: ["team", "dev", "guide"],
         },
         {
           label: "spec",
           description: "/team/dev/spec",
           canonicalPath: "/team/dev/spec",
-        },
-        {
-          label: "URL / path を直接入力",
-          description: "候補に無いページは直接入力で開きます。",
-          action: "directInput",
-          alwaysShow: true,
+          basenameLower: "spec",
+          canonicalPathLower: "/team/dev/spec",
+          pathSegmentsLower: ["team", "dev", "spec"],
         },
       ],
       {
         placeHolder:
           "登録済み Prefix 配下からページを絞り込んで選択してください。",
+        directInputLabel: "URL / path を直接入力",
+        directInputDescription: "候補に無いページは直接入力で開きます。",
       },
     );
     expect(deps.showInputBox).not.toHaveBeenCalled();
@@ -1276,12 +1384,7 @@ describe("createOpenPageCommand", () => {
       ok: true,
       paths: ["/team/dev/spec"],
     });
-    deps.showQuickPick.mockResolvedValue({
-      label: "URL / path を直接入力",
-      description: "候補に無いページは直接入力で開きます。",
-      action: "directInput",
-      alwaysShow: true,
-    });
+    deps.showOpenPageQuickPick.mockResolvedValue({ action: "directInput" });
     deps.showInputBox.mockResolvedValue("/team/dev/spec");
 
     await createOpenPageCommand(deps)();
@@ -1306,8 +1409,99 @@ describe("createOpenPageCommand", () => {
 
     await createOpenPageCommand(deps)();
 
-    expect(deps.showQuickPick).not.toHaveBeenCalled();
+    expect(deps.showOpenPageQuickPick).not.toHaveBeenCalled();
     expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
+  });
+});
+
+describe("rankOpenPageSearchEntries", () => {
+  it("keeps basename then canonicalPath ordering when query is empty", () => {
+    const ranked = rankOpenPageSearchEntries(
+      [
+        buildOpenPageSearchEntry("/team/dev/spec"),
+        buildOpenPageSearchEntry("/team/dev/docs"),
+        buildOpenPageSearchEntry("/team/dev/guide"),
+      ],
+      "",
+    );
+
+    expect(ranked.map((item) => item.canonicalPath)).toEqual([
+      "/team/dev/spec",
+      "/team/dev/docs",
+      "/team/dev/guide",
+    ]);
+  });
+
+  it("prioritizes basename exact match over prefix and path matches", () => {
+    const ranked = rankOpenPageSearchEntries(
+      [
+        buildOpenPageSearchEntry("/team/dev/spec"),
+        buildOpenPageSearchEntry("/team/dev/spec-guide"),
+        buildOpenPageSearchEntry("/team/specs/overview"),
+      ],
+      "spec",
+    );
+
+    expect(ranked.map((item) => item.canonicalPath)).toEqual([
+      "/team/dev/spec",
+      "/team/dev/spec-guide",
+      "/team/specs/overview",
+    ]);
+  });
+
+  it("matches path segment prefixes before basename substring matches", () => {
+    const ranked = rankOpenPageSearchEntries(
+      [
+        buildOpenPageSearchEntry("/team/dev/spec"),
+        buildOpenPageSearchEntry("/team/notes/guide-devlog"),
+      ],
+      "dev",
+    );
+
+    expect(ranked.map((item) => item.canonicalPath)).toEqual([
+      "/team/dev/spec",
+      "/team/notes/guide-devlog",
+    ]);
+  });
+
+  it("matches queries case-insensitively", () => {
+    const ranked = rankOpenPageSearchEntries(
+      [buildOpenPageSearchEntry("/team/dev/SpecGuide")],
+      "spec",
+    );
+
+    expect(ranked.map((item) => item.canonicalPath)).toEqual([
+      "/team/dev/SpecGuide",
+    ]);
+  });
+
+  it("returns no candidates when nothing matches", () => {
+    const ranked = rankOpenPageSearchEntries(
+      [buildOpenPageSearchEntry("/team/dev/spec")],
+      "zzz",
+    );
+
+    expect(ranked).toEqual([]);
+  });
+});
+
+describe("isOpenPageDirectInputPreferred", () => {
+  it("returns false for empty input and basename-like queries", () => {
+    expect(isOpenPageDirectInputPreferred("")).toBe(false);
+    expect(isOpenPageDirectInputPreferred("spec")).toBe(false);
+  });
+
+  it("returns true for root-relative path input", () => {
+    expect(isOpenPageDirectInputPreferred("/team/dev/spec")).toBe(true);
+  });
+
+  it("returns true for absolute http and https URLs", () => {
+    expect(
+      isOpenPageDirectInputPreferred("https://growi.example.com/team/dev/spec"),
+    ).toBe(true);
+    expect(
+      isOpenPageDirectInputPreferred("http://growi.example.com/team/dev/spec"),
+    ).toBe(true);
   });
 });
 
@@ -3841,6 +4035,98 @@ describe("bundle commands", () => {
         "MissingLocal: /team/dev/spec/missing",
       ].join("\n"),
     );
+    expect(deps.setMirrorCompareSourceControlState).toHaveBeenCalledWith({
+      currentCanonicalPath: "/team/dev/spec",
+      targetScope: "subtree",
+      resources: [
+        {
+          canonicalPath: "/team/dev/spec/local-only",
+          status: "LocalChanged",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/spec/local-only.md",
+          },
+        },
+        {
+          canonicalPath: "/team/dev/spec/conflict",
+          status: "Conflict",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/spec/conflict.md",
+          },
+        },
+        {
+          canonicalPath: "/team/dev/spec/remote-only",
+          status: "RemoteChanged",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/spec/remote-only.md",
+          },
+        },
+      ],
+    });
+    expect(deps.setMirrorCompareTreeSnapshotState).toHaveBeenCalledWith({
+      currentCanonicalPath: "/team/dev/spec",
+      targetScope: "subtree",
+      resources: [
+        {
+          canonicalPath: "/team/dev/spec/local-only",
+          status: "LocalChanged",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/local-only.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/spec/local-only.md",
+          },
+        },
+        {
+          canonicalPath: "/team/dev/spec/conflict",
+          status: "Conflict",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/conflict.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/spec/conflict.md",
+          },
+        },
+        {
+          canonicalPath: "/team/dev/spec/remote-only",
+          status: "RemoteChanged",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
+            fsPath: `${createMirrorRootPath("/team/dev/spec")}/remote-only.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/spec/remote-only.md",
+          },
+        },
+      ],
+    });
+    expect(deps.clearMirrorCompareSourceControlState).not.toHaveBeenCalled();
+    expect(deps.clearMirrorCompareTreeSnapshotState).not.toHaveBeenCalled();
     expect(deps.showInformationMessage).not.toHaveBeenCalled();
   });
 
@@ -3894,6 +4180,57 @@ describe("bundle commands", () => {
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
       "Compare Local Mirror with GROWI で changes editor の対象はありませんでした。",
     );
+    expect(deps.clearMirrorCompareSourceControlState).toHaveBeenCalledTimes(1);
+    expect(deps.clearMirrorCompareTreeSnapshotState).toHaveBeenCalledTimes(1);
+    expect(deps.setMirrorCompareSourceControlState).not.toHaveBeenCalled();
+    expect(deps.setMirrorCompareTreeSnapshotState).not.toHaveBeenCalled();
+  });
+
+  it("clears SCM compare state when opening the changes editor fails", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.openChanges.mockRejectedValue(new Error("open failed"));
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/team/dev/spec")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/team/dev/spec",
+            body: "# remote old\n",
+            baseRevisionId: "revision:/team/dev/spec:001",
+          },
+        ]);
+      }
+      if (filePath.endsWith("__spec__.md")) {
+        return "# local changed\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/team/dev/spec",
+        baseRevisionId: "revision:/team/dev/spec:001",
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody: "# remote old\n",
+      },
+    });
+
+    await expect(
+      createCompareLocalBundleWithGrowiCommand(deps)(
+        createUri("growi", "/team/dev/spec.md"),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(deps.showErrorMessage).toHaveBeenCalledWith(
+      "mirror の差分ビューを開けませんでした。",
+    );
+    expect(deps.clearMirrorCompareSourceControlState).toHaveBeenCalledTimes(1);
+    expect(deps.clearMirrorCompareTreeSnapshotState).toHaveBeenCalledTimes(1);
+    expect(deps.setMirrorCompareSourceControlState).not.toHaveBeenCalled();
+    expect(deps.setMirrorCompareTreeSnapshotState).not.toHaveBeenCalled();
   });
 
   it("reuses an ancestor prefix mirror for page compare and limits the scope to the selected page", async () => {
@@ -4426,6 +4763,279 @@ describe("bundle commands", () => {
     });
   });
 
+  it("uploads selected local-change resources from SCM page by page", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/sample/hello",
+            body: "# old hello\n",
+            baseRevisionId: "revision:/sample/hello:001",
+          },
+        ]);
+      }
+      if (
+        filePath === `${createMirrorRootPath("/sample/hello")}/__hello__.md`
+      ) {
+        return "# local hello\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => {
+      const callCount = deps.bootstrapEditSession.mock.calls.filter(
+        ([path]) => path === canonicalPath,
+      ).length;
+      return {
+        ok: true,
+        value: {
+          pageId: "page:/sample/hello",
+          baseRevisionId:
+            callCount === 1
+              ? "revision:/sample/hello:001"
+              : "revision:/sample/hello:002",
+          baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+          baseBody: callCount === 1 ? "# old hello\n" : "# local hello\n",
+        },
+      };
+    });
+
+    const results = await createScmUploadMirrorResourcesCommand(deps)([
+      {
+        canonicalPath: "/sample/hello",
+        status: "LocalChanged",
+        localFileUri: {
+          scheme: "file",
+          path: `${createMirrorRootPath("/sample/hello")}/__hello__.md`,
+          fsPath: `${createMirrorRootPath("/sample/hello")}/__hello__.md`,
+        },
+        remoteUri: {
+          scheme: "growi",
+          path: "/sample/hello.md",
+        },
+      },
+    ]);
+
+    expect(results).toEqual([
+      { canonicalPath: "/sample/hello", status: "Uploaded" },
+    ]);
+    expect(deps.writePage).toHaveBeenCalledWith(
+      "/sample/hello",
+      "# local hello\n",
+      expect.objectContaining({
+        baseRevisionId: "revision:/sample/hello:001",
+      }),
+    );
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      [
+        "Upload Local Mirror to GROWI を完了しました。",
+        "Uploaded: /sample/hello",
+      ].join("\n"),
+    );
+  });
+
+  it("takes selected remote-change resources into the local mirror", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath ===
+        `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest([
+          {
+            canonicalPath: "/sample/hello",
+            body: "# old hello\n",
+            baseRevisionId: "revision:/sample/hello:001",
+          },
+        ]);
+      }
+      if (
+        filePath === `${createMirrorRootPath("/sample/hello")}/__hello__.md`
+      ) {
+        return "# old hello\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockResolvedValue({
+      ok: true,
+      value: {
+        pageId: "page:/sample/hello",
+        baseRevisionId: "revision:/sample/hello:002",
+        baseUpdatedAt: "2026-03-09T00:00:00.000Z",
+        baseBody: "# remote newer\n",
+      },
+    });
+
+    const results = await createScmTakeRemoteMirrorResourcesCommand(deps)([
+      {
+        canonicalPath: "/sample/hello",
+        status: "RemoteChanged",
+        localFileUri: {
+          scheme: "file",
+          path: `${createMirrorRootPath("/sample/hello")}/__hello__.md`,
+          fsPath: `${createMirrorRootPath("/sample/hello")}/__hello__.md`,
+        },
+        remoteUri: {
+          scheme: "growi",
+          path: "/sample/hello.md",
+        },
+      },
+    ]);
+
+    expect(results).toEqual([
+      { canonicalPath: "/sample/hello", status: "TakenRemote" },
+    ]);
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample/hello")}/__hello__.md`,
+      "# remote newer\n",
+    );
+    expect(deps.writeLocalFile).toHaveBeenCalledWith(
+      `${createMirrorRootPath("/sample/hello")}/.growi-mirror.json`,
+      expect.any(String),
+    );
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      [
+        "Take Remote Changes を完了しました。",
+        "TakenRemote: /sample/hello",
+      ].join("\n"),
+    );
+  });
+
+  it("re-runs the last compare target from SCM Compare Again", async () => {
+    const deps = createDeps();
+    deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
+    deps.getMirrorCompareSourceControlState.mockReturnValue({
+      currentCanonicalPath: "/sample",
+      targetScope: "subtree",
+      resources: [],
+    });
+    deps.readLocalFile.mockImplementation(async (filePath: string) => {
+      if (
+        filePath === `${createMirrorRootPath("/sample")}/.growi-mirror.json`
+      ) {
+        return createBundleManifest(
+          [
+            {
+              canonicalPath: "/sample",
+              body: "# sample\n",
+              baseRevisionId: "revision:/sample:001",
+            },
+            {
+              canonicalPath: "/sample/child",
+              body: "# old child\n",
+              baseRevisionId: "revision:/sample/child:001",
+            },
+          ],
+          { rootCanonicalPath: "/sample" },
+        );
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/__sample__.md`) {
+        return "# sample\n";
+      }
+      if (filePath === `${createMirrorRootPath("/sample")}/child.md`) {
+        return "# local child\n";
+      }
+      throw new Error(`unexpected file: ${filePath}`);
+    });
+    deps.bootstrapEditSession.mockImplementation(async (canonicalPath) => ({
+      ok: true,
+      value: {
+        pageId: `page:${canonicalPath}`,
+        baseRevisionId:
+          canonicalPath === "/sample/child"
+            ? "revision:/sample/child:001"
+            : `revision:${canonicalPath}:001`,
+        baseUpdatedAt: "2026-03-08T00:00:00.000Z",
+        baseBody:
+          canonicalPath === "/sample/child" ? "# remote child\n" : "# sample\n",
+      },
+    }));
+
+    const results = await createScmCompareMirrorAgainCommand(deps)();
+
+    expect(results).toEqual([
+      { canonicalPath: "/sample", status: "Unchanged" },
+      { canonicalPath: "/sample/child", status: "LocalChanged" },
+    ]);
+    expect(deps.openChanges).toHaveBeenCalledWith(
+      "GROWI Mirror Diff: /sample",
+      expect.any(Array),
+    );
+    expect(deps.setMirrorCompareSourceControlState).toHaveBeenCalledWith({
+      currentCanonicalPath: "/sample",
+      targetScope: "subtree",
+      resources: [
+        {
+          canonicalPath: "/sample/child",
+          status: "LocalChanged",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/sample")}/child.md`,
+            fsPath: `${createMirrorRootPath("/sample")}/child.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/sample/child.md",
+          },
+        },
+      ],
+    });
+    expect(deps.setMirrorCompareTreeSnapshotState).toHaveBeenCalledWith({
+      currentCanonicalPath: "/sample",
+      targetScope: "subtree",
+      resources: [
+        {
+          canonicalPath: "/sample/child",
+          status: "LocalChanged",
+          localFileUri: {
+            scheme: "file",
+            path: `${createMirrorRootPath("/sample")}/child.md`,
+            fsPath: `${createMirrorRootPath("/sample")}/child.md`,
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/sample/child.md",
+          },
+        },
+      ],
+    });
+  });
+
+  it("skips non-local SCM selections when uploading", async () => {
+    const deps = createDeps();
+
+    const results = await createScmUploadMirrorResourcesCommand(deps)([
+      {
+        canonicalPath: "/sample/conflict",
+        status: "Conflict",
+        localFileUri: {
+          scheme: "file",
+          path: "/workspace/.growi-mirrors/growi.example.com/sample/conflict.md",
+          fsPath:
+            "/workspace/.growi-mirrors/growi.example.com/sample/conflict.md",
+        },
+        remoteUri: {
+          scheme: "growi",
+          path: "/sample/conflict.md",
+        },
+      },
+    ]);
+
+    expect(results).toEqual([]);
+    expect(deps.writePage).not.toHaveBeenCalled();
+    expect(deps.showWarningMessage).toHaveBeenCalledWith(
+      [
+        "Upload Local Changes では一部選択項目を対象外として skip しました。",
+        "Conflict: /sample/conflict",
+      ].join("\n"),
+    );
+  });
+
   it("does not read legacy mirror roots when uploading without a new root", async () => {
     const deps = createDeps();
     deps.getBaseUrl.mockReturnValue("https://growi.example.com/");
@@ -4584,6 +5194,40 @@ describe("createShowBacklinksCommand", () => {
 });
 
 describe("createShowCurrentPageActionsCommand", () => {
+  it("includes bookmark add or remove depending on the current page state", async () => {
+    const executeCommand = vi.fn(async () => {});
+    const showQuickPick = vi.fn(async () => ({
+      label: "ブックマークに追加",
+      command: GROWI_COMMANDS.addCurrentPageBookmark,
+    }));
+
+    await createShowCurrentPageActionsCommand({
+      getActiveEditorUri() {
+        return createUri("growi", "/team/dev/spec.md");
+      },
+      isBookmarked(canonicalPath: string) {
+        return canonicalPath === "/team/dev/guide";
+      },
+      executeCommand,
+      showErrorMessage: vi.fn(),
+      showQuickPick,
+    })();
+
+    expect(showQuickPick).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "ブックマークに追加",
+          command: GROWI_COMMANDS.addCurrentPageBookmark,
+        }),
+      ]),
+      { placeHolder: "現在ページに対して実行する操作を選択してください。" },
+    );
+    expect(executeCommand).toHaveBeenCalledWith(
+      GROWI_COMMANDS.addCurrentPageBookmark,
+      createUri("growi", "/team/dev/spec.md"),
+    );
+  });
+
   it("includes delete, rename and revision history diff in current page actions", async () => {
     const executeCommand = vi.fn(async () => {});
     const showQuickPick = vi.fn(async () => ({
@@ -4594,6 +5238,9 @@ describe("createShowCurrentPageActionsCommand", () => {
     await createShowCurrentPageActionsCommand({
       getActiveEditorUri() {
         return createUri("growi", "/team/dev/spec.md");
+      },
+      isBookmarked() {
+        return false;
       },
       executeCommand,
       showErrorMessage: vi.fn(),
@@ -4618,6 +5265,10 @@ describe("createShowCurrentPageActionsCommand", () => {
           label: "添付一覧を表示",
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         }),
+        expect.objectContaining({
+          label: "ブックマークに追加",
+          command: GROWI_COMMANDS.addCurrentPageBookmark,
+        }),
       ]),
       { placeHolder: "現在ページに対して実行する操作を選択してください。" },
     );
@@ -4625,6 +5276,243 @@ describe("createShowCurrentPageActionsCommand", () => {
       GROWI_COMMANDS.deletePage,
       createUri("growi", "/team/dev/spec.md"),
     );
+  });
+});
+
+describe("createAddCurrentPageBookmarkCommand", () => {
+  it("adds the current growi page to bookmarks", async () => {
+    const deps = createDeps();
+
+    await createAddCurrentPageBookmarkCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.addBookmark).toHaveBeenCalledWith("/team/dev/spec", undefined);
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "現在ページをブックマークに追加しました。",
+    );
+  });
+
+  it("accepts explorer tree item targets", async () => {
+    const deps = createDeps();
+
+    await createAddCurrentPageBookmarkCommand(deps)({
+      uri: createUri("growi", "/team/dev/spec.md"),
+    });
+
+    expect(deps.addBookmark).toHaveBeenCalledWith("/team/dev/spec", undefined);
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows information when the current page is already bookmarked", async () => {
+    const deps = createDeps();
+    deps.addBookmark.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          canonicalPath: "/team/dev/spec",
+          addedAt: "2026-04-17T00:00:00.000Z",
+          pageId: "page-1",
+        },
+      ],
+      added: false,
+    });
+
+    await createAddCurrentPageBookmarkCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.refreshPrefixTree).not.toHaveBeenCalled();
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "現在ページは既にブックマーク済みです。",
+    );
+  });
+});
+
+describe("createRemoveCurrentPageBookmarkCommand", () => {
+  it("removes the current growi page from bookmarks", async () => {
+    const deps = createDeps();
+
+    await createRemoveCurrentPageBookmarkCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.deleteBookmark).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      undefined,
+    );
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "ブックマークから削除しました。",
+    );
+  });
+
+  it("accepts explorer tree item targets", async () => {
+    const deps = createDeps();
+
+    await createRemoveCurrentPageBookmarkCommand(deps)({
+      uri: createUri("growi", "/team/dev/spec.md"),
+    });
+
+    expect(deps.deleteBookmark).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      undefined,
+    );
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows information when the current page is not bookmarked", async () => {
+    const deps = createDeps();
+    deps.deleteBookmark.mockResolvedValue({
+      ok: true,
+      value: [],
+      removed: false,
+    });
+
+    await createRemoveCurrentPageBookmarkCommand(deps)(
+      createUri("growi", "/team/dev/spec.md"),
+    );
+
+    expect(deps.refreshPrefixTree).not.toHaveBeenCalled();
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "対象ページはブックマークされていません。",
+    );
+  });
+});
+
+describe("createShowBookmarksCommand", () => {
+  it("shows bookmark quick pick and opens the selected page", async () => {
+    const deps = createDeps();
+    deps.getBookmarks.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          canonicalPath: "/team/dev/spec",
+          addedAt: "2026-04-17T00:00:00.000Z",
+          pageId: "page-1",
+        },
+      ],
+    });
+    deps.showBookmarkQuickPick.mockResolvedValue({
+      action: "open",
+      canonicalPath: "/team/dev/spec",
+      pageId: "page-1",
+    });
+
+    await createShowBookmarksCommand(deps)();
+
+    expect(deps.showBookmarkQuickPick).toHaveBeenCalledWith(
+      [
+        {
+          label: "spec",
+          description: "/team/dev/spec",
+          detail: "追加日時: 2026-04-17T00:00:00.000Z",
+          canonicalPath: "/team/dev/spec",
+          addedAt: "2026-04-17T00:00:00.000Z",
+          pageId: "page-1",
+        },
+      ],
+      { placeHolder: "ブックマークからページを選択してください。" },
+    );
+    expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
+  });
+
+  it("removes a bookmark selected from the quick pick", async () => {
+    const deps = createDeps();
+    deps.getBookmarks.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          canonicalPath: "/team/dev/spec",
+          addedAt: "2026-04-17T00:00:00.000Z",
+          pageId: "page-1",
+        },
+      ],
+    });
+    deps.showBookmarkQuickPick.mockResolvedValue({
+      action: "remove",
+      canonicalPath: "/team/dev/spec",
+      pageId: "page-1",
+    });
+
+    await createShowBookmarksCommand(deps)();
+
+    expect(deps.deleteBookmark).toHaveBeenCalledWith(
+      "/team/dev/spec",
+      "page-1",
+    );
+    expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "ブックマークから削除しました。",
+    );
+    expect(deps.openUri).not.toHaveBeenCalled();
+  });
+
+  it("shows outsidePrefix status in bookmark detail", async () => {
+    const deps = createDeps();
+    deps.getBookmarks.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          canonicalPath: "/team/dev/spec",
+          addedAt: "2026-04-17T00:00:00.000Z",
+          pageId: "page-1",
+          status: "outsidePrefix",
+        },
+      ],
+    });
+    deps.showBookmarkQuickPick.mockResolvedValue(undefined);
+
+    await createShowBookmarksCommand(deps)();
+
+    expect(deps.showBookmarkQuickPick).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          detail: "状態: prefix未登録 ・ 追加日時: 2026-04-17T00:00:00.000Z",
+        }),
+      ],
+      { placeHolder: "ブックマークからページを選択してください。" },
+    );
+  });
+
+  it("shows unresolvable status in bookmark detail", async () => {
+    const deps = createDeps();
+    deps.getBookmarks.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          canonicalPath: "/team/dev/spec",
+          addedAt: "2026-04-17T00:00:00.000Z",
+          pageId: "page-1",
+          status: "unresolvable",
+        },
+      ],
+    });
+    deps.showBookmarkQuickPick.mockResolvedValue(undefined);
+
+    await createShowBookmarksCommand(deps)();
+
+    expect(deps.showBookmarkQuickPick).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          detail: "状態: 開けない ・ 追加日時: 2026-04-17T00:00:00.000Z",
+        }),
+      ],
+      { placeHolder: "ブックマークからページを選択してください。" },
+    );
+  });
+
+  it("shows information when there are no bookmarks", async () => {
+    const deps = createDeps();
+    deps.getBookmarks.mockResolvedValue({ ok: true, value: [] });
+
+    await createShowBookmarksCommand(deps)();
+
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      "ブックマークはありません。現在ページで Add Current Page to Bookmarks を実行してください。",
+    );
+    expect(deps.showBookmarkQuickPick).not.toHaveBeenCalled();
   });
 });
 

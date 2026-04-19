@@ -70,6 +70,18 @@ vi.mock("vscode", () => ({
     })),
     registerFileSystemProvider,
   },
+  scm: {
+    createSourceControl: vi.fn(() => ({
+      count: 0,
+      inputBox: {
+        visible: true,
+      },
+      createResourceGroup: vi.fn(() => ({
+        resourceStates: [],
+      })),
+      dispose: vi.fn(),
+    })),
+  },
 }));
 
 import * as vscode from "vscode";
@@ -305,7 +317,7 @@ describe("GrowiFileSystemProvider", () => {
       expect.any(GrowiFileSystemProvider),
       { isCaseSensitive: true },
     );
-    expect(context.subscriptions.length).toBe(7);
+    expect(context.subscriptions.length).toBe(8);
   });
 
   it("reads file via bearer token API in two fetch steps when activated", async () => {

@@ -4,6 +4,8 @@ import * as vscode from "vscode";
 import { buildGrowiUriFromInput } from "./core/uri";
 import { createGrowiAssetProxy } from "./vscode/assetProxy";
 import {
+  type BookmarkListEntry,
+  createAddCurrentPageBookmarkCommand,
   createAddPrefixCommand,
   createClearPrefixesCommand,
   createCompareLocalBundleWithGrowiCommand,
@@ -38,8 +40,13 @@ import {
   createRefreshCurrentPageCommand,
   createRefreshListingCommand,
   createRefreshLocalMirrorCommand,
+  createRemoveCurrentPageBookmarkCommand,
   createRenamePageCommand,
+  createScmCompareMirrorAgainCommand,
+  createScmTakeRemoteMirrorResourcesCommand,
+  createScmUploadMirrorResourcesCommand,
   createShowBacklinksCommand,
+  createShowBookmarksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageAttachmentsCommand,
   createShowCurrentPageInfoCommand,
@@ -49,6 +56,9 @@ import {
   createUploadLocalBundleToGrowiCommand,
   GROWI_COMMANDS,
   GROWI_SECRET_KEYS,
+  isOpenPageDirectInputPreferred,
+  type OpenPageSearchEntry,
+  rankOpenPageSearchEntries,
 } from "./vscode/commands";
 import { createGrowiDocumentSymbolProvider } from "./vscode/documentSymbols";
 import {
@@ -69,6 +79,7 @@ import {
   type GrowiPageWriter,
   type GrowiSaveFailureNotifier,
 } from "./vscode/fsProvider";
+import type { GrowiBookmarkEntry } from "./vscode/growiApi";
 import { createGrowiApiAdapter } from "./vscode/growiApi";
 import {
   collectGrowiLinkDiagnostics,
@@ -79,6 +90,11 @@ import {
   extendMarkdownPreviewIt,
   setGrowiAssetProxyUrlResolver,
 } from "./vscode/markdownPreview";
+import type {
+  MirrorCompareScmResource,
+  MirrorCompareScmState,
+} from "./vscode/mirrorCompareScm";
+import { createGrowiMirrorCompareSourceControl } from "./vscode/mirrorCompareSourceControl";
 import { createPageFreshnessService } from "./vscode/pageFreshnessService";
 import {
   createPageReferenceResolver,
@@ -95,6 +111,7 @@ import { RuntimeLogger } from "./vscode/runtimeLogger";
 
 export { buildGrowiUriFromInput, normalizeCanonicalPath } from "./core/uri";
 export {
+  createAddCurrentPageBookmarkCommand,
   createAddPrefixCommand,
   createClearPrefixesCommand,
   createCompareLocalBundleWithGrowiCommand,
@@ -125,8 +142,11 @@ export {
   createOpenReadmeCommand,
   createRefreshCurrentPageCommand,
   createRefreshListingCommand,
+  createRemoveCurrentPageBookmarkCommand,
   createRenamePageCommand,
+  createScmCompareMirrorAgainCommand,
   createShowBacklinksCommand,
+  createShowBookmarksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageInfoCommand,
   createShowLocalRoundTripActionsCommand,
@@ -195,10 +215,26 @@ export function activate(context: vscode.ExtensionContext): void {
     async update(_key: string, _value: unknown): Promise<void> {},
   };
   const prefixRegistry = createPrefixRegistry(workspaceState);
+  const bookmarkCache = {
+    baseUrl: undefined as string | undefined,
+    userId: undefined as string | undefined,
+    bookmarks: [] as GrowiBookmarkEntry[],
+  };
   const prefixTreeDataProvider = createGrowiPrefixTreeDataProvider({
     getRegisteredPrefixes() {
       return prefixRegistry.getPrefixes(
         vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
+      );
+    },
+    isBookmarked(canonicalPath: string) {
+      const baseUrl = vscode.workspace
+        .getConfiguration("growi")
+        .get<string>("baseUrl");
+      if (!baseUrl || bookmarkCache.baseUrl !== baseUrl) {
+        return false;
+      }
+      return bookmarkCache.bookmarks.some(
+        (bookmark) => bookmark.canonicalPath === canonicalPath,
       );
     },
     readDirectory(uri) {
@@ -216,6 +252,7 @@ export function activate(context: vscode.ExtensionContext): void {
     dispose(): void {},
   };
   const runtimeLogger = new RuntimeLogger();
+  const mirrorCompareSourceControl = createGrowiMirrorCompareSourceControl();
   const appendRuntimeStatus = (prefix: string) => {
     const status = runtimeLogger.getRuntimeLogStatus();
     outputChannel.appendLine(
@@ -290,6 +327,14 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const tracedCommandIds = new Set<string>([
     GROWI_COMMANDS.openPage,
+    GROWI_COMMANDS.addCurrentPageBookmark,
+    GROWI_COMMANDS.removeCurrentPageBookmark,
+    GROWI_COMMANDS.showBookmarks,
+    GROWI_COMMANDS.compareLocalMirrorWithGrowi,
+    GROWI_COMMANDS.uploadLocalMirrorToGrowi,
+    GROWI_COMMANDS.scmCompareMirrorAgain,
+    GROWI_COMMANDS.scmUploadMirrorResources,
+    GROWI_COMMANDS.scmTakeRemoteMirrorResources,
     GROWI_COMMANDS.showCurrentPageInfo,
     GROWI_COMMANDS.showCurrentPageAttachments,
     GROWI_COMMANDS.explorerOpenPageInBrowser,
@@ -380,6 +425,76 @@ export function activate(context: vscode.ExtensionContext): void {
       commandId,
       wrapRuntimeTracedCommand(commandId, handler),
     );
+  const describeScmCommandArg = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      return `array(len=${value.length})`;
+    }
+    if (!value || typeof value !== "object") {
+      return typeof value;
+    }
+
+    if (
+      "mirrorCompareResource" in value &&
+      value.mirrorCompareResource &&
+      typeof value.mirrorCompareResource === "object"
+    ) {
+      const resource = value.mirrorCompareResource as {
+        canonicalPath?: unknown;
+        status?: unknown;
+      };
+      const status =
+        typeof resource.status === "string" ? resource.status : "(unknown)";
+      const canonicalPath =
+        typeof resource.canonicalPath === "string"
+          ? resource.canonicalPath
+          : "(unknown)";
+      return `resourceState(${status}:${canonicalPath})`;
+    }
+
+    if ("id" in value && typeof value.id === "string") {
+      return `group(${value.id})`;
+    }
+
+    return `object(keys=${Object.keys(value)
+      .slice(0, 4)
+      .join(",")})`;
+  };
+  const describeScmCommandArgs = (args: readonly unknown[]): string => {
+    if (args.length === 0) {
+      return "none";
+    }
+    return args.slice(0, 6).map(describeScmCommandArg).join(" | ");
+  };
+  const describeMirrorCompareResources = (
+    resources: readonly MirrorCompareScmResource[],
+  ): string => {
+    if (resources.length === 0) {
+      return "0";
+    }
+    const summary = resources
+      .slice(0, 10)
+      .map((resource) => `${resource.status}:${resource.canonicalPath}`)
+      .join(", ");
+    const suffix = resources.length > 10 ? ", ..." : "";
+    return `${resources.length} [${summary}${suffix}]`;
+  };
+  const logScmCommandContext = async (
+    commandId: string,
+    args: readonly unknown[],
+    resources: readonly MirrorCompareScmResource[],
+  ) => {
+    await runtimeLogger.logWithStatus({
+      level: "info",
+      event: "command.context",
+      source: "command",
+      operation: `command:${commandId}`,
+      entityType: "command",
+      entityId: commandId,
+      virtualPath: commandId,
+      outcome: "started",
+      details: `args=${describeScmCommandArgs(args)} resolved=${describeMirrorCompareResources(resources)}`,
+    });
+  };
   const growiApi = createGrowiApiAdapter({
     diagnostics: {
       log(message: string) {
@@ -420,6 +535,149 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     return { ok: true, baseUrl, apiToken } as const;
+  };
+
+  const replaceBookmarkCache = (
+    baseUrl: string,
+    userId: string,
+    bookmarks: readonly GrowiBookmarkEntry[],
+  ) => {
+    bookmarkCache.baseUrl = baseUrl;
+    bookmarkCache.userId = userId;
+    bookmarkCache.bookmarks = [...bookmarks];
+  };
+
+  const clearBookmarkCache = () => {
+    bookmarkCache.baseUrl = undefined;
+    bookmarkCache.userId = undefined;
+    bookmarkCache.bookmarks = [];
+  };
+
+  const syncBookmarks = async () => {
+    const configured = await getConfiguredApiContext();
+    if (!configured.ok) {
+      clearBookmarkCache();
+      return configured;
+    }
+
+    const currentUserResult = await growiApi.getCurrentUser(
+      configured.baseUrl,
+      configured.apiToken,
+    );
+    if (!currentUserResult.ok) {
+      clearBookmarkCache();
+      return currentUserResult;
+    }
+
+    const listResult = await growiApi.listBookmarks(
+      currentUserResult.userId,
+      configured.baseUrl,
+      configured.apiToken,
+    );
+    if (!listResult.ok) {
+      clearBookmarkCache();
+      return listResult;
+    }
+
+    replaceBookmarkCache(
+      configured.baseUrl,
+      currentUserResult.userId,
+      listResult.bookmarks,
+    );
+    return {
+      ok: true,
+      baseUrl: configured.baseUrl,
+      userId: currentUserResult.userId,
+      bookmarks: listResult.bookmarks,
+    } as const;
+  };
+
+  const resolveBookmarkPageInfo = async (canonicalPath: string) => {
+    const currentPageInfo =
+      fileSystemProvider.getCurrentPageInfo(canonicalPath);
+    if (currentPageInfo?.pageId) {
+      return { ok: true, pageInfo: currentPageInfo } as const;
+    }
+
+    const editSession = editSessionRegistry.getEditSession(canonicalPath);
+    if (editSession?.pageId) {
+      return {
+        ok: true,
+        pageInfo: {
+          pageId: editSession.pageId,
+          revisionId: editSession.baseRevisionId,
+          url: "",
+          path: canonicalPath,
+          lastUpdatedBy: "",
+          lastUpdatedAt: editSession.baseUpdatedAt,
+        },
+      } as const;
+    }
+
+    const configured = await getConfiguredApiContext();
+    if (!configured.ok) {
+      return configured;
+    }
+
+    return await growiApi.getPageInfo(
+      canonicalPath,
+      configured.baseUrl,
+      configured.apiToken,
+    );
+  };
+
+  const isWithinRegisteredPrefixes = (
+    canonicalPath: string,
+    registeredPrefixes: readonly string[],
+  ) =>
+    registeredPrefixes.some(
+      (prefix) =>
+        canonicalPath === prefix || canonicalPath.startsWith(`${prefix}/`),
+    );
+
+  const buildBookmarkListEntries = async (
+    bookmarks: readonly GrowiBookmarkEntry[],
+  ): Promise<readonly BookmarkListEntry[]> => {
+    const configured = await getConfiguredApiContext();
+    if (!configured.ok) {
+      return bookmarks;
+    }
+
+    const registeredPrefixes = prefixRegistry.getPrefixes(configured.baseUrl);
+    const entries = await Promise.all(
+      bookmarks.map(async (bookmark) => {
+        const resolved = await growiApi.resolvePageId(
+          bookmark.pageId,
+          configured.baseUrl,
+          configured.apiToken,
+        );
+        if (!resolved.ok || resolved.canonicalPath !== bookmark.canonicalPath) {
+          return {
+            ...bookmark,
+            status: "unresolvable",
+          } as const;
+        }
+
+        if (
+          !isWithinRegisteredPrefixes(
+            bookmark.canonicalPath,
+            registeredPrefixes,
+          )
+        ) {
+          return {
+            ...bookmark,
+            status: "outsidePrefix",
+          } as const;
+        }
+
+        return {
+          ...bookmark,
+          status: "normal",
+        } as const;
+      }),
+    );
+
+    return entries;
   };
 
   const noopDisposable: vscode.Disposable = { dispose() {} };
@@ -581,6 +839,53 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const deps = {
+    async addBookmark(canonicalPath: string, pageId?: string) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+
+      const resolvedPageInfo = pageId
+        ? { ok: true as const, pageInfo: { pageId } }
+        : await resolveBookmarkPageInfo(canonicalPath);
+      if (!resolvedPageInfo.ok || !resolvedPageInfo.pageInfo?.pageId) {
+        return resolvedPageInfo.ok
+          ? ({ ok: false, reason: "NotFound" } as const)
+          : resolvedPageInfo;
+      }
+
+      const bookmarkInfo = await growiApi.getBookmarkInfo(
+        resolvedPageInfo.pageInfo.pageId,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+      if (!bookmarkInfo.ok) {
+        return bookmarkInfo;
+      }
+      if (bookmarkInfo.isBookmarked) {
+        const synced = await syncBookmarks();
+        return synced.ok
+          ? ({ ok: true, value: synced.bookmarks, added: false } as const)
+          : synced;
+      }
+
+      const updateResult = await growiApi.updateBookmark(
+        resolvedPageInfo.pageInfo.pageId,
+        true,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+      if (!updateResult.ok) {
+        return updateResult;
+      }
+
+      const synced = await syncBookmarks();
+      if (!synced.ok) {
+        return synced;
+      }
+      refreshGrowiExplorer();
+      return { ok: true, value: synced.bookmarks, added: true } as const;
+    },
     async addPrefix(rawPrefix: string) {
       const result = await prefixRegistry.addPrefix(
         vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
@@ -609,6 +914,63 @@ export function activate(context: vscode.ExtensionContext): void {
         refreshGrowiExplorer();
       }
       return result;
+    },
+    async deleteBookmark(canonicalPath: string, pageId?: string) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+
+      const resolvedPageInfo = pageId
+        ? { ok: true as const, pageInfo: { pageId } }
+        : await resolveBookmarkPageInfo(canonicalPath);
+      if (!resolvedPageInfo.ok || !resolvedPageInfo.pageInfo?.pageId) {
+        return resolvedPageInfo.ok
+          ? ({
+              ok: true,
+              value: bookmarkCache.bookmarks,
+              removed: false,
+            } as const)
+          : resolvedPageInfo;
+      }
+
+      const bookmarkInfo = await growiApi.getBookmarkInfo(
+        resolvedPageInfo.pageInfo.pageId,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+      if (!bookmarkInfo.ok) {
+        if (bookmarkInfo.reason === "NotFound") {
+          const synced = await syncBookmarks();
+          return synced.ok
+            ? ({ ok: true, value: synced.bookmarks, removed: false } as const)
+            : synced;
+        }
+        return bookmarkInfo;
+      }
+      if (!bookmarkInfo.isBookmarked) {
+        const synced = await syncBookmarks();
+        return synced.ok
+          ? ({ ok: true, value: synced.bookmarks, removed: false } as const)
+          : synced;
+      }
+
+      const updateResult = await growiApi.updateBookmark(
+        resolvedPageInfo.pageInfo.pageId,
+        false,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+      if (!updateResult.ok) {
+        return updateResult;
+      }
+
+      const synced = await syncBookmarks();
+      if (!synced.ok) {
+        return synced;
+      }
+      refreshGrowiExplorer();
+      return { ok: true, value: synced.bookmarks, removed: true } as const;
     },
     async bootstrapEditSession(canonicalPath: string) {
       const configured = await getConfiguredApiContext();
@@ -646,8 +1008,26 @@ export function activate(context: vscode.ExtensionContext): void {
         )?.uri.fsPath ?? undefined
       );
     },
+    async getBookmarks() {
+      const synced = await syncBookmarks();
+      return synced.ok
+        ? ({
+            ok: true,
+            value: await buildBookmarkListEntries(synced.bookmarks),
+          } as const)
+        : synced;
+    },
     getRegisteredPrefixes() {
       return prefixRegistry.getPrefixes(deps.getBaseUrl());
+    },
+    isBookmarked(canonicalPath: string) {
+      const baseUrl = deps.getBaseUrl();
+      if (!baseUrl || bookmarkCache.baseUrl !== baseUrl) {
+        return false;
+      }
+      return bookmarkCache.bookmarks.some(
+        (bookmark) => bookmark.canonicalPath === canonicalPath,
+      );
     },
     invalidateReadDirectoryCache(canonicalDirectoryPath: string) {
       fileSystemProvider.invalidateReadDirectoryCache(canonicalDirectoryPath);
@@ -817,6 +1197,12 @@ export function activate(context: vscode.ExtensionContext): void {
         title,
       );
     },
+    clearMirrorCompareSourceControlState() {
+      mirrorCompareSourceControl.clear();
+    },
+    getMirrorCompareSourceControlState() {
+      return mirrorCompareSourceControl.getState();
+    },
     async readLocalFile(localPath: string) {
       const bytes = await vscode.workspace.fs.readFile(
         vscode.Uri.file(localPath),
@@ -842,8 +1228,7 @@ export function activate(context: vscode.ExtensionContext): void {
           preserveFocus: true,
           preview: false,
         });
-        prefixTreeDataProvider.clearStaleState(canonicalPath);
-        prefixTreeDataProvider.refresh();
+        await reevaluateActiveGrowiPageStatus();
         return "reopened" as const;
       } catch {
         return "failed" as const;
@@ -1021,6 +1406,10 @@ export function activate(context: vscode.ExtensionContext): void {
       prefixTreeDataProvider.clearStaleState(canonicalPrefixPath);
       prefixTreeDataProvider.refresh();
     },
+    clearMirrorCompareTreeSnapshotState() {
+      prefixTreeDataProvider.clearCompareSnapshot();
+      prefixTreeDataProvider.refresh();
+    },
     seedRevisionContent(
       uri: { scheme: string; path: string; fsPath?: string },
       body: string,
@@ -1030,6 +1419,13 @@ export function activate(context: vscode.ExtensionContext): void {
           ? vscode.Uri.file(uri.fsPath ?? uri.path)
           : vscode.Uri.parse(`${uri.scheme}:${uri.path}`);
       revisionContentProvider.seedRevisionContent(targetUri, body);
+    },
+    setMirrorCompareSourceControlState(input: MirrorCompareScmState) {
+      mirrorCompareSourceControl.setState(input);
+    },
+    setMirrorCompareTreeSnapshotState(input: MirrorCompareScmState) {
+      prefixTreeDataProvider.setCompareSnapshot(input);
+      prefixTreeDataProvider.refresh();
     },
     showErrorMessage(message: string) {
       markCurrentRuntimeCommandTrace(
@@ -1137,11 +1533,164 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       return selected;
     },
+    async showOpenPageQuickPick(
+      items: readonly OpenPageSearchEntry[],
+      options: {
+        placeHolder: string;
+        directInputLabel: string;
+        directInputDescription: string;
+      },
+    ) {
+      return await new Promise<string | { action: "directInput" } | undefined>(
+        (resolve) => {
+          const quickPick = vscode.window.createQuickPick<
+            vscode.QuickPickItem & {
+              canonicalPath?: string;
+              action?: "directInput";
+            }
+          >();
+          let settled = false;
+
+          const settle = (
+            value: string | { action: "directInput" } | undefined,
+          ) => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            quickPick.dispose();
+            resolve(value);
+          };
+
+          const directInputItem = {
+            label: options.directInputLabel,
+            description: options.directInputDescription,
+            action: "directInput" as const,
+            alwaysShow: true,
+          };
+
+          const updateItems = () => {
+            const rankedItems = rankOpenPageSearchEntries(
+              items,
+              quickPick.value,
+            );
+            quickPick.items = isOpenPageDirectInputPreferred(quickPick.value)
+              ? [directInputItem, ...rankedItems]
+              : [...rankedItems, directInputItem];
+          };
+
+          quickPick.placeholder = options.placeHolder;
+          quickPick.matchOnDescription = false;
+          quickPick.matchOnDetail = false;
+          updateItems();
+
+          quickPick.onDidChangeValue(() => {
+            updateItems();
+          });
+          quickPick.onDidAccept(() => {
+            const selected = quickPick.selectedItems[0];
+            if (!selected) {
+              settle(undefined);
+              return;
+            }
+
+            if (selected.action === "directInput") {
+              settle({ action: "directInput" });
+              return;
+            }
+
+            if (typeof selected.canonicalPath === "string") {
+              settle(selected.canonicalPath);
+              return;
+            }
+
+            settle(undefined);
+          });
+          quickPick.onDidHide(() => {
+            markCurrentRuntimeCommandTrace("canceled", "Canceled");
+            settle(undefined);
+          });
+          quickPick.show();
+        },
+      );
+    },
+    async showBookmarkQuickPick(
+      items: readonly {
+        label: string;
+        description?: string;
+        detail?: string;
+        canonicalPath: string;
+        addedAt: string;
+        pageId: string;
+      }[],
+      options: { placeHolder: string },
+    ) {
+      return await new Promise<
+        | { action: "open" | "remove"; canonicalPath: string; pageId: string }
+        | undefined
+      >((resolve) => {
+        const quickPick = vscode.window.createQuickPick<
+          vscode.QuickPickItem & { canonicalPath: string; pageId: string }
+        >();
+        const removeButton: vscode.QuickInputButton = {
+          iconPath: new vscode.ThemeIcon("trash"),
+          tooltip: "ブックマークから削除",
+        };
+        let settled = false;
+        const settle = (
+          value:
+            | {
+                action: "open" | "remove";
+                canonicalPath: string;
+                pageId: string;
+              }
+            | undefined,
+        ) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          quickPick.dispose();
+          resolve(value);
+        };
+
+        quickPick.items = items.map((item) => ({
+          ...item,
+          buttons: [removeButton],
+        }));
+        quickPick.placeholder = options.placeHolder;
+        quickPick.onDidAccept(() => {
+          const selected = quickPick.selectedItems[0];
+          settle(
+            selected
+              ? {
+                  action: "open",
+                  canonicalPath: selected.canonicalPath,
+                  pageId: selected.pageId,
+                }
+              : undefined,
+          );
+        });
+        quickPick.onDidTriggerItemButton((event) => {
+          settle({
+            action: "remove",
+            canonicalPath: event.item.canonicalPath,
+            pageId: event.item.pageId,
+          });
+        });
+        quickPick.onDidHide(() => settle(undefined));
+        quickPick.show();
+      });
+    },
     showWarningMessage(message: string) {
       void vscode.window.showWarningMessage(message);
     },
     async storeSecret(key: string, value: string) {
       await context.secrets.store(key, value);
+      if (key === GROWI_SECRET_KEYS.apiToken) {
+        clearBookmarkCache();
+        refreshGrowiExplorer();
+      }
     },
     setEditSession(canonicalPath: string, editSession: GrowiEditSession) {
       editSessionRegistry.setEditSession(canonicalPath, editSession);
@@ -1150,6 +1699,7 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.workspace
         .getConfiguration("growi")
         .update("baseUrl", value, vscode.ConfigurationTarget.Global);
+      clearBookmarkCache();
       refreshGrowiExplorer();
     },
     async deleteLocalPath(localPath: string) {
@@ -1216,6 +1766,18 @@ export function activate(context: vscode.ExtensionContext): void {
     GROWI_COMMANDS.openPage,
     openPageCommand,
   );
+  const addCurrentPageBookmarkCommandDisposable = registerGrowiCommand(
+    GROWI_COMMANDS.addCurrentPageBookmark,
+    createAddCurrentPageBookmarkCommand(deps),
+  );
+  const removeCurrentPageBookmarkCommandDisposable = registerGrowiCommand(
+    GROWI_COMMANDS.removeCurrentPageBookmark,
+    createRemoveCurrentPageBookmarkCommand(deps),
+  );
+  const showBookmarksCommandDisposable = registerGrowiCommand(
+    GROWI_COMMANDS.showBookmarks,
+    createShowBookmarksCommand(deps),
+  );
   const createPageCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.createPage,
     createCreatePageCommand(deps),
@@ -1230,7 +1792,10 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   const refreshCurrentPageCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.refreshCurrentPage,
-    createRefreshCurrentPageCommand(deps),
+    async (uri?: unknown) => {
+      await createRefreshCurrentPageCommand(deps)(uri as never);
+      await reevaluateActiveGrowiPageStatus();
+    },
   );
   const showCurrentPageActionsCommandDisposable =
     vscode.commands.registerCommand(
@@ -1238,6 +1803,9 @@ export function activate(context: vscode.ExtensionContext): void {
       createShowCurrentPageActionsCommand({
         getActiveEditorUri() {
           return deps.getActiveEditorUri();
+        },
+        isBookmarked(canonicalPath: string) {
+          return deps.isBookmarked(canonicalPath);
         },
         async executeCommand(command: string, ...args: unknown[]) {
           await vscode.commands.executeCommand(command, ...args);
@@ -1277,26 +1845,143 @@ export function activate(context: vscode.ExtensionContext): void {
   const createLocalMirrorForCurrentPageCommandDisposable =
     vscode.commands.registerCommand(
       "growi.createLocalMirrorForCurrentPage",
-      createDownloadCurrentPageToLocalFileCommand(deps),
+      async (target?: unknown) => {
+        await createDownloadCurrentPageToLocalFileCommand(deps)(
+          target as never,
+        );
+        await reevaluateActiveGrowiPageStatus();
+      },
     );
   const createLocalMirrorForCurrentPrefixCommandDisposable =
     vscode.commands.registerCommand(
       "growi.createLocalMirrorForCurrentPrefix",
-      createDownloadCurrentPageSetToLocalBundleCommand(deps),
+      async (target?: unknown) => {
+        const exported = await createDownloadCurrentPageSetToLocalBundleCommand(
+          deps,
+        )(target as never);
+        if (exported) {
+          await reevaluateActiveGrowiPageStatus();
+        }
+        return exported;
+      },
     );
   const refreshLocalMirrorCommandDisposable = vscode.commands.registerCommand(
     "growi.refreshLocalMirror",
-    createRefreshLocalMirrorCommand(deps),
+    async (target?: unknown) => {
+      const result = await createRefreshLocalMirrorCommand(deps)(
+        target as never,
+      );
+      await reevaluateActiveGrowiPageStatus();
+      return result;
+    },
   );
+  const compareLocalMirrorWithGrowiCommand =
+    createCompareLocalBundleWithGrowiCommand(deps);
   const compareLocalMirrorWithGrowiCommandDisposable =
-    vscode.commands.registerCommand(
+    registerGrowiCommand(
       "growi.compareLocalMirrorWithGrowi",
-      createCompareLocalBundleWithGrowiCommand(deps),
+      async (target?: unknown) => {
+        const compared = await compareLocalMirrorWithGrowiCommand(
+          target as never,
+        );
+        if (compared) {
+          await reevaluateActiveGrowiPageStatus();
+        }
+        return compared;
+      },
     );
   const uploadLocalMirrorToGrowiCommandDisposable =
-    vscode.commands.registerCommand(
+    registerGrowiCommand(
       "growi.uploadLocalMirrorToGrowi",
-      createUploadLocalBundleToGrowiCommand(deps),
+      async (target?: unknown) => {
+        const uploaded = await createUploadLocalBundleToGrowiCommand(deps)(
+          target as never,
+        );
+        if (uploaded) {
+          await reevaluateActiveGrowiPageStatus();
+        }
+        return uploaded;
+      },
+    );
+  const scmCompareMirrorAgainCommand = createScmCompareMirrorAgainCommand(deps);
+  const scmCompareMirrorAgainCommandDisposable =
+    registerGrowiCommand(
+      GROWI_COMMANDS.scmCompareMirrorAgain,
+      async () => {
+        const compared = await scmCompareMirrorAgainCommand();
+        if (compared) {
+          await reevaluateActiveGrowiPageStatus();
+        }
+        return compared;
+      },
+    );
+  const scmUploadMirrorResourcesCommand =
+    createScmUploadMirrorResourcesCommand(deps);
+  const scmUploadMirrorResourcesCommandDisposable =
+    registerGrowiCommand(
+      GROWI_COMMANDS.scmUploadMirrorResources,
+      async (...args: unknown[]) => {
+        const resources =
+          mirrorCompareSourceControl.getResourcesFromCommandArgs(args) ?? [];
+        await logScmCommandContext(
+          GROWI_COMMANDS.scmUploadMirrorResources,
+          args,
+          resources,
+        );
+        const results = await scmUploadMirrorResourcesCommand(resources);
+        if (results) {
+          const currentState = mirrorCompareSourceControl.getState();
+          if (currentState) {
+            await compareLocalMirrorWithGrowiCommand(
+              {
+                uri: vscode.Uri.parse(
+                  `growi:${currentState.currentCanonicalPath}.md`,
+                ),
+                scope: currentState.targetScope,
+              },
+              {
+                openChangesEditor: false,
+              },
+            );
+          }
+          await reevaluateActiveGrowiPageStatus();
+        }
+        return results;
+      },
+    );
+  const scmTakeRemoteMirrorResourcesCommand =
+    createScmTakeRemoteMirrorResourcesCommand(deps);
+  const scmTakeRemoteMirrorResourcesCommandDisposable =
+    registerGrowiCommand(
+      GROWI_COMMANDS.scmTakeRemoteMirrorResources,
+      async (...args: unknown[]) => {
+        const resources =
+          mirrorCompareSourceControl.getResourcesFromCommandArgs(args) ?? [];
+        await logScmCommandContext(
+          GROWI_COMMANDS.scmTakeRemoteMirrorResources,
+          args,
+          resources,
+        );
+        const results = await scmTakeRemoteMirrorResourcesCommand(resources);
+        if (results) {
+          const currentState = mirrorCompareSourceControl.getState();
+          if (currentState) {
+            await compareLocalMirrorWithGrowiCommand(
+              {
+                uri: vscode.Uri.parse(
+                  `growi:${currentState.currentCanonicalPath}.md`,
+                ),
+                scope: currentState.targetScope,
+              },
+              {
+                openChangesEditor: false,
+              },
+            );
+          }
+          await reevaluateActiveGrowiPageStatus();
+        }
+        return results;
+      },
     );
   const startEditCommandDisposable = vscode.commands.registerCommand(
     GROWI_COMMANDS.startEdit,
@@ -1480,6 +2165,24 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
   const pageFreshnessService = createPageFreshnessService({
+    getLocalWorkspaceRoot() {
+      const folder = vscode.workspace.workspaceFolders?.find(
+        (candidate) => candidate.uri.scheme === "file",
+      );
+      return folder?.uri.fsPath;
+    },
+    getBaseUrl() {
+      return vscode.workspace.getConfiguration("growi").get<string>("baseUrl");
+    },
+    async readLocalFile(localPath: string) {
+      const bytes = await vscode.workspace.fs.readFile(
+        vscode.Uri.file(localPath),
+      );
+      return new TextDecoder().decode(bytes);
+    },
+    async bootstrapEditSession(canonicalPath: string) {
+      return await deps.bootstrapEditSession(canonicalPath);
+    },
     getEditSession(canonicalPath: string) {
       return editSessionRegistry.getEditSession(canonicalPath);
     },
@@ -1524,6 +2227,11 @@ export function activate(context: vscode.ExtensionContext): void {
         const status = runtimeLogger.getRuntimeLogStatus();
         return `unresolved: mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`;
       },
+    );
+  const getMirrorCompareSourceControlStateCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.getMirrorCompareSourceControlState",
+      async () => mirrorCompareSourceControl.getState(),
     );
 
   const linkNavigationDeps = {
@@ -1741,26 +2449,30 @@ export function activate(context: vscode.ExtensionContext): void {
     return normalized.value.canonicalPath;
   };
 
-  const updatePageFreshnessDecoration = async (
+  async function updatePageLiveStatus(
     document: vscode.TextDocument | undefined,
-  ) => {
+  ): Promise<void> {
     const canonicalPath = resolveGrowiPageCanonicalPath(document);
     if (!canonicalPath) {
       return;
     }
 
-    const freshness =
-      await pageFreshnessService.checkPageFreshness(canonicalPath);
-    if (freshness === "stale") {
-      prefixTreeDataProvider.markCanonicalPathStale(canonicalPath);
-      prefixTreeDataProvider.refresh();
-      return;
-    }
-    if (freshness === "fresh") {
+    const liveState =
+      await pageFreshnessService.getOpenedPageLiveState(canonicalPath);
+    if (liveState.decorationStatus === "none") {
       prefixTreeDataProvider.clearStaleState(canonicalPath);
-      prefixTreeDataProvider.refresh();
+    } else {
+      prefixTreeDataProvider.setPageDecorationStatus(
+        canonicalPath,
+        liveState.decorationStatus,
+      );
     }
-  };
+    prefixTreeDataProvider.refresh();
+  }
+
+  async function reevaluateActiveGrowiPageStatus(): Promise<void> {
+    await updatePageLiveStatus(windowApi.activeTextEditor?.document);
+  }
 
   for (const document of workspaceApi.textDocuments ?? []) {
     updateLinkDiagnostics(document);
@@ -1782,6 +2494,7 @@ export function activate(context: vscode.ExtensionContext): void {
     workspaceApi.onDidChangeTextDocument?.((event) => {
       updateLinkDiagnostics(event.document);
       updateEditSessionDirty(event.document);
+      void reevaluateActiveGrowiPageStatus();
     }) ?? noopDisposable;
   const onDidCloseTextDocumentDisposable =
     workspaceApi.onDidCloseTextDocument?.((document) => {
@@ -1792,13 +2505,14 @@ export function activate(context: vscode.ExtensionContext): void {
     windowApi.onDidChangeActiveTextEditor?.((editor) => {
       updateEditStatusBar(editor);
       void maybeAutoFoldDrawioDocument(editor);
-      void updatePageFreshnessDecoration(editor?.document);
+      void updatePageLiveStatus(editor?.document);
     }) ?? noopDisposable;
   const onDidChangeEditSessionDisposable = editSessionRegistry.onDidChange(
     (event) => {
       updateEditStatusBar();
       if (event.kind === "set" || event.kind === "close") {
         fileSystemProvider.fireFileChangedForCanonicalPath(event.canonicalPath);
+        void reevaluateActiveGrowiPageStatus();
       }
     },
   );
@@ -1806,6 +2520,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const navigationCommandsDisposable: vscode.Disposable = {
     dispose() {
       openPageCommandDisposable.dispose();
+      addCurrentPageBookmarkCommandDisposable.dispose();
+      removeCurrentPageBookmarkCommandDisposable.dispose();
+      showBookmarksCommandDisposable.dispose();
       createPageCommandDisposable.dispose();
       deletePageCommandDisposable.dispose();
       renamePageCommandDisposable.dispose();
@@ -1819,6 +2536,9 @@ export function activate(context: vscode.ExtensionContext): void {
       createLocalMirrorForCurrentPrefixCommandDisposable.dispose();
       compareLocalMirrorWithGrowiCommandDisposable.dispose();
       uploadLocalMirrorToGrowiCommandDisposable.dispose();
+      scmCompareMirrorAgainCommandDisposable.dispose();
+      scmUploadMirrorResourcesCommandDisposable.dispose();
+      scmTakeRemoteMirrorResourcesCommandDisposable.dispose();
       refreshListingCommandDisposable.dispose();
       showCurrentPageInfoCommandDisposable.dispose();
       showCurrentPageAttachmentsCommandDisposable.dispose();
@@ -1849,6 +2569,7 @@ export function activate(context: vscode.ExtensionContext): void {
       clearRuntimeLogsCommandDisposable.dispose();
       revealRuntimeLogsCommandDisposable.dispose();
       getResolvedRuntimeLogDirectoryCommandDisposable.dispose();
+      getMirrorCompareSourceControlStateCommandDisposable.dispose();
       documentLinkProviderDisposable.dispose();
       definitionProviderDisposable.dispose();
       documentSymbolProviderDisposable.dispose();
@@ -1870,6 +2591,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.registerFileSystemProvider("growi", fileSystemProvider, {
       isCaseSensitive: true,
     }),
+    mirrorCompareSourceControl.sourceControl,
     (
       vscode.workspace as unknown as {
         registerTextDocumentContentProvider?: (

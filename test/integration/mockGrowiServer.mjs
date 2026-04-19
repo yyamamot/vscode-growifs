@@ -1,6 +1,7 @@
 import http from "node:http";
 
 const DEFAULT_TOKEN = "host-test-token";
+const DEFAULT_USER_ID = "host-test-user-id";
 
 const DEFAULT_PAGES = [
   {
@@ -163,7 +164,9 @@ function toFixture(pages = DEFAULT_PAGES) {
 
 export async function startMockGrowiServer(options = {}) {
   const token = options.token ?? DEFAULT_TOKEN;
+  const currentUserId = options.userId ?? DEFAULT_USER_ID;
   let fixture = toFixture(options.pages);
+  let rootBookmarks = [];
   let authMode = "normal";
   const requestStats = {
     create: 0,
@@ -173,6 +176,10 @@ export async function startMockGrowiServer(options = {}) {
     revision: 0,
     revisionList: 0,
     attachmentList: 0,
+    personalSetting: 0,
+    bookmarkList: 0,
+    bookmarkInfo: 0,
+    bookmarkUpdate: 0,
     list: 0,
     write: 0,
   };
@@ -346,6 +353,9 @@ export async function startMockGrowiServer(options = {}) {
           if (!page) {
             continue;
           }
+          rootBookmarks = rootBookmarks.filter(
+            (bookmark) => bookmark.pageId !== page.pageId,
+          );
           fixture.pageByPath.delete(deletingPath);
           fixture.pageById.delete(page.pageId);
           for (const revision of page.revisions) {
@@ -573,6 +583,127 @@ export async function startMockGrowiServer(options = {}) {
       return;
     }
 
+    if (method === "GET" && url.pathname === "/_api/v3/personal-setting") {
+      requestStats.personalSetting += 1;
+      writeJson(res, 200, {
+        ok: true,
+        currentUser: {
+          _id: currentUserId,
+          username: "host-test-user",
+        },
+      });
+      return;
+    }
+
+    if (
+      method === "GET" &&
+      url.pathname === `/_api/v3/bookmarks/${encodeURIComponent(currentUserId)}`
+    ) {
+      requestStats.bookmarkList += 1;
+      writeJson(res, 200, {
+        ok: true,
+        userRootBookmarks: rootBookmarks
+          .map((bookmark) => {
+            const page = fixture.pageById.get(bookmark.pageId);
+            if (!page) {
+              return undefined;
+            }
+            return {
+              _id: `bookmark-${bookmark.pageId}`,
+              createdAt: bookmark.addedAt,
+              page: {
+                _id: page.pageId,
+                path: page.path,
+                updatedAt: page.updatedAt,
+              },
+            };
+          })
+          .filter(Boolean),
+      });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/_api/v3/bookmarks/info") {
+      requestStats.bookmarkInfo += 1;
+      const pageId = url.searchParams.get("pageId");
+      if (!pageId) {
+        writeJson(res, 400, { ok: false, error: "InvalidQuery" });
+        return;
+      }
+      const page = fixture.pageById.get(pageId);
+      if (!page) {
+        writeJson(res, 404, { ok: false, error: "NotFound" });
+        return;
+      }
+      writeJson(res, 200, {
+        ok: true,
+        pageId,
+        isBookmarked: rootBookmarks.some(
+          (bookmark) => bookmark.pageId === pageId,
+        ),
+        sumOfBookmarks: rootBookmarks.filter(
+          (bookmark) => bookmark.pageId === pageId,
+        ).length,
+      });
+      return;
+    }
+
+    if (method === "PUT" && url.pathname === "/_api/v3/bookmarks") {
+      requestStats.bookmarkUpdate += 1;
+      const bodyChunks = [];
+      req.on("data", (chunk) => {
+        bodyChunks.push(chunk);
+      });
+      req.on("end", () => {
+        let payload;
+        try {
+          payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8"));
+        } catch {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+
+        const pageId =
+          typeof payload.pageId === "string" ? payload.pageId : undefined;
+        const nextState =
+          typeof payload.bool === "boolean" ? payload.bool : undefined;
+        if (!pageId || nextState === undefined) {
+          writeJson(res, 400, { ok: false, error: "InvalidPayload" });
+          return;
+        }
+        const page = fixture.pageById.get(pageId);
+        if (!page) {
+          writeJson(res, 404, { ok: false, error: "NotFound" });
+          return;
+        }
+
+        rootBookmarks = rootBookmarks.filter(
+          (bookmark) => bookmark.pageId !== pageId,
+        );
+        if (nextState) {
+          rootBookmarks.unshift({
+            pageId,
+            addedAt: new Date().toISOString(),
+          });
+        }
+
+        writeJson(res, 200, {
+          ok: true,
+          bookmark: {
+            _id: `bookmark-${pageId}`,
+            createdAt:
+              rootBookmarks.find((bookmark) => bookmark.pageId === pageId)
+                ?.addedAt ?? new Date().toISOString(),
+            page: {
+              _id: page.pageId,
+              path: page.path,
+            },
+          },
+        });
+      });
+      return;
+    }
+
     if (method === "GET" && url.pathname.startsWith("/_api/v3/revisions/")) {
       requestStats.revision += 1;
       const revisionId = decodeURIComponent(
@@ -724,9 +855,14 @@ export async function startMockGrowiServer(options = {}) {
       requestStats.revision = 0;
       requestStats.revisionList = 0;
       requestStats.attachmentList = 0;
+      requestStats.personalSetting = 0;
+      requestStats.bookmarkList = 0;
+      requestStats.bookmarkInfo = 0;
+      requestStats.bookmarkUpdate = 0;
       requestStats.list = 0;
       requestStats.write = 0;
       authMode = "normal";
+      rootBookmarks = [];
       writeJson(res, 200, { ok: true });
       return;
     }
@@ -766,6 +902,18 @@ export async function startMockGrowiServer(options = {}) {
             Buffer.concat(bodyChunks).toString("utf8"),
           );
           fixture = toFixture(payload.pages);
+          rootBookmarks = Array.isArray(payload.bookmarks)
+            ? payload.bookmarks
+                .filter(
+                  (bookmark) =>
+                    typeof bookmark?.pageId === "string" &&
+                    typeof bookmark?.addedAt === "string",
+                )
+                .map((bookmark) => ({
+                  pageId: bookmark.pageId,
+                  addedAt: bookmark.addedAt,
+                }))
+            : [];
           requestStats.create = 0;
           requestStats.delete = 0;
           requestStats.rename = 0;
@@ -773,6 +921,10 @@ export async function startMockGrowiServer(options = {}) {
           requestStats.revision = 0;
           requestStats.revisionList = 0;
           requestStats.attachmentList = 0;
+          requestStats.personalSetting = 0;
+          requestStats.bookmarkList = 0;
+          requestStats.bookmarkInfo = 0;
+          requestStats.bookmarkUpdate = 0;
           requestStats.list = 0;
           requestStats.write = 0;
           writeJson(res, 200, { ok: true });

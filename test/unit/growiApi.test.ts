@@ -1941,4 +1941,132 @@ describe("createGrowiApiAdapter", () => {
 
     expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
   });
+
+  it("gets current user from personal-setting", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        currentUser: {
+          _id: "user-1",
+          username: "alice",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.getCurrentUser(
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: true, userId: "user-1" });
+  });
+
+  it("lists root bookmarks from userRootBookmarks payload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        userRootBookmarks: [
+          {
+            _id: "bookmark-1",
+            createdAt: "2026-04-17T02:00:00.000Z",
+            page: {
+              _id: "page-1",
+              path: "/team/dev/spec",
+            },
+          },
+          {
+            _id: "bookmark-2",
+            createdAt: "2026-04-17T03:00:00.000Z",
+            page: {
+              _id: "page-2",
+              path: "/team/dev/docs",
+            },
+          },
+        ],
+        bookmarkFolderItems: [
+          {
+            _id: "folder-1",
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.listBookmarks(
+      "user-1",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      bookmarks: [
+        {
+          canonicalPath: "/team/dev/docs",
+          pageId: "page-2",
+          addedAt: "2026-04-17T03:00:00.000Z",
+        },
+        {
+          canonicalPath: "/team/dev/spec",
+          pageId: "page-1",
+          addedAt: "2026-04-17T02:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("reads bookmark info", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        pageId: "page-1",
+        isBookmarked: true,
+        sumOfBookmarks: 1,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.getBookmarkInfo(
+      "page-1",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      pageId: "page-1",
+      isBookmarked: true,
+    });
+  });
+
+  it("updates bookmark state with PUT /_api/v3/bookmarks", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        bookmark: {
+          _id: "bookmark-1",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.updateBookmark(
+      "page-1",
+      true,
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: true });
+    const [requestUrl, requestInit] = fetchMock.mock.calls[0] as [
+      URL,
+      RequestInit,
+    ];
+    expect(requestUrl.pathname).toBe("/_api/v3/bookmarks");
+    expect(requestInit.method).toBe("PUT");
+    expect(requestInit.body).toBe(
+      JSON.stringify({ pageId: "page-1", bool: true }),
+    );
+  });
 });

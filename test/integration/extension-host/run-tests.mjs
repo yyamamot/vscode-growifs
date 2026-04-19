@@ -179,10 +179,10 @@ async function resetStats(adminBaseUrl) {
   await fetchAdmin(adminBaseUrl, "/__admin/reset", { method: "POST" });
 }
 
-async function updateFixture(adminBaseUrl, pages) {
+async function updateFixture(adminBaseUrl, pages, bookmarks = undefined) {
   await fetchAdmin(adminBaseUrl, "/__admin/fixture", {
     method: "POST",
-    body: JSON.stringify({ pages }),
+    body: JSON.stringify({ pages, bookmarks }),
   });
 }
 
@@ -438,9 +438,12 @@ export async function run() {
       "growi.renamePage",
       "growi.clearPrefixes",
       "growi.openPage",
+      "growi.addCurrentPageBookmark",
+      "growi.removeCurrentPageBookmark",
       "growi.startEdit",
       "growi.endEdit",
       "growi.showCurrentPageActions",
+      "growi.showBookmarks",
       "growi.showLocalRoundTripActions",
       "growi.refreshCurrentPage",
       "growi.refreshListing",
@@ -1578,12 +1581,12 @@ export async function run() {
         (item) => item.uri.path === "/team/dev/spec.md",
       );
       assert(
-        stalePage?.description === "remote changed",
+        stalePage?.description === "remote newer",
         `Expected stale tree decoration after editor switch: ${toJsonString(stalePage)}`,
       );
       assert(
         stalePage?.tooltip ===
-          "remote が更新されています。Refresh Current Page で再読込してください。",
+          "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
         `Expected stale tree tooltip after editor switch: ${toJsonString(stalePage)}`,
       );
       assert(
@@ -1608,6 +1611,96 @@ export async function run() {
       assert(
         freshPage?.iconPath?.id !== "warning",
         `Expected warning icon to clear after refresh: ${toJsonString(freshPage)}`,
+      );
+    },
+  );
+
+  await runCase(
+    "active growi editor switches prefer mirror compare conflicts decoration",
+    async () => {
+      assert(
+        treeProvider,
+        "Expected growi explorer tree provider to be captured",
+      );
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page\n",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.addPrefix", "/sample");
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPage",
+      );
+
+      const localMirrorFilePath = path.join(
+        getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+        "__sample__.md",
+      );
+      await fs.writeFile(localMirrorFilePath, "# local changed\n");
+      await adminUpdatePage(adminUrl, {
+        path: "/sample",
+        body: "# remote changed\n",
+        updatedBy: "mirror-conflict-owner",
+      });
+
+      const growiDocument = vscode.window.activeTextEditor?.document;
+      assert(
+        growiDocument,
+        "Expected growi document to stay open before editor switch",
+      );
+
+      const scratchDocument = await vscode.workspace.openTextDocument({
+        content: "scratch",
+        language: "plaintext",
+      });
+      await vscode.window.showTextDocument(scratchDocument);
+      await pause();
+
+      await vscode.window.showTextDocument(growiDocument);
+      await pause();
+
+      const sampleRoot = (await treeProvider.getChildren()).find(
+        (item) => item.label === "/sample",
+      );
+      assert(
+        sampleRoot,
+        `Expected /sample prefix root to be visible: ${toJsonString(
+          await treeProvider.getChildren(),
+        )}`,
+      );
+
+      const conflictPage = (await treeProvider.getChildren(sampleRoot)).find(
+        (item) => item.uri.path === "/sample.md",
+      );
+      assert(
+        conflictPage?.description === "Conflicts",
+        `Expected conflicts decoration after editor switch: ${toJsonString(conflictPage)}`,
+      );
+      assert(
+        conflictPage?.tooltip ===
+          "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+        `Expected conflicts tooltip after editor switch: ${toJsonString(conflictPage)}`,
+      );
+      assert(
+        conflictPage?.iconPath?.id === "warning",
+        `Expected warning icon for conflicts decoration: ${toJsonString(conflictPage)}`,
+      );
+
+      const scmState = await vscode.commands.executeCommand(
+        "growi.__test.getMirrorCompareSourceControlState",
+      );
+      assert(
+        scmState === undefined,
+        `Expected SCM state to stay empty until compare is executed: ${toJsonString(scmState)}`,
       );
     },
   );
@@ -2110,6 +2203,113 @@ export async function run() {
         capturedChangesCalls.length === 1 &&
           capturedChangesCalls[0]?.[0] === "GROWI Mirror Diff: /sample/hello",
         `Unexpected changes title for ancestor page compare: ${toJsonString(capturedChangesCalls)}`,
+      );
+    },
+  );
+
+  await runCase(
+    "subtree compare snapshot updates SCM and tree decorations together",
+    async () => {
+      assert(
+        treeProvider,
+        "Expected growi explorer tree provider to be captured",
+      );
+      const capturedChangesCalls = [];
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+        {
+          path: "/sample/a",
+          body: "# a page",
+          updatedAt: "2026-03-08T01:01:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+
+      await vscode.commands.executeCommand("growi.addPrefix", "/sample");
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPrefix",
+      );
+      await fs.writeFile(
+        path.join(
+          getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+          "__sample__.md",
+        ),
+        "# sample page updated locally\n",
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(getWorkspaceMirrorRootPath(baseUrl, "/sample"), "a.md"),
+        "# a page updated locally\n",
+        "utf8",
+      );
+
+      const results = await withCommandExecuteOverride(
+        async (next, command, args) => {
+          if (command === "vscode.changes") {
+            capturedChangesCalls.push(args);
+            return undefined;
+          }
+          return await next(command, ...args);
+        },
+        async () =>
+          await vscode.commands.executeCommand(
+            "growi.compareLocalMirrorWithGrowi",
+          ),
+      );
+
+      assert(
+        Array.isArray(results) &&
+          results.length === 2 &&
+          results.every((entry) => entry?.status === "LocalChanged"),
+        `Expected subtree compare to return 2 local changes: ${toJsonString(results)}`,
+      );
+      assert(
+        capturedChangesCalls.length === 1 &&
+          capturedChangesCalls[0]?.[0] === "GROWI Mirror Diff: /sample/*",
+        `Unexpected changes editor call for subtree compare: ${toJsonString(capturedChangesCalls)}`,
+      );
+
+      const sampleRoot = (await treeProvider.getChildren()).find(
+        (item) => item.label === "/sample",
+      );
+      assert(
+        sampleRoot,
+        `Expected /sample prefix root to be visible: ${toJsonString(
+          await treeProvider.getChildren(),
+        )}`,
+      );
+      const sampleChildren = await treeProvider.getChildren(sampleRoot);
+      const rootPage = sampleChildren.find(
+        (item) => item.uri.path === "/sample.md",
+      );
+      const aPage = sampleChildren.find(
+        (item) => item.uri.path === "/sample/a.md",
+      );
+      assert(
+        rootPage?.description === "Local Changes" &&
+          aPage?.description === "Local Changes",
+        `Expected compare snapshot decorations for /sample and /sample/a: ${toJsonString(sampleChildren)}`,
+      );
+
+      const scmState = await vscode.commands.executeCommand(
+        "growi.__test.getMirrorCompareSourceControlState",
+      );
+      assert(
+        scmState &&
+          scmState.currentCanonicalPath === "/sample" &&
+          Array.isArray(scmState.resources) &&
+          scmState.resources.length === 2,
+        `Expected SCM snapshot with 2 resources after compare: ${toJsonString(scmState)}`,
       );
     },
   );
@@ -3452,6 +3652,13 @@ export async function run() {
             },
           );
           await vscode.commands.executeCommand(
+            "growi.explorerCreateLocalMirrorForCurrentPrefix",
+            {
+              uri: { scheme: "growi", path: "/team/" },
+              contextValue: "growi.prefixRoot",
+            },
+          );
+          await vscode.commands.executeCommand(
             "growi.explorerCompareLocalBundleWithGrowi",
             {
               uri: { scheme: "growi", path: "/team/" },
@@ -3469,8 +3676,8 @@ export async function run() {
       );
 
       assert(
-        delegatedCommands.length === 3,
-        `Expected three delegated Explorer context actions, got ${toJsonString(
+        delegatedCommands.length === 4,
+        `Expected four delegated Explorer context actions, got ${toJsonString(
           delegatedCommands,
         )}`,
       );
@@ -3482,17 +3689,26 @@ export async function run() {
         )}`,
       );
       assert(
-        delegatedCommands[1]?.command === "growi.compareLocalBundleWithGrowi" &&
+        delegatedCommands[1]?.command ===
+          "growi.createLocalMirrorForCurrentPrefix" &&
           delegatedCommands[1]?.args[0]?.uri?.path === "/team.md" &&
-          delegatedCommands[1]?.args[0]?.scope === "subtree",
+          delegatedCommands[1]?.args[0]?.scope === undefined,
+        `Unexpected local bundle sync delegation: ${toJsonString(
+          delegatedCommands,
+        )}`,
+      );
+      assert(
+        delegatedCommands[2]?.command === "growi.compareLocalBundleWithGrowi" &&
+          delegatedCommands[2]?.args[0]?.uri?.path === "/team.md" &&
+          delegatedCommands[2]?.args[0]?.scope === "subtree",
         `Unexpected local bundle compare delegation: ${toJsonString(
           delegatedCommands,
         )}`,
       );
       assert(
-        delegatedCommands[2]?.command === "growi.uploadLocalBundleToGrowi" &&
-          delegatedCommands[2]?.args[0]?.uri?.path === "/team.md" &&
-          delegatedCommands[2]?.args[0]?.scope === "subtree",
+        delegatedCommands[3]?.command === "growi.uploadLocalBundleToGrowi" &&
+          delegatedCommands[3]?.args[0]?.uri?.path === "/team.md" &&
+          delegatedCommands[3]?.args[0]?.scope === "subtree",
         `Unexpected local bundle upload delegation: ${toJsonString(
           delegatedCommands,
         )}`,
@@ -3519,22 +3735,52 @@ export async function run() {
       await resetStats(adminUrl);
       await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
 
-      const quickPickCalls = [];
+      let openPageQuickPick = {
+        items: [],
+        placeholder: "",
+        value: "",
+      };
       await withWindowOverrides(
         {
-          showQuickPick: async (items, options) => {
-            quickPickCalls.push({
-              items: items.map((item) => ({
-                label: item.label,
-                description: item.description,
-                canonicalPath: item.canonicalPath,
-                action: item.action,
-              })),
-              options,
-            });
-            return items.find(
-              (item) => item.canonicalPath === "/team/dev/spec",
-            );
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              value: "",
+              onDidChangeValue(handler) {
+                quickPick._change = handler;
+                return { dispose() {} };
+              },
+              onDidAccept(handler) {
+                quickPick._accept = handler;
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                quickPick.value = "sp";
+                quickPick._change?.("sp");
+                openPageQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    canonicalPath: item.canonicalPath,
+                    action: item.action,
+                  })),
+                  placeholder: quickPick.placeholder,
+                  value: quickPick.value,
+                };
+                quickPick.selectedItems = quickPick.items.filter(
+                  (item) => item.canonicalPath === "/team/dev/spec",
+                );
+                quickPick._accept?.();
+              },
+              dispose() {},
+            };
+
+            return quickPick;
           },
         },
         async () => {
@@ -3543,36 +3789,546 @@ export async function run() {
       );
 
       assert(
-        quickPickCalls.length === 1,
-        `Expected one open page quick pick, got ${toJsonString(quickPickCalls)}`,
-      );
-      assert(
-        quickPickCalls[0].options.placeHolder ===
+        openPageQuickPick.placeholder ===
           "登録済み Prefix 配下からページを絞り込んで選択してください。",
-        `Unexpected open page placeholder: ${toJsonString(quickPickCalls)}`,
+        `Unexpected open page placeholder: ${toJsonString(openPageQuickPick)}`,
       );
       assert(
-        quickPickCalls[0].items.some(
+        openPageQuickPick.items.some(
           (item) =>
             item.label === "spec" &&
             item.description === "/team/dev/spec" &&
             item.canonicalPath === "/team/dev/spec",
         ),
-        `Expected /team/dev/spec candidate in quick pick: ${toJsonString(quickPickCalls)}`,
+        `Expected /team/dev/spec candidate in quick pick: ${toJsonString(openPageQuickPick)}`,
       );
       assert(
-        quickPickCalls[0].items.some(
+        openPageQuickPick.items.some(
           (item) =>
             item.label === "URL / path を直接入力" &&
             item.action === "directInput",
         ),
-        `Expected direct-input fallback in quick pick: ${toJsonString(quickPickCalls)}`,
+        `Expected direct-input fallback in quick pick: ${toJsonString(openPageQuickPick)}`,
+      );
+      assert(
+        openPageQuickPick.items[0]?.canonicalPath === "/team/dev/spec",
+        `Expected basename match to rank first: ${toJsonString(openPageQuickPick)}`,
       );
 
       const activePath = await getActivePath();
       assert(
         activePath === "/team/dev/spec.md",
         `Unexpected quick pick open result: ${activePath}`,
+      );
+    },
+  );
+
+  await runCase(
+    "open page quick pick keeps direct input when search has no matches",
+    async () => {
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+
+      let openPageQuickPick = { items: [], placeholder: "", value: "" };
+      await withWindowOverrides(
+        {
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              value: "",
+              onDidChangeValue(handler) {
+                quickPick._change = handler;
+                return { dispose() {} };
+              },
+              onDidAccept(handler) {
+                quickPick._accept = handler;
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                quickPick.value = "zzz";
+                quickPick._change?.("zzz");
+                openPageQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    canonicalPath: item.canonicalPath,
+                    action: item.action,
+                  })),
+                  placeholder: quickPick.placeholder,
+                  value: quickPick.value,
+                };
+                quickPick.selectedItems = quickPick.items.filter(
+                  (item) => item.action === "directInput",
+                );
+                quickPick._accept?.();
+              },
+              dispose() {},
+            };
+
+            return quickPick;
+          },
+          showInputBox: async () => "/team/dev/spec",
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.openPage");
+        },
+      );
+
+      assert(
+        openPageQuickPick.items.length === 1 &&
+          openPageQuickPick.items[0]?.action === "directInput",
+        `Expected direct-input only result for no-match query: ${toJsonString(openPageQuickPick)}`,
+      );
+      const activePath = await getActivePath();
+      assert(
+        activePath === "/team/dev/spec.md",
+        `Unexpected direct-input open result after no-match query: ${activePath}`,
+      );
+    },
+  );
+
+  await runCase(
+    "open page quick pick keeps direct input at the end for basename queries",
+    async () => {
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+
+      let openPageQuickPick = { items: [], placeholder: "", value: "" };
+      await withWindowOverrides(
+        {
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              value: "",
+              onDidChangeValue(handler) {
+                quickPick._change = handler;
+                return { dispose() {} };
+              },
+              onDidAccept(handler) {
+                quickPick._accept = handler;
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                quickPick.value = "spec";
+                quickPick._change?.("spec");
+                openPageQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    canonicalPath: item.canonicalPath,
+                    action: item.action,
+                  })),
+                  placeholder: quickPick.placeholder,
+                  value: quickPick.value,
+                };
+                quickPick.selectedItems = quickPick.items.filter(
+                  (item) => item.canonicalPath === "/team/dev/spec",
+                );
+                quickPick._accept?.();
+              },
+              dispose() {},
+            };
+
+            return quickPick;
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.openPage");
+        },
+      );
+
+      assert(
+        openPageQuickPick.items.at(-1)?.action === "directInput",
+        `Expected direct-input fallback at end for basename query: ${toJsonString(openPageQuickPick)}`,
+      );
+      assert(
+        openPageQuickPick.items[0]?.canonicalPath === "/team/dev/spec",
+        `Expected candidate page to remain first for basename query: ${toJsonString(openPageQuickPick)}`,
+      );
+    },
+  );
+
+  await runCase(
+    "open page quick pick moves direct input to the top for path-like queries",
+    async () => {
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+
+      let openPageQuickPick = { items: [], placeholder: "", value: "" };
+      await withWindowOverrides(
+        {
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              value: "",
+              onDidChangeValue(handler) {
+                quickPick._change = handler;
+                return { dispose() {} };
+              },
+              onDidAccept(handler) {
+                quickPick._accept = handler;
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                quickPick.value = "/team/dev/spec";
+                quickPick._change?.("/team/dev/spec");
+                openPageQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    canonicalPath: item.canonicalPath,
+                    action: item.action,
+                  })),
+                  placeholder: quickPick.placeholder,
+                  value: quickPick.value,
+                };
+                quickPick.selectedItems = quickPick.items.filter(
+                  (item) => item.action === "directInput",
+                );
+                quickPick._accept?.();
+              },
+              dispose() {},
+            };
+
+            return quickPick;
+          },
+          showInputBox: async () => "/team/dev/spec",
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.openPage");
+        },
+      );
+
+      assert(
+        openPageQuickPick.items[0]?.action === "directInput",
+        `Expected direct-input fallback first for path-like query: ${toJsonString(openPageQuickPick)}`,
+      );
+      const activePath = await getActivePath();
+      assert(
+        activePath === "/team/dev/spec.md",
+        `Unexpected direct-input open result for path-like query: ${activePath}`,
+      );
+    },
+  );
+
+  await runCase(
+    "bookmarks commands add current page and reopen it from the bookmark picker",
+    async () => {
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      await vscode.commands.executeCommand("growi.addCurrentPageBookmark");
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/docs");
+
+      let bookmarkQuickPick = { items: [], placeholder: "" };
+      await withWindowOverrides(
+        {
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              onDidAccept(handler) {
+                quickPick._accept = handler;
+                return { dispose() {} };
+              },
+              onDidTriggerItemButton(_handler) {
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                quickPick.selectedItems = quickPick.items.filter(
+                  (item) => item.canonicalPath === "/team/dev/spec",
+                );
+                bookmarkQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    detail: item.detail,
+                    canonicalPath: item.canonicalPath,
+                  })),
+                  placeholder: quickPick.placeholder,
+                };
+                quickPick._accept?.();
+              },
+              dispose() {},
+            };
+            return quickPick;
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.showBookmarks");
+        },
+      );
+
+      assert(
+        bookmarkQuickPick.placeholder ===
+          "ブックマークからページを選択してください。",
+        `Unexpected bookmark placeholder: ${toJsonString(bookmarkQuickPick)}`,
+      );
+      assert(
+        bookmarkQuickPick.items.some(
+          (item) =>
+            item.label === "spec" &&
+            item.description === "/team/dev/spec" &&
+            item.detail?.startsWith("追加日時: ") &&
+            item.canonicalPath === "/team/dev/spec",
+        ),
+        `Expected /team/dev/spec bookmark in quick pick: ${toJsonString(bookmarkQuickPick)}`,
+      );
+
+      const activePath = await getActivePath();
+      assert(
+        activePath === "/team/dev/spec.md",
+        `Unexpected bookmark reopen result: ${activePath}`,
+      );
+    },
+  );
+
+  await runCase(
+    "Show Bookmarks marks bookmarks outside registered prefixes",
+    async () => {
+      await resetStats(adminUrl);
+      await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      await vscode.commands.executeCommand("growi.addCurrentPageBookmark");
+      await vscode.commands.executeCommand("growi.deletePrefix", "/team/dev");
+
+      let bookmarkQuickPick = { items: [], placeholder: "" };
+      await withWindowOverrides(
+        {
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              onDidAccept(_handler) {
+                return { dispose() {} };
+              },
+              onDidTriggerItemButton(_handler) {
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                bookmarkQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    detail: item.detail,
+                    canonicalPath: item.canonicalPath,
+                  })),
+                  placeholder: quickPick.placeholder,
+                };
+              },
+              dispose() {},
+            };
+            return quickPick;
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.showBookmarks");
+        },
+      );
+
+      assert(
+        bookmarkQuickPick.items.some(
+          (item) =>
+            item.canonicalPath === "/team/dev/spec" &&
+            item.detail?.startsWith("状態: prefix未登録 ・ 追加日時:"),
+        ),
+        `Expected outside-prefix bookmark detail: ${toJsonString(bookmarkQuickPick)}`,
+      );
+    },
+  );
+
+  await runCase("Show Bookmarks marks unresolvable bookmarks", async () => {
+    await updateFixture(
+      adminUrl,
+      BACKLINK_FIXTURE_PAGES.filter((page) => page.path !== "/team/dev/spec"),
+      [
+        {
+          pageId: "page-2",
+          addedAt: "2026-04-17T00:01:00.000Z",
+        },
+      ],
+    );
+    await vscode.commands.executeCommand("growi.addPrefix", "/team/dev");
+
+    let bookmarkQuickPick = { items: [], placeholder: "" };
+    await withWindowOverrides(
+      {
+        createQuickPick: () => {
+          const quickPick = {
+            items: [],
+            selectedItems: [],
+            placeholder: "",
+            onDidAccept(_handler) {
+              return { dispose() {} };
+            },
+            onDidTriggerItemButton(_handler) {
+              return { dispose() {} };
+            },
+            onDidHide(_handler) {
+              return { dispose() {} };
+            },
+            show() {
+              bookmarkQuickPick = {
+                items: quickPick.items.map((item) => ({
+                  label: item.label,
+                  description: item.description,
+                  detail: item.detail,
+                  canonicalPath: item.canonicalPath,
+                })),
+                placeholder: quickPick.placeholder,
+              };
+            },
+            dispose() {},
+          };
+          return quickPick;
+        },
+      },
+      async () => {
+        await vscode.commands.executeCommand("growi.showBookmarks");
+      },
+    );
+
+    assert(
+      bookmarkQuickPick.items.some(
+        (item) =>
+          item.canonicalPath === "/team/dev/spec" &&
+          item.detail ===
+            "状態: 開けない ・ 追加日時: 2026-04-17T00:01:00.000Z",
+      ),
+      `Expected unresolvable bookmark detail: ${toJsonString(bookmarkQuickPick)}`,
+    );
+  });
+
+  await runCase(
+    "Explorer bookmark commands accept page URI targets and keep the bookmark list in sync",
+    async () => {
+      await resetStats(adminUrl);
+      const runtimeLogPath = process.env.GROWI_JSONL_PATH;
+      assert(runtimeLogPath, "Missing GROWI_JSONL_PATH.");
+      await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
+      const bookmarkTarget = {
+        uri: { scheme: "growi", path: "/team/dev/spec.md" },
+        contextValue: "growi.page",
+      };
+
+      await vscode.commands.executeCommand(
+        "growi.addCurrentPageBookmark",
+        bookmarkTarget,
+      );
+
+      let bookmarkQuickPick = { items: [], placeholder: "" };
+      await withWindowOverrides(
+        {
+          createQuickPick: () => {
+            const quickPick = {
+              items: [],
+              selectedItems: [],
+              placeholder: "",
+              onDidAccept(handler) {
+                quickPick._accept = handler;
+                return { dispose() {} };
+              },
+              onDidTriggerItemButton(_handler) {
+                return { dispose() {} };
+              },
+              onDidHide(_handler) {
+                return { dispose() {} };
+              },
+              show() {
+                bookmarkQuickPick = {
+                  items: quickPick.items.map((item) => ({
+                    label: item.label,
+                    description: item.description,
+                    canonicalPath: item.canonicalPath,
+                  })),
+                  placeholder: quickPick.placeholder,
+                };
+                quickPick.selectedItems = quickPick.items.filter(
+                  (item) => item.canonicalPath === "/team/dev/spec",
+                );
+                quickPick._accept?.();
+              },
+              dispose() {},
+            };
+            return quickPick;
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.showBookmarks");
+        },
+      );
+
+      assert(
+        bookmarkQuickPick.items.some(
+          (item) => item.canonicalPath === "/team/dev/spec",
+        ),
+        `Expected explorer bookmark target in quick pick: ${toJsonString(bookmarkQuickPick)}`,
+      );
+
+      const addBookmarkLog = await waitForFileMatching(
+        runtimeLogPath,
+        /command:growi\.addCurrentPageBookmark/,
+      );
+      assert(
+        /"event":"command\.started"/.test(addBookmarkLog),
+        "Missing command.started log for addCurrentPageBookmark.",
+      );
+
+      await vscode.commands.executeCommand(
+        "growi.removeCurrentPageBookmark",
+        bookmarkTarget,
+      );
+
+      const infoMessages = [];
+      await withWindowOverrides(
+        {
+          showInformationMessage: async (message) => {
+            infoMessages.push(message);
+            return undefined;
+          },
+        },
+        async () => {
+          await vscode.commands.executeCommand("growi.showBookmarks");
+        },
+      );
+
+      assert(
+        infoMessages.includes(
+          "ブックマークはありません。現在ページで Add Current Page to Bookmarks を実行してください。",
+        ),
+        `Expected empty bookmark message after explorer removal: ${toJsonString(infoMessages)}`,
+      );
+
+      const removeBookmarkLog = await waitForFileMatching(
+        runtimeLogPath,
+        /command:growi\.removeCurrentPageBookmark/,
+      );
+      assert(
+        /"event":"command\.started"/.test(removeBookmarkLog),
+        "Missing command.started log for removeCurrentPageBookmark.",
       );
     },
   );

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -60,6 +61,13 @@ vi.mock("vscode", () => {
     FileType: {
       File: 1,
       Directory: 2,
+    },
+    FileSystemError: {
+      FileNotFound: vi.fn((message?: string) => new Error(message)),
+      FileIsADirectory: vi.fn((message?: string) => new Error(message)),
+      FileNotADirectory: vi.fn((message?: string) => new Error(message)),
+      NoPermissions: vi.fn((message?: string) => new Error(message)),
+      Unavailable: vi.fn((message?: string) => new Error(message)),
     },
     commands: {
       executeCommand: vi.fn(async () => {}),
@@ -157,6 +165,18 @@ vi.mock("vscode", () => {
         },
       ),
     },
+    scm: {
+      createSourceControl: vi.fn(() => ({
+        count: 0,
+        inputBox: {
+          visible: true,
+        },
+        createResourceGroup: vi.fn(() => ({
+          resourceStates: [],
+        })),
+        dispose: vi.fn(),
+      })),
+    },
   };
 });
 
@@ -164,6 +184,10 @@ import * as vscode from "vscode";
 import { activate, deactivate, extendMarkdownIt } from "../../src/extension";
 import * as assetProxy from "../../src/vscode/assetProxy";
 import { GROWI_COMMANDS } from "../../src/vscode/commands";
+import {
+  GROWI_MIRROR_COMPARE_SOURCE_CONTROL_ID,
+  GROWI_MIRROR_COMPARE_SOURCE_CONTROL_LABEL,
+} from "../../src/vscode/mirrorCompareSourceControl";
 import { PREFIX_REGISTRY_STATE_KEY } from "../../src/vscode/prefixRegistry";
 import { GROWI_REVISION_SCHEME } from "../../src/vscode/revisionModel";
 
@@ -292,6 +316,10 @@ function createJsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
+function hashBody(body: string): string {
+  return createHash("sha256").update(body).digest("hex");
+}
+
 function resolveRegisteredCommand(
   command: string,
 ): (...args: unknown[]) => Promise<void> {
@@ -365,11 +393,35 @@ describe("bootstrap extension entrypoint", () => {
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.addCurrentPageBookmark,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.removeCurrentPageBookmark,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.showBookmarks,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.showLocalMirrorActions,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.showRevisionHistoryDiff,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.scmCompareMirrorAgain,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.scmUploadMirrorResources,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.scmTakeRemoteMirrorResources,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -491,6 +543,18 @@ describe("bootstrap extension entrypoint", () => {
     expect(registerTextDocumentContentProviderMock).toHaveBeenCalledWith(
       GROWI_REVISION_SCHEME,
       expect.any(Object),
+    );
+  });
+
+  it("registers the mirror compare source control on activate", () => {
+    const createSourceControlMock = vi.mocked(vscode.scm.createSourceControl);
+    createSourceControlMock.mockClear();
+
+    activate(createContext().context);
+
+    expect(createSourceControlMock).toHaveBeenCalledWith(
+      GROWI_MIRROR_COMPARE_SOURCE_CONTROL_ID,
+      GROWI_MIRROR_COMPARE_SOURCE_CONTROL_LABEL,
     );
   });
 
@@ -646,9 +710,9 @@ describe("bootstrap extension entrypoint", () => {
       (item) => item.uri.path === "/team/dev/spec.md",
     );
     expect(stalePage).toBeDefined();
-    expect(stalePage?.description).toBe("remote changed");
+    expect(stalePage?.description).toBe("remote newer");
     expect(stalePage?.tooltip).toBe(
-      "remote が更新されています。Refresh Current Page で再読込してください。",
+      "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
     );
     expect((stalePage?.iconPath as { id?: string } | undefined)?.id).toBe(
       "warning",
@@ -671,6 +735,193 @@ describe("bootstrap extension entrypoint", () => {
     expect((freshPage?.iconPath as { id?: string } | undefined)?.id).not.toBe(
       "warning",
     );
+  });
+
+  it("shows conflict decoration when mirror compare reports conflicts", async () => {
+    const baseBody = "# body\n";
+    const localBody = "# local body\n";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-1" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+            lastUpdateUser: { username: "alice" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: baseBody,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-1",
+            path: "/team/dev/spec",
+            revision: { _id: "rev-2" },
+            updatedAt: "2026-03-08T09:05:00.000Z",
+            lastUpdateUser: { username: "bob" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# refreshed from remote\n",
+          },
+        }),
+      );
+    const { context } = createContext({
+      fetchMock,
+      prefixes: ["/team/dev"],
+      readFileMock: vi.fn(async (uri: { path: string }) => {
+        if (
+          uri.path ===
+          "/workspace/.growi-mirrors/growi.example.com/team/dev/spec/.growi-mirror.json"
+        ) {
+          return new TextEncoder().encode(
+            JSON.stringify({
+              version: 1,
+              baseUrl: "https://growi.example.com/",
+              rootCanonicalPath: "/team/dev/spec",
+              mode: "page",
+              exportedAt: "2026-03-08T09:00:00.000Z",
+              pages: [
+                {
+                  canonicalPath: "/team/dev/spec",
+                  relativeFilePath: "__spec__.md",
+                  pageId: "page-1",
+                  baseRevisionId: "rev-1",
+                  exportedAt: "2026-03-08T09:00:00.000Z",
+                  contentHash: hashBody(baseBody),
+                },
+              ],
+            }),
+          );
+        }
+        if (
+          uri.path ===
+          "/workspace/.growi-mirrors/growi.example.com/team/dev/spec/__spec__.md"
+        ) {
+          return new TextEncoder().encode(localBody);
+        }
+        return new TextEncoder().encode("# default body");
+      }),
+    });
+    (
+      vscode.workspace as unknown as {
+        workspaceFolders: {
+          uri: {
+            scheme: string;
+            fsPath: string;
+            path: string;
+            toString(): string;
+          };
+          name: string;
+        }[];
+      }
+    ).workspaceFolders = [
+      {
+        uri: {
+          scheme: "file",
+          fsPath: "/workspace",
+          path: "/workspace",
+          toString: () => "file:/workspace",
+        },
+        name: "workspace",
+      },
+    ];
+
+    activate(context);
+
+    const registeredProvider = vi.mocked(
+      vscode.workspace.registerFileSystemProvider,
+    ).mock.calls[0]?.[1] as unknown as {
+      readFile(uri: { path: string }): Promise<Uint8Array>;
+    };
+    const treeProvider = vi.mocked(vscode.window.registerTreeDataProvider).mock
+      .calls[0]?.[1] as unknown as {
+      getChildren(element?: {
+        kind: "directory" | "page";
+        uri: { path: string };
+        contextValue?: string;
+      }): Promise<
+        {
+          uri: { path: string };
+          description?: string;
+          tooltip?: string;
+          iconPath?: { id: string };
+        }[]
+      >;
+    };
+
+    vi.mocked(vscode.workspace.fs.readDirectory).mockImplementation(
+      async (uri: { path: string }) => {
+        if (uri.path === "/team/dev/" || uri.path === "/team/dev") {
+          return [["spec.md", vscode.FileType.File]];
+        }
+        return [];
+      },
+    );
+
+    await registeredProvider.readFile({
+      path: "/team/dev/spec.md",
+    } as never);
+
+    const growiEditorChangeListener = vi.mocked(
+      vscode.window.onDidChangeActiveTextEditor,
+    ).mock.calls[0]?.[0] as (editor: {
+      document: {
+        uri: { scheme: string; path: string };
+      };
+    }) => void;
+
+    growiEditorChangeListener({
+      document: {
+        uri: {
+          scheme: "file",
+          path: "/tmp/note.md",
+        },
+      },
+    });
+    await expect(
+      resolveRegisteredCommand(
+        "growi.__test.getMirrorCompareSourceControlState",
+      )(),
+    ).resolves.toBeUndefined();
+    growiEditorChangeListener({
+      document: {
+        uri: {
+          scheme: "growi",
+          path: "/team/dev/spec.md",
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const [root] = await treeProvider.getChildren();
+    const conflictPage = (await treeProvider.getChildren(root as never)).find(
+      (item) => item.uri.path === "/team/dev/spec.md",
+    );
+    expect(conflictPage?.description).toBe("Conflicts");
+    expect(conflictPage?.tooltip).toBe(
+      "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+    );
+    expect((conflictPage?.iconPath as { id?: string } | undefined)?.id).toBe(
+      "warning",
+    );
+    await expect(
+      resolveRegisteredCommand(
+        "growi.__test.getMirrorCompareSourceControlState",
+      )(),
+    ).resolves.toBeUndefined();
   });
 
   it("reveals runtime log directory only in debug-f5 mode", async () => {
@@ -1354,6 +1605,10 @@ describe("bootstrap extension entrypoint", () => {
         {
           label: "添付一覧を表示",
           command: GROWI_COMMANDS.showCurrentPageAttachments,
+        },
+        {
+          label: "ブックマークに追加",
+          command: GROWI_COMMANDS.addCurrentPageBookmark,
         },
         {
           label: "履歴差分を表示",

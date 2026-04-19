@@ -87,6 +87,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
   it("returns registered prefixes as root directory items", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team/dev", "/team/ops"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(),
     });
 
@@ -110,6 +111,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
   it("builds page and directory children from growi readDirectory entries", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(async () =>
         createDirectoryEntries([
           ["dev", vscode.FileType.Directory],
@@ -141,6 +143,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
   it("keeps standalone directories and pages visible when there is no name collision", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(async () =>
         createDirectoryEntries([
           ["docs", vscode.FileType.Directory],
@@ -167,6 +170,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
   it("uses __root__.md as the synthetic page label for the slash prefix", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(async () =>
         createDirectoryEntries([["guide.md", vscode.FileType.File]]),
       ),
@@ -183,6 +187,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
   it("assigns vscode.open command to page items", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(async () =>
         createDirectoryEntries([["spec.md", vscode.FileType.File]]),
       ),
@@ -198,19 +203,33 @@ describe("GrowiPrefixTreeDataProvider", () => {
     });
   });
 
-  it("marks page items stale with warning decoration", async () => {
+  it("renders opened page decoration states with warning decoration", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team/dev"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(async () =>
-        createDirectoryEntries([["spec.md", vscode.FileType.File]]),
+        createDirectoryEntries([
+          ["conflict.md", vscode.FileType.File],
+          ["remote.md", vscode.FileType.File],
+          ["spec.md", vscode.FileType.File],
+        ]),
       ),
     });
 
     provider.markCanonicalPathStale("/team/dev/spec");
+    provider.setPageDecorationStatus("/team/dev/remote", "remoteChanges");
+    provider.setPageDecorationStatus("/team/dev/conflict", "conflicts");
 
     const [root] = await provider.getChildren();
-    const stalePage = (await provider.getChildren(root)).find(
+    const children = await provider.getChildren(root);
+    const stalePage = children.find(
       (item) => item.uri.path === "/team/dev/spec.md",
+    );
+    const remoteChangedPage = children.find(
+      (item) => item.uri.path === "/team/dev/remote.md",
+    );
+    const conflictPage = children.find(
+      (item) => item.uri.path === "/team/dev/conflict.md",
     );
 
     expect(stalePage?.label).toBe("spec.md");
@@ -218,15 +237,24 @@ describe("GrowiPrefixTreeDataProvider", () => {
     expect((stalePage?.iconPath as { id?: string } | undefined)?.id).toBe(
       "warning",
     );
-    expect(stalePage?.description).toBe("remote changed");
+    expect(stalePage?.description).toBe("remote newer");
     expect(stalePage?.tooltip).toBe(
-      "remote が更新されています。Refresh Current Page で再読込してください。",
+      "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
+    );
+    expect(remoteChangedPage?.description).toBe("Remote Changes");
+    expect(remoteChangedPage?.tooltip).toBe(
+      "remote 側の変更が local mirror に未取り込みです。Compare Local Mirror with GROWI または Take Remote Changes で確認してください。",
+    );
+    expect(conflictPage?.description).toBe("Conflicts");
+    expect(conflictPage?.tooltip).toBe(
+      "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
     );
   });
 
   it("clears stale decorations for matching canonical paths", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team"],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(async () =>
         createDirectoryEntries([
           ["dev", vscode.FileType.Directory],
@@ -249,9 +277,78 @@ describe("GrowiPrefixTreeDataProvider", () => {
     expect(stalePage?.tooltip).toBeUndefined();
   });
 
+  it("prefers live status over compare snapshot and falls back to snapshot over remote newer", async () => {
+    const provider = createGrowiPrefixTreeDataProvider({
+      getRegisteredPrefixes: () => ["/team/dev"],
+      isBookmarked: vi.fn(() => false),
+      readDirectory: vi.fn(async () =>
+        createDirectoryEntries([
+          ["conflict.md", vscode.FileType.File],
+          ["remote.md", vscode.FileType.File],
+        ]),
+      ),
+    });
+
+    provider.setCompareSnapshot({
+      currentCanonicalPath: "/team/dev",
+      targetScope: "subtree",
+      resources: [
+        {
+          canonicalPath: "/team/dev/conflict",
+          status: "LocalChanged",
+          localFileUri: {
+            scheme: "file",
+            path: "/tmp/conflict.md",
+            fsPath: "/tmp/conflict.md",
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/conflict.md",
+          },
+        },
+        {
+          canonicalPath: "/team/dev/remote",
+          status: "RemoteChanged",
+          localFileUri: {
+            scheme: "file",
+            path: "/tmp/remote.md",
+            fsPath: "/tmp/remote.md",
+          },
+          remoteUri: {
+            scheme: "growi",
+            path: "/team/dev/remote.md",
+          },
+        },
+      ],
+    });
+    provider.setPageDecorationStatus("/team/dev/conflict", "conflicts");
+    provider.setPageDecorationStatus("/team/dev/remote", "remoteNewer");
+
+    const [root] = await provider.getChildren();
+    const children = await provider.getChildren(root);
+    const conflictPage = children.find(
+      (item) => item.uri.path === "/team/dev/conflict.md",
+    );
+    const remotePage = children.find(
+      (item) => item.uri.path === "/team/dev/remote.md",
+    );
+
+    expect(conflictPage?.description).toBe("Conflicts");
+    expect(remotePage?.description).toBe("Remote Changes");
+
+    provider.clearCompareSnapshot();
+
+    const clearedChildren = await provider.getChildren(root);
+    const clearedRemotePage = clearedChildren.find(
+      (item) => item.uri.path === "/team/dev/remote.md",
+    );
+    expect(clearedRemotePage?.description).toBe("remote newer");
+  });
+
   it("fires refresh events", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => [],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(),
     });
     const listener = vi.fn();
@@ -265,6 +362,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
   it("returns no children for page items", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => [],
+      isBookmarked: vi.fn(() => false),
       readDirectory: vi.fn(),
     });
     const page = {
@@ -274,5 +372,32 @@ describe("GrowiPrefixTreeDataProvider", () => {
     } as PrefixTreeItem;
 
     await expect(provider.getChildren(page)).resolves.toEqual([]);
+  });
+
+  it("marks bookmarked pages in the tree item context value", async () => {
+    const provider = createGrowiPrefixTreeDataProvider({
+      getRegisteredPrefixes: () => ["/team"],
+      isBookmarked: vi.fn(
+        (canonicalPath: string) =>
+          canonicalPath === "/team" || canonicalPath === "/team/guide",
+      ),
+      readDirectory: vi.fn(async () =>
+        createDirectoryEntries([
+          ["docs", vscode.FileType.Directory],
+          ["docs.md", vscode.FileType.File],
+          ["guide.md", vscode.FileType.File],
+        ]),
+      ),
+    });
+
+    const [root] = await provider.getChildren();
+    const children = await provider.getChildren(root);
+
+    expect(children.map((item) => item.contextValue)).toEqual([
+      "growi.directoryPageBookmarked",
+      "growi.directory",
+      "growi.directoryPage",
+      "growi.pageBookmarked",
+    ]);
   });
 });
