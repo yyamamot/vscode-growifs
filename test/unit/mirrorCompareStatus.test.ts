@@ -4,7 +4,7 @@ import {
   buildMirrorManifestPathWithInstanceKey,
   serializeMirrorManifest,
 } from "../../src/vscode/localRoundTrip";
-import { lookupMirrorManifestSelection } from "../../src/vscode/mirrorCompareStatus";
+import { lookupMirrorManifestSelection } from "../../src/vscode/mirror/mirrorCompareStatus";
 
 function createManifest(
   rootCanonicalPath: string,

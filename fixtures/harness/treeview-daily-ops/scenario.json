@@ -1,0 +1,372 @@
+{
+  "id": "treeview-daily-ops",
+  "title": "TreeView-first daily operations UX evidence review",
+  "aliases": ["treeview-ux", "daily-ops"],
+  "uiAreas": ["explorer", "menus", "quickPick", "localMirror", "currentPage"],
+  "changedFileGlobs": [
+    "package.json",
+    "src/extension.ts",
+    "src/vscode/prefixTree.ts",
+    "src/vscode/commands.ts",
+    "src/harness/uiReview.ts",
+    "fixtures/harness/**"
+  ],
+  "target": "TreeView-first daily GROWI operations and LLM usability review",
+  "reviewFocus": [
+    "TreeView-first discovery for prefix root, directory page, normal page, and partial load-more states.",
+    "Whether open, create, rename, delete, bookmark, current-page, and local mirror actions are findable from the TreeView and related menus.",
+    "Whether current page actions, local mirror actions, and bookmarks QuickPicks present daily operations in a coherent order with enough context.",
+    "Whether the evidence pack is sufficient for an LLM reviewer to propose follow-up IMP candidates without making product UI changes."
+  ],
+  "uxReviewQuestions": [
+    "Can a user understand what the prefix root represents and where the directory page differs from a normal page?",
+    "Are destructive or state-changing actions visible with enough context to evaluate risk without executing them in the scenario?",
+    "Do current-page, local mirror, and bookmark QuickPicks make the next action obvious for a user starting from the TreeView?",
+    "Does partial load-more evidence make it clear that the tree is incomplete and how the user can continue browsing?",
+    "Which findings should become separate IMP candidates rather than being fixed as part of this review evidence scenario?"
+  ],
+  "fixture": {
+    "pages": [
+      {
+        "pageId": "page-dev-root",
+        "path": "/team/dev",
+        "body": "# team dev page",
+        "updatedAt": "2026-03-08T01:00:00.000Z",
+        "updatedBy": "system"
+      },
+      {
+        "pageId": "page-alpha",
+        "path": "/team/dev/alpha",
+        "body": "# alpha page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "alpha-owner"
+      },
+      {
+        "pageId": "page-docs",
+        "path": "/team/dev/docs",
+        "body": "# docs page",
+        "updatedAt": "2026-03-08T01:02:00.000Z",
+        "updatedBy": "docs-owner"
+      },
+      {
+        "pageId": "page-guide",
+        "path": "/team/dev/docs/guide",
+        "body": "# guide page",
+        "updatedAt": "2026-03-08T01:03:00.000Z",
+        "updatedBy": "guide-owner"
+      }
+    ],
+    "generatedPages": [
+      {
+        "prefix": "/team/dev/many",
+        "count": 101,
+        "namePrefix": "page-",
+        "bodyPrefix": "# generated page ",
+        "updatedBy": "load-more-owner"
+      }
+    ],
+    "bookmarks": [
+      {
+        "canonicalPath": "/team/dev/alpha",
+        "addedAt": "2026-03-08T02:00:00.000Z",
+        "pageId": "page-alpha"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 3
+  },
+  "commands": [
+    {
+      "id": "workbench.view.explorer"
+    },
+    {
+      "id": "growi.addPrefix",
+      "args": ["/team/dev"]
+    },
+    {
+      "id": "growi.explorer.focus"
+    },
+    {
+      "id": "list.expand"
+    },
+    {
+      "id": "list.expand"
+    },
+    {
+      "id": "growi.openPage",
+      "args": ["/team/dev/alpha"]
+    },
+    {
+      "id": "growi.showCurrentPageActions",
+      "quickPick": {
+        "kind": "currentPageActions",
+        "action": "collectOnly",
+        "select": {
+          "label": "ページ情報を表示"
+        }
+      }
+    },
+    {
+      "id": "growi.showLocalMirrorActions",
+      "quickPick": {
+        "kind": "localMirrorActions",
+        "action": "collectOnly",
+        "select": {
+          "label": "GROWIとの差分を確認"
+        }
+      }
+    },
+    {
+      "id": "growi.showBookmarks",
+      "quickPick": {
+        "kind": "bookmarks",
+        "select": {
+          "canonicalPath": "/team/dev/alpha"
+        }
+      }
+    }
+  ],
+  "checks": {
+    "requiredTreeItems": [
+      {
+        "label": "/team/dev",
+        "kind": "directory",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.prefixRoot"
+      },
+      {
+        "label": "__dev__.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.directoryPage"
+      },
+      {
+        "label": "docs",
+        "kind": "directory",
+        "canonicalPath": "/team/dev/docs",
+        "contextValue": "growi.directory"
+      },
+      {
+        "label": "__docs__.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev/docs",
+        "contextValue": "growi.directoryPage"
+      },
+      {
+        "label": "alpha.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev/alpha",
+        "contextValue": "growi.pageBookmarked"
+      },
+      {
+        "label": "さらに読み込む",
+        "kind": "loadMore",
+        "canonicalPath": "/team/dev/many",
+        "contextValue": "growi.loadMore",
+        "description": "部分表示: /team/dev/many・取得済み 100 件"
+      }
+    ],
+    "requiredQuickPickItems": [
+      {
+        "name": "currentPageActions",
+        "placeholder": "現在ページに対して実行する操作を選択してください。",
+        "item": {
+          "label": "ページを更新"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "被リンクを表示"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "ページ情報を表示"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "添付一覧を表示"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "履歴差分を表示"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "現在ページをローカルに同期",
+          "description": "__<page>__.md と .growi-mirror.json を作成または更新"
+        }
+      },
+      {
+        "name": "localMirrorActions",
+        "placeholder": "ローカルミラーに対して実行する操作を選択してください。",
+        "item": {
+          "label": "現在ページをローカルに同期"
+        }
+      },
+      {
+        "name": "localMirrorActions",
+        "item": {
+          "label": "GROWIとの差分を確認"
+        }
+      },
+      {
+        "name": "localMirrorActions",
+        "item": {
+          "label": "SCMで確認してGROWIに反映"
+        }
+      },
+      {
+        "name": "bookmarks",
+        "placeholder": "ブックマークからページを選択してください。",
+        "item": {
+          "label": "alpha",
+          "description": "/team/dev/alpha",
+          "canonicalPath": "/team/dev/alpha"
+        }
+      }
+    ],
+    "requiredSelectedQuickPickItems": [
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "ページ情報を表示"
+        }
+      },
+      {
+        "name": "localMirrorActions",
+        "item": {
+          "label": "GROWIとの差分を確認"
+        }
+      },
+      {
+        "name": "bookmarks",
+        "item": {
+          "canonicalPath": "/team/dev/alpha"
+        }
+      }
+    ],
+    "requiredQuickPickItemActions": [
+      {
+        "name": "bookmarks",
+        "item": {
+          "canonicalPath": "/team/dev/alpha"
+        },
+        "button": {
+          "tooltip": "ブックマークから削除"
+        }
+      }
+    ],
+    "requiredMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "01_open@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreatePageHere"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerRenamePage"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.addCurrentPageBookmark"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerRefreshCurrentPage"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowBacklinks"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageAttachments",
+        "group": "02_inspect@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowRevisionHistoryDiff",
+        "group": "02_inspect@4"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openCurrentPageHub",
+        "group": "02_inspect@5"
+      },
+      {
+        "menu": "view/title",
+        "command": "growi.showBookmarks"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+        "group": "04_localMirror@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorWithGrowi",
+        "group": "04_localMirror@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+        "group": "04_localMirror@4"
+      }
+    ],
+    "forbiddenMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageItem",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageItem",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openDirectoryPage",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageInfo"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorToGrowi"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi"
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix",
+      "growi.openPage",
+      "growi.showCurrentPageActions",
+      "growi.showLocalMirrorActions",
+      "growi.showBookmarks"
+    ]
+  }
+}

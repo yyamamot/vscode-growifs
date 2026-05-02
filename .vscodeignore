@@ -6,6 +6,7 @@ scripts/**
 node_modules/**
 .agents/**
 .ai/**
+.tmp/**
 .growi-logs/**
 .vscode/**
 .vscode-test/**

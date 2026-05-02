@@ -1,0 +1,134 @@
+{
+  "id": "bookmarks-states",
+  "title": "Bookmarks QuickPick state review",
+  "aliases": [
+    "bookmarks",
+    "bookmark-states"
+  ],
+  "uiAreas": [
+    "quickPick",
+    "bookmarks",
+    "explorer"
+  ],
+  "changedFileGlobs": [
+    "src/vscode/commands.ts",
+    "src/vscode/prefixTree.ts",
+    "src/extension.ts",
+    "src/harness/uiReview.ts"
+  ],
+  "target": "Bookmark QuickPick entries for normal, outside-prefix, and selected states",
+  "fixture": {
+    "pages": [
+      {
+        "pageId": "page-spec",
+        "path": "/team/dev/spec",
+        "body": "# spec page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "spec-owner"
+      },
+      {
+        "pageId": "page-outside",
+        "path": "/outside/reference",
+        "body": "# outside page",
+        "updatedAt": "2026-03-08T01:02:00.000Z",
+        "updatedBy": "outside-owner"
+      }
+    ],
+    "bookmarks": [
+      {
+        "canonicalPath": "/team/dev/spec",
+        "addedAt": "2026-03-08T02:00:00.000Z",
+        "pageId": "page-spec"
+      },
+      {
+        "canonicalPath": "/outside/reference",
+        "addedAt": "2026-03-08T02:01:00.000Z",
+        "pageId": "page-outside"
+      },
+      {
+        "canonicalPath": "/deleted/page",
+        "addedAt": "2026-03-08T02:02:00.000Z",
+        "pageId": "page-deleted",
+        "status": "unresolvable"
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.showBookmarks",
+      "quickPick": {
+        "kind": "bookmarks",
+        "select": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    }
+  ],
+  "checks": {
+    "requiredQuickPickItems": [
+      {
+        "name": "bookmarks",
+        "placeholder": "ブックマークからページを選択してください。",
+        "item": {
+          "label": "spec",
+          "description": "/team/dev/spec",
+          "canonicalPath": "/team/dev/spec"
+        }
+      },
+      {
+        "name": "bookmarks",
+        "item": {
+          "description": "/outside/reference",
+          "detail": "状態: prefix未登録 ・ 追加日時: 2026-03-08T02:01:00.000Z",
+          "canonicalPath": "/outside/reference"
+        }
+      },
+      {
+        "name": "bookmarks",
+        "item": {
+          "description": "/deleted/page",
+          "detail": "状態: 開けない ・ 追加日時: 2026-03-08T02:02:00.000Z",
+          "canonicalPath": "/deleted/page"
+        }
+      }
+    ],
+    "forbiddenQuickPickItems": [
+      {
+        "name": "bookmarks",
+        "item": {
+          "label": "URL / path を直接入力",
+          "action": "directInput"
+        }
+      }
+    ],
+    "requiredSelectedQuickPickItems": [
+      {
+        "name": "bookmarks",
+        "item": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    ],
+    "requiredQuickPickItemActions": [
+      {
+        "name": "bookmarks",
+        "item": {
+          "canonicalPath": "/team/dev/spec"
+        },
+        "button": {
+          "tooltip": "ブックマークから削除"
+        }
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix",
+      "growi.showBookmarks"
+    ]
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "id": "explorer-partial-listing",
+  "title": "GROWI Explorer partial listing and load more review",
+  "aliases": [
+    "explorer-partial",
+    "load-more"
+  ],
+  "uiAreas": [
+    "explorer",
+    "partialListing"
+  ],
+  "changedFileGlobs": [
+    "src/extension.ts",
+    "src/vscode/fsProvider.ts",
+    "src/vscode/growiApi.ts",
+    "src/vscode/prefixTree.ts",
+    "src/harness/uiReview.ts",
+    "test/integration/extension-host/run-tests.mjs",
+    "fixtures/harness/**"
+  ],
+  "target": "GROWI Explorer partial listing and load-more item",
+  "fixture": {
+    "pages": [
+      {
+        "path": "/team/dev",
+        "body": "# team dev page",
+        "updatedAt": "2026-03-08T00:00:00.000Z",
+        "updatedBy": "system"
+      }
+    ],
+    "generatedPages": [
+      {
+        "prefix": "/team/dev",
+        "count": 101,
+        "namePrefix": "page-",
+        "bodyPrefix": "# generated page ",
+        "updatedBy": "load-more-owner"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 2
+  },
+  "commands": [
+    {
+      "id": "workbench.view.explorer"
+    },
+    {
+      "id": "growi.addPrefix",
+      "args": ["/team/dev"]
+    },
+    {
+      "id": "growi.explorer.focus"
+    },
+    {
+      "id": "list.expand"
+    },
+    {
+      "id": "list.expand"
+    }
+  ],
+  "checks": {
+    "requiredTreeItems": [
+      {
+        "label": "/team/dev",
+        "kind": "directory",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.prefixRoot"
+      },
+      {
+        "label": "__dev__.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.directoryPage"
+      },
+      {
+        "label": "さらに読み込む",
+        "kind": "loadMore",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.loadMore",
+        "description": "部分表示: /team/dev・取得済み 100 件"
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix"
+    ]
+  }
+}

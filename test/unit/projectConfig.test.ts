@@ -19,6 +19,12 @@ function readPackageJson() {
         shortTitle?: string;
         title?: string;
       }>;
+      keybindings?: Array<{
+        command?: string;
+        key?: string;
+        mac?: string;
+        when?: string;
+      }>;
       menus?: {
         commandPalette?: Array<{
           command?: string;
@@ -40,6 +46,17 @@ function readPackageJson() {
         view?: string;
         when?: string;
       }>;
+      configuration?: {
+        properties?: Record<
+          string,
+          {
+            default?: unknown;
+            maximum?: number;
+            minimum?: number;
+            type?: string;
+          }
+        >;
+      };
     };
     devDependencies?: Record<string, string>;
     engines?: Record<string, string>;
@@ -73,6 +90,34 @@ describe("project configuration", () => {
       "test:unit": "vitest run test/unit",
       typecheck: "tsc --noEmit",
       "uninstall:vsix": "node ./scripts/vsix.mjs uninstall",
+      "review:ui:scenario":
+        "pnpm run build && node ./scripts/review-ui-scenario.mjs",
+      "review:ui:feature":
+        "pnpm run build && node ./scripts/review-ui-feature.mjs",
+      "verify:ui-change": "node ./scripts/verify-ui-change.mjs",
+    });
+  });
+
+  it("exposes bounded GROWI listing and local mirror settings", () => {
+    const packageJson = readPackageJson();
+
+    expect(packageJson.contributes?.configuration?.properties).toMatchObject({
+      "growi.pageListing.initialPageSize": {
+        type: "number",
+        default: 100,
+        minimum: 1,
+      },
+      "growi.pageListing.maxAutoPagesPerPrefix": {
+        type: "number",
+        default: 300,
+        minimum: 1,
+      },
+      "growi.localMirror.maxPrefixPages": {
+        type: "number",
+        default: 50,
+        minimum: 1,
+        maximum: 200,
+      },
     });
   });
 
@@ -84,6 +129,166 @@ describe("project configuration", () => {
     expect(packageJson.scripts?.build).not.toContain("tsc");
   });
 
+  it("keeps UI review script aliases aligned with fixture manifest", () => {
+    const packageJson = readPackageJson();
+    const manifest = JSON.parse(readText("fixtures/harness/manifest.json")) as {
+      scenarios?: Array<{ aliases?: string[]; id?: string; path?: string }>;
+    };
+    const scenario = JSON.parse(
+      readText("fixtures/harness/explorer-quickpick-smoke/scenario.json"),
+    ) as { id?: string; checks?: { requiredCommandSequence?: string[] } };
+
+    expect(packageJson.scripts?.["review:ui:scenario"]).toBe(
+      "pnpm run build && node ./scripts/review-ui-scenario.mjs",
+    );
+    expect(packageJson.scripts?.["review:ui:feature"]).toBe(
+      "pnpm run build && node ./scripts/review-ui-feature.mjs",
+    );
+    expect(packageJson.scripts?.["verify:ui-change"]).toBe(
+      "node ./scripts/verify-ui-change.mjs",
+    );
+    expect(manifest.scenarios).toContainEqual(
+      expect.objectContaining({
+        aliases: ["explorer-quickpick", "smoke"],
+        id: "explorer-quickpick-smoke",
+        path: "explorer-quickpick-smoke/scenario.json",
+      }),
+    );
+    expect(scenario.id).toBe("explorer-quickpick-smoke");
+    expect(scenario.checks?.requiredCommandSequence).toEqual([
+      "growi.addPrefix",
+      "growi.openPage",
+      "growi.addCurrentPageBookmark",
+      "growi.openPage",
+      "growi.showBookmarks",
+    ]);
+  });
+
+  it("registers representative UI review scenarios with aliases and change selectors", () => {
+    const manifest = JSON.parse(readText("fixtures/harness/manifest.json")) as {
+      scenarios?: Array<{
+        aliases?: string[];
+        changedFileGlobs?: string[];
+        id?: string;
+        path?: string;
+        uiAreas?: string[];
+      }>;
+    };
+    const scenarios = manifest.scenarios ?? [];
+    const expectedScenarios = [
+      {
+        id: "explorer-quickpick-smoke",
+        aliases: ["explorer-quickpick", "smoke"],
+        uiAreas: ["explorer", "quickPick"],
+      },
+      {
+        id: "open-page-search",
+        aliases: ["open-page", "page-search"],
+        uiAreas: ["quickPick", "openPage"],
+      },
+      {
+        id: "bookmarks-states",
+        aliases: ["bookmarks", "bookmark-states"],
+        uiAreas: ["quickPick", "bookmarks", "explorer"],
+      },
+      {
+        id: "current-page-actions",
+        aliases: ["current-page", "page-actions"],
+        uiAreas: ["quickPick", "currentPage"],
+      },
+      {
+        id: "page-detail-actions",
+        aliases: ["page-detail", "current-page-hub"],
+        uiAreas: ["quickPick", "currentPage"],
+      },
+      {
+        id: "local-mirror-actions",
+        aliases: ["local-mirror", "mirror-actions"],
+        uiAreas: ["quickPick", "localMirror"],
+      },
+      {
+        id: "explorer-menu-surface",
+        aliases: ["explorer-menu", "menus"],
+        uiAreas: ["explorer", "menus"],
+      },
+      {
+        id: "explorer-partial-listing",
+        aliases: ["explorer-partial", "load-more"],
+        uiAreas: ["explorer", "partialListing"],
+      },
+      {
+        id: "treeview-daily-ops",
+        aliases: ["treeview-ux", "daily-ops"],
+        uiAreas: [
+          "explorer",
+          "menus",
+          "quickPick",
+          "localMirror",
+          "currentPage",
+        ],
+      },
+      {
+        id: "tree-item-actions-page-preview",
+        aliases: ["tree-actions-page", "page-actions-preview"],
+        uiAreas: ["explorer", "quickPick", "menus"],
+      },
+      {
+        id: "tree-item-actions-directory-preview",
+        aliases: ["tree-actions-directory", "directory-actions-preview"],
+        uiAreas: ["explorer", "quickPick", "menus"],
+      },
+      {
+        id: "treeview-context-menu-evidence",
+        aliases: [
+          "treeview-context-menu",
+          "context-menu-evidence",
+          "right-click-evidence",
+        ],
+        uiAreas: ["explorer", "menus", "quickPick"],
+      },
+    ];
+
+    expect(scenarios.map((scenario) => scenario.id)).toEqual(
+      expectedScenarios.map((scenario) => scenario.id),
+    );
+    for (const expectedScenario of expectedScenarios) {
+      const scenario = scenarios.find(
+        (entry) => entry.id === expectedScenario.id,
+      );
+
+      expect(scenario).toMatchObject({
+        aliases: expectedScenario.aliases,
+        id: expectedScenario.id,
+        path: `${expectedScenario.id}/scenario.json`,
+        uiAreas: expectedScenario.uiAreas,
+      });
+      expect(scenario?.changedFileGlobs).toContain("src/harness/uiReview.ts");
+      expect(scenario?.changedFileGlobs?.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("isolates the extension host from marketplace extensions", () => {
+    const launcher = readText("test/integration/extension-host/launch.mjs");
+    const hostRunner = readText(
+      "test/integration/extension-host/run-tests.mjs",
+    );
+
+    expect(launcher).not.toContain("--disable-extensions");
+    expect(launcher).toContain("--extensions-dir");
+    expect(launcher).toContain("--user-data-dir");
+    expect(launcher).toContain("GitHub.copilot");
+    expect(launcher).toContain("GitHub.copilot-chat");
+    expect(launcher).toContain("github.copilot-chat");
+    expect(launcher).toContain('"chat.agentsControl.enabled": "hidden"');
+    expect(launcher).toContain('"chat.commandCenter.enabled": false');
+    expect(launcher).toContain('"chat.disableAIFeatures": true');
+    expect(launcher).toContain('"extensions.autoUpdate": false');
+    expect(launcher).toContain('"github.copilot.enable": { "*": false }');
+    expect(launcher).toContain('"window.commandCenter": false');
+    expect(launcher).toContain('"workbench.disableAICustomizations": true');
+    expect(hostRunner).toContain("workbench.action.closeAuxiliaryBar");
+  });
+
   it("keeps the GROWI explorer welcome and command palette contracts aligned with the manifest", () => {
     const packageJson = readPackageJson();
     const commands = packageJson.contributes?.commands ?? [];
@@ -91,6 +296,10 @@ describe("project configuration", () => {
     const viewTitleMenu = packageJson.contributes?.menus?.["view/title"] ?? [];
     const commandPaletteMenu =
       packageJson.contributes?.menus?.commandPalette ?? [];
+    const scmRepositoryMenu =
+      (
+        packageJson.contributes?.menus as Record<string, unknown[]> | undefined
+      )?.["scm/repository"] ?? [];
     const viewItemContextMenu =
       packageJson.contributes?.menus?.["view/item/context"] ?? [];
     const configureBaseUrlCommand = commands.find(
@@ -169,13 +378,27 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.openPrefixRootPage",
-      title: "ページを開く",
+      title: "Prefix ページを開く",
     });
     expect(
       commands.find((command) => command.command === "growi.openDirectoryPage"),
     ).toEqual({
       command: "growi.openDirectoryPage",
       title: "GROWI: Open Directory Page",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.showExplorerItemActions",
+      ),
+    ).toEqual({
+      command: "growi.showExplorerItemActions",
+      title: "GROWI: Show Tree Item Actions",
+    });
+    expect(packageJson.contributes?.keybindings).toContainEqual({
+      command: "growi.showExplorerItemActions",
+      key: "ctrl+alt+g",
+      mac: "cmd+alt+g",
+      when: "focusedView == 'growi.explorer'",
     });
     expect(
       commands.find(
@@ -262,7 +485,8 @@ describe("project configuration", () => {
     expect(
       commands.find(
         (command) =>
-          command.command === "growi.explorerDownloadCurrentPageToLocalFile",
+          command.command ===
+          ["growi.", "explorerDownloadCurrent", "PageToLocalFile"].join(""),
       ),
     ).toBeUndefined();
     expect(
@@ -272,7 +496,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCreateLocalMirrorForCurrentPage",
-      title: "ローカルミラーを同期",
+      title: "このページをローカルに同期",
     });
     expect(
       commands.find(
@@ -281,7 +505,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
-      title: "配下をローカルミラーに同期",
+      title: "配下ページをローカルに同期",
     });
     expect(
       commands.find(
@@ -290,7 +514,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCompareLocalMirrorWithGrowi",
-      title: "ローカルミラーを比較",
+      title: "このページの差分を確認",
     });
     expect(
       commands.find(
@@ -309,7 +533,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
-      title: "配下のローカルミラーを比較",
+      title: "配下ページの差分を確認",
     });
     expect(
       commands.find(
@@ -335,6 +559,15 @@ describe("project configuration", () => {
     ).toEqual({
       command: "growi.showCurrentPageActions",
       title: "GROWI: Show Current Page Actions",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.openCurrentPageHub",
+      ),
+    ).toEqual({
+      command: "growi.openCurrentPageHub",
+      title: "ページ詳細を開く",
+      category: "GROWI",
     });
     expect(
       commands.find(
@@ -464,6 +697,42 @@ describe("project configuration", () => {
       command: "growi.uploadLocalMirrorToGrowi",
       title: "GROWI: Upload Local Mirror to GROWI",
     });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.scmCompareMirrorAgain",
+      ),
+    ).toEqual({
+      command: "growi.scmCompareMirrorAgain",
+      title: "再比較",
+      icon: "$(refresh)",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.scmCheckRemoteMetadata",
+      ),
+    ).toEqual({
+      command: "growi.scmCheckRemoteMetadata",
+      title: "GROWI側の更新を確認",
+      icon: "$(sync)",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.scmUploadMirrorResources",
+      ),
+    ).toEqual({
+      command: "growi.scmUploadMirrorResources",
+      title: "GROWIに反映",
+      icon: "$(cloud-upload)",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.scmTakeRemoteMirrorResources",
+      ),
+    ).toEqual({
+      command: "growi.scmTakeRemoteMirrorResources",
+      title: "ローカルに取り込む",
+      icon: "$(cloud-download)",
+    });
 
     expect(viewTitleMenu).toEqual([
       {
@@ -504,12 +773,27 @@ describe("project configuration", () => {
     ]);
     expect(commandPaletteMenu).toEqual([
       {
+        command: "growi.openCurrentPageHub",
+      },
+      {
         command: "growi.clearRuntimeLogs",
         when: "growi.runtimeLogsEnabled",
       },
       {
         command: "growi.revealRuntimeLogs",
         when: "growi.runtimeLogsEnabled",
+      },
+      {
+        command: "growi.uploadLocalMirrorToGrowi",
+        when: "false",
+      },
+      {
+        command: "growi.explorerUploadLocalMirrorToGrowi",
+        when: "false",
+      },
+      {
+        command: "growi.explorerUploadLocalMirrorSubtreeToGrowi",
+        when: "false",
       },
       {
         command: "growi.scmUploadMirrorResources",
@@ -520,8 +804,34 @@ describe("project configuration", () => {
         when: "false",
       },
       {
+        command: "growi.scmCheckRemoteMetadata",
+        when: "false",
+      },
+      {
         command: "growi.scmTakeRemoteMirrorResources",
         when: "false",
+      },
+    ]);
+    expect(scmRepositoryMenu).toEqual([
+      {
+        command: "growi.scmCompareMirrorAgain",
+        when: "scmProvider == growifs-mirror-compare",
+        group: "inline@1",
+      },
+      {
+        command: "growi.scmCheckRemoteMetadata",
+        when: "scmProvider == growifs-mirror-compare",
+        group: "inline@2",
+      },
+      {
+        command: "growi.scmUploadMirrorResources",
+        when: "scmProvider == growifs-mirror-compare",
+        group: "inline@3",
+      },
+      {
+        command: "growi.scmTakeRemoteMirrorResources",
+        when: "scmProvider == growifs-mirror-compare",
+        group: "inline@4",
       },
     ]);
     expect(viewItemContextMenu).toEqual([
@@ -531,214 +841,149 @@ describe("project configuration", () => {
         group: "inline",
       },
       {
-        command: "growi.explorerOpenPageInBrowser",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "navigation@1",
-      },
-      {
         command: "growi.openPrefixRootPage",
         when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "navigation@2",
+        group: "01_open@2",
+      },
+      {
+        command: "growi.explorerOpenPageInBrowser",
+        when: "view == growi.explorer && viewItem == growi.prefixRoot",
+        group: "01_open@3",
       },
       {
         command: "growi.explorerCreatePageHere",
         when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "a_mutate@1",
+        group: "03_structureEdit@1",
       },
       {
         command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
         when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "b_localOpsSync@1",
+        group: "04_localMirror@2",
       },
       {
         command: "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
         when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "c_localOpsCompare@1",
-      },
-      {
-        command: "growi.explorerUploadLocalMirrorSubtreeToGrowi",
-        when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "d_localOpsUpload@1",
+        group: "04_localMirror@4",
       },
       {
         command: "growi.deletePrefix",
         when: "view == growi.explorer && viewItem == growi.prefixRoot",
-        group: "z_danger@1",
+        group: "06_danger@2",
       },
       {
         command: "growi.explorerOpenPageInBrowser",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "navigation@1",
-      },
-      {
-        command: "growi.explorerOpenPageItem",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "navigation@2",
+        group: "01_open@3",
       },
       {
         command: "growi.explorerRefreshCurrentPage",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "a_openView@1",
+        group: "02_inspect@1",
       },
       {
-        command: "growi.explorerShowBacklinks",
+        command: "growi.openCurrentPageHub",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "a_openView@2",
-      },
-      {
-        command: "growi.explorerShowCurrentPageInfo",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "a_openView@3",
-      },
-      {
-        command: "growi.explorerShowCurrentPageAttachments",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "a_openView@4",
-      },
-      {
-        command: "growi.explorerShowRevisionHistoryDiff",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "a_openView@5",
+        group: "02_inspect@2",
       },
       {
         command: "growi.explorerCreatePageHere",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "b_mutate@1",
+        group: "03_structureEdit@1",
       },
       {
         command: "growi.explorerRenamePage",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "b_mutate@2",
+        group: "03_structureEdit@2",
       },
       {
         command: "growi.addCurrentPageBookmark",
         when: "view == growi.explorer && viewItem == growi.page",
-        group: "b_mutate@3",
+        group: "03_structureEdit@3",
       },
       {
         command: "growi.removeCurrentPageBookmark",
         when: "view == growi.explorer && viewItem == growi.pageBookmarked",
-        group: "b_mutate@3",
+        group: "03_structureEdit@3",
       },
       {
         command: "growi.explorerCreateLocalMirrorForCurrentPage",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "c_localOpsSync@1",
-      },
-      {
-        command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "c_localOpsSync@2",
+        group: "04_localMirror@1",
       },
       {
         command: "growi.explorerCompareLocalMirrorWithGrowi",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "d_localOpsCompare@1",
-      },
-      {
-        command: "growi.explorerUploadLocalMirrorToGrowi",
-        when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "e_localOpsUpload@1",
+        group: "04_localMirror@3",
       },
       {
         command: "growi.explorerDeletePage",
         when: "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
-        group: "z_danger@1",
+        group: "06_danger@1",
       },
       {
         command: "growi.explorerOpenPageInBrowser",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "navigation@1",
-      },
-      {
-        command: "growi.explorerOpenPageItem",
-        when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "navigation@2",
+        group: "01_open@3",
       },
       {
         command: "growi.explorerRefreshCurrentPage",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "a_openView@1",
+        group: "02_inspect@1",
       },
       {
-        command: "growi.explorerShowBacklinks",
+        command: "growi.openCurrentPageHub",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "a_openView@2",
-      },
-      {
-        command: "growi.explorerShowCurrentPageInfo",
-        when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "a_openView@3",
-      },
-      {
-        command: "growi.explorerShowCurrentPageAttachments",
-        when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "a_openView@4",
-      },
-      {
-        command: "growi.explorerShowRevisionHistoryDiff",
-        when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "a_openView@5",
+        group: "02_inspect@2",
       },
       {
         command: "growi.explorerCreatePageHere",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "b_mutate@1",
+        group: "03_structureEdit@1",
       },
       {
         command: "growi.explorerRenamePage",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "b_mutate@2",
+        group: "03_structureEdit@2",
       },
       {
         command: "growi.addCurrentPageBookmark",
         when: "view == growi.explorer && viewItem == growi.directoryPage",
-        group: "b_mutate@3",
+        group: "03_structureEdit@3",
       },
       {
         command: "growi.removeCurrentPageBookmark",
         when: "view == growi.explorer && viewItem == growi.directoryPageBookmarked",
-        group: "b_mutate@3",
+        group: "03_structureEdit@3",
       },
       {
         command: "growi.explorerCreateLocalMirrorForCurrentPage",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "c_localOpsSync@1",
+        group: "04_localMirror@1",
       },
       {
         command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "c_localOpsSync@2",
+        group: "04_localMirror@2",
       },
       {
         command: "growi.explorerCompareLocalMirrorWithGrowi",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "d_localOpsCompare@1",
-      },
-      {
-        command: "growi.explorerUploadLocalMirrorToGrowi",
-        when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "e_localOpsUpload@1",
+        group: "04_localMirror@3",
       },
       {
         command: "growi.explorerDeletePage",
         when: "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
-        group: "z_danger@1",
+        group: "06_danger@1",
       },
       {
         command: "growi.explorerCreatePageHere",
         when: "view == growi.explorer && viewItem == growi.directory",
-        group: "a_mutate@1",
+        group: "03_structureEdit@1",
       },
       {
         command: "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
         when: "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
-        group: "c_localOpsCompare@1",
-      },
-      {
-        command: "growi.explorerUploadLocalMirrorSubtreeToGrowi",
-        when: "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
-        group: "d_localOpsUpload@1",
+        group: "04_localMirror@4",
       },
     ]);
     expect(
@@ -754,19 +999,19 @@ describe("project configuration", () => {
 
     expect(serializedViewTitleMenu).not.toContain("growi.configureBaseUrl");
     expect(serializedViewTitleMenu).not.toContain(
-      "growi.downloadCurrentPageToLocalFile",
+      "growi.createLocalMirrorForCurrentPage",
     );
     expect(serializedViewTitleMenu).not.toContain(
-      "growi.compareLocalWorkFileWithCurrentPage",
+      "growi.compareLocalMirrorWithGrowi",
     );
     expect(serializedViewTitleMenu).not.toContain(
-      "growi.uploadExportedLocalFileToGrowi",
+      "growi.uploadLocalMirrorToGrowi",
     );
     expect(serializedViewTitleMenu).not.toContain(
       "growi.showCurrentPageActions",
     );
     expect(serializedViewTitleMenu).not.toContain(
-      "growi.showLocalRoundTripActions",
+      "growi.showLocalMirrorActions",
     );
     expect(serializedViewTitleMenu).not.toContain("GROWI:");
     expect(JSON.stringify(commandPaletteMenu)).not.toContain(
@@ -833,6 +1078,9 @@ describe("project configuration", () => {
       "onCommand:growi.showCurrentPageActions",
     );
     expect(packageJson.activationEvents).toContain(
+      "onCommand:growi.openCurrentPageHub",
+    );
+    expect(packageJson.activationEvents).toContain(
       "onCommand:growi.createPage",
     );
     expect(packageJson.activationEvents).toContain(
@@ -849,6 +1097,9 @@ describe("project configuration", () => {
     );
     expect(packageJson.activationEvents).toContain(
       "onCommand:growi.openDirectoryPage",
+    );
+    expect(packageJson.activationEvents).toContain(
+      "onCommand:growi.showExplorerItemActions",
     );
     expect(packageJson.activationEvents).toContain(
       "onCommand:growi.explorerOpenPageItem",
@@ -975,7 +1226,7 @@ describe("project configuration", () => {
     expect(readme).toContain("`GROWI: Sync Local Mirror for Current Page`");
     expect(readme).toContain("`GROWI: Sync Local Mirror for Current Prefix`");
     expect(readme).toContain("`GROWI: Compare Local Mirror with GROWI`");
-    expect(readme).toContain("`GROWI: Upload Local Mirror to GROWI`");
+    expect(readme).toContain("Source Control view の `GROWIに反映`");
     expect(readme).toContain("`GROWI: Show Current Page Info`");
     expect(readme).toContain("`GROWI: Show Backlinks`");
     expect(readme).toContain("保存後は `GROWI: End Edit` で通常状態へ戻します");
@@ -983,9 +1234,11 @@ describe("project configuration", () => {
     expect(readme).toContain("<!-- screenshot: overview-explorer");
     expect(readme).toContain("<!-- screenshot: explorer-prefix-root");
     expect(readme).toContain("<!-- screenshot: local-mirror");
-    expect(readme).toContain("ローカルミラーを同期 / 比較 / 反映");
     expect(readme).toContain(
-      "配下をローカルミラーに同期 / 配下のローカルミラーを比較 / 配下のローカルミラーを反映",
+      "このページをローカルに同期 / このページの差分を確認",
+    );
+    expect(readme).toContain(
+      "配下ページをローカルに同期 / 配下ページの差分を確認",
     );
     expect(readme).toContain(
       "GROWI のページツリーは VS Code のワークスペースへ追加されず",

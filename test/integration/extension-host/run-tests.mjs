@@ -1,7 +1,11 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import * as vscode from "vscode";
+
+const execFileAsync = promisify(execFile);
 
 const BACKLINK_FIXTURE_PAGES = [
   {
@@ -186,6 +190,45 @@ async function updateFixture(adminBaseUrl, pages, bookmarks = undefined) {
   });
 }
 
+function expandGeneratedPages(generatedPages = []) {
+  const pages = [];
+  for (const generated of generatedPages) {
+    const prefix = normalizeScenarioPath(generated.prefix);
+    const count = Number(generated.count);
+    if (!prefix || !Number.isInteger(count) || count < 1) {
+      continue;
+    }
+
+    const start = Number.isInteger(generated.start) ? generated.start : 1;
+    const namePrefix =
+      typeof generated.namePrefix === "string" ? generated.namePrefix : "page-";
+    const bodyPrefix =
+      typeof generated.bodyPrefix === "string" ? generated.bodyPrefix : "# ";
+    const updatedBy =
+      typeof generated.updatedBy === "string"
+        ? generated.updatedBy
+        : "scenario";
+    for (let index = 0; index < count; index += 1) {
+      const pageNumber = start + index;
+      const path = `${prefix}/${namePrefix}${pageNumber}`;
+      pages.push({
+        path,
+        body: `${bodyPrefix}${pageNumber}`,
+        updatedAt: new Date(Date.UTC(2026, 2, 8, 0, index, 0)).toISOString(),
+        updatedBy,
+      });
+    }
+  }
+  return pages;
+}
+
+function normalizeScenarioPath(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) {
+    return undefined;
+  }
+  return value.length > 1 && value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
 async function updateAuthMode(adminBaseUrl, mode) {
   await fetchAdmin(adminBaseUrl, "/__admin/auth", {
     method: "POST",
@@ -329,6 +372,1064 @@ async function withCommandExecuteOverride(override, fn) {
   }
 }
 
+function sanitizeQuickPickItem(item) {
+  return {
+    label: item.label,
+    description: item.description,
+    detail: item.detail,
+    canonicalPath: item.canonicalPath,
+    command: item.command,
+    pageId: item.pageId,
+    status: item.status,
+    action: item.action,
+    buttons: item.buttons?.map((button) => ({
+      tooltip: button.tooltip,
+      iconPath: button.iconPath?.id ?? button.iconPath,
+    })),
+  };
+}
+
+function sanitizeCommandArg(arg) {
+  if (arg === undefined || arg === null || typeof arg !== "object") {
+    return arg;
+  }
+  if (
+    typeof arg.toString === "function" &&
+    arg.toString !== Object.prototype.toString
+  ) {
+    return arg.toString();
+  }
+  return JSON.parse(JSON.stringify(arg));
+}
+
+function hydrateScenarioCommandArg(arg) {
+  if (arg === undefined || arg === null || typeof arg !== "object") {
+    return arg;
+  }
+  if (typeof arg.scheme === "string" && typeof arg.path === "string") {
+    return vscode.Uri.from(arg);
+  }
+  if (arg.uri && typeof arg.uri.scheme === "string") {
+    return {
+      ...arg,
+      uri: vscode.Uri.from(arg.uri),
+    };
+  }
+  return arg;
+}
+
+function selectQuickPickItems(items, select) {
+  return items.filter((item) => {
+    if (select.canonicalPath && item.canonicalPath !== select.canonicalPath) {
+      return false;
+    }
+    if (select.action && item.action !== select.action) {
+      return false;
+    }
+    if (select.command && item.command !== select.command) {
+      return false;
+    }
+    if (select.label && item.label !== select.label) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function createScenarioQuickPick(interaction, quickPicks) {
+  const quickPick = {
+    _items: [],
+    selectedItems: [],
+    placeholder: "",
+    value: "",
+    matchOnDescription: false,
+    matchOnDetail: false,
+    get items() {
+      return this._items;
+    },
+    set items(value) {
+      this._items = [...value];
+    },
+    onDidChangeValue(handler) {
+      this._change = handler;
+      return { dispose() {} };
+    },
+    onDidAccept(handler) {
+      this._accept = handler;
+      return { dispose() {} };
+    },
+    onDidTriggerItemButton(handler) {
+      this._triggerItemButton = handler;
+      return { dispose() {} };
+    },
+    onDidHide(_handler) {
+      return { dispose() {} };
+    },
+    show() {
+      if (interaction.query !== undefined) {
+        this.value = interaction.query;
+        this._change?.(interaction.query);
+      }
+
+      const capturedItems = this.items.map(sanitizeQuickPickItem);
+      const selectedItems = selectQuickPickItems(
+        this.items,
+        interaction.select ?? {},
+      );
+      this.selectedItems = selectedItems;
+      quickPicks.push({
+        name: interaction.name ?? interaction.kind,
+        placeholder: this.placeholder,
+        value: this.value,
+        selected: selectedItems.map(sanitizeQuickPickItem),
+        items: capturedItems,
+      });
+
+      if (interaction.action === "remove") {
+        const item = selectedItems[0];
+        if (item) {
+          this._triggerItemButton?.({ item });
+        }
+        return;
+      }
+
+      this._accept?.();
+    },
+    dispose() {},
+  };
+
+  return quickPick;
+}
+
+async function collectOpenPageQuickPick(command, quickPicks) {
+  const interaction = command.quickPick;
+  const quickPick = await vscode.commands.executeCommand(
+    "growi.__test.collectOpenPageQuickPickState",
+    interaction.query ?? "",
+  );
+  const selectedItems = selectQuickPickItems(
+    quickPick.items,
+    interaction.select ?? {},
+  );
+  quickPicks.push({
+    ...quickPick,
+    selected: selectedItems.map(sanitizeQuickPickItem),
+  });
+
+  const selected = selectedItems[0];
+  if (selected?.canonicalPath) {
+    await vscode.commands.executeCommand(command.id, selected.canonicalPath);
+  }
+}
+
+async function collectBookmarksQuickPick(command, quickPicks) {
+  const interaction = command.quickPick;
+  const quickPick = await vscode.commands.executeCommand(
+    "growi.__test.collectBookmarksQuickPickState",
+  );
+  const selectedItems = selectQuickPickItems(
+    quickPick.items,
+    interaction.select ?? {},
+  );
+  quickPicks.push({
+    ...quickPick,
+    selected: selectedItems.map(sanitizeQuickPickItem),
+  });
+  const selected = selectedItems[0];
+  if (selected?.canonicalPath && interaction.action !== "remove") {
+    await vscode.commands.executeCommand(
+      "growi.openPage",
+      selected.canonicalPath,
+    );
+  }
+}
+
+async function collectHiddenQuickPick(command, quickPicks) {
+  const interaction = command.quickPick;
+  const collectorCommands = {
+    currentPageActions: "growi.__test.collectCurrentPageActionsQuickPickState",
+    pageDetailActions: "growi.__test.collectPageDetailActionsQuickPickState",
+    localMirrorActions: "growi.__test.collectLocalMirrorActionsQuickPickState",
+    treeItemActions: "growi.__test.collectExplorerItemActionsQuickPickState",
+  };
+  const collectorCommand = collectorCommands[interaction.kind];
+  assert(
+    collectorCommand,
+    `Unsupported hidden QuickPick collector: ${interaction.kind}`,
+  );
+
+  const quickPick = await vscode.commands.executeCommand(
+    collectorCommand,
+    ...(interaction.collectorArgs ?? command.args ?? []),
+  );
+  const selectedItems = selectQuickPickItems(
+    quickPick.items,
+    interaction.select ?? {},
+  );
+  quickPicks.push({
+    ...quickPick,
+    name: interaction.name ?? quickPick.name,
+    selected: selectedItems.map(sanitizeQuickPickItem),
+  });
+  const selected = selectedItems[0];
+  if (selected?.command && interaction.action !== "collectOnly") {
+    await vscode.commands.executeCommand(
+      selected.command,
+      ...(interaction.commandArgs ?? command.args ?? []),
+    );
+  }
+}
+
+async function executeScenarioCommand(command, quickPicks, commandTrace) {
+  const args = (command.args ?? []).map(hydrateScenarioCommandArg);
+  commandTrace.push({
+    command: command.id ?? "harness.keystroke",
+    status: "started",
+    args: args.map(sanitizeCommandArg),
+    keyCode: command.keyCode,
+    modifiers: command.modifiers,
+  });
+
+  try {
+    if (Number.isFinite(command.keyCode)) {
+      await sendMacSystemEventsKeyStroke({
+        keyCode: command.keyCode,
+        modifiers: command.modifiers ?? [],
+      });
+    } else if (command.quickPick?.kind === "openPage") {
+      await collectOpenPageQuickPick(command, quickPicks);
+    } else if (command.quickPick?.kind === "bookmarks") {
+      await collectBookmarksQuickPick(command, quickPicks);
+    } else if (
+      [
+        "currentPageActions",
+        "pageDetailActions",
+        "localMirrorActions",
+        "treeItemActions",
+      ].includes(command.quickPick?.kind)
+    ) {
+      await collectHiddenQuickPick(command, quickPicks);
+    } else if (command.quickPick) {
+      await withWindowOverrides(
+        {
+          createQuickPick: () =>
+            createScenarioQuickPick(command.quickPick, quickPicks),
+          showInputBox: async () => command.quickPick.directInput,
+        },
+        async () => {
+          await vscode.commands.executeCommand(command.id, ...args);
+        },
+      );
+    } else {
+      await vscode.commands.executeCommand(command.id, ...args);
+    }
+    commandTrace.push({
+      command: command.id ?? "harness.keystroke",
+      status: "succeeded",
+      keyCode: command.keyCode,
+      modifiers: command.modifiers,
+    });
+    await pause(command.pauseMs ?? 0);
+  } catch (error) {
+    commandTrace.push({
+      command: command.id,
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+function normalizeTreeCanonicalPath(item) {
+  const pathname = item.uri?.path;
+  if (!pathname) {
+    return undefined;
+  }
+  if (pathname.endsWith(".md")) {
+    return pathname.slice(0, -3) || "/";
+  }
+  if (pathname.endsWith("/")) {
+    return pathname.slice(0, -1) || "/";
+  }
+  return pathname;
+}
+
+function serializeTreeItem(item, depth, parentUri) {
+  return {
+    label: typeof item.label === "string" ? item.label : String(item.label),
+    kind: item.kind,
+    uri: item.uri?.toString(),
+    canonicalPath: normalizeTreeCanonicalPath(item),
+    contextValue: item.contextValue,
+    description: item.description,
+    command: item.command?.command,
+    depth,
+    parentUri,
+  };
+}
+
+async function collectTreeItems(treeProvider, maxDepth) {
+  if (!treeProvider) {
+    return await vscode.commands.executeCommand(
+      "growi.__test.collectExplorerTreeItems",
+      maxDepth,
+    );
+  }
+
+  const collected = [];
+
+  async function visit(items, depth, parentUri) {
+    for (const item of items) {
+      collected.push(serializeTreeItem(item, depth, parentUri));
+      if (item.kind === "directory" && depth < maxDepth) {
+        const children = await treeProvider.getChildren(item);
+        await visit(children, depth + 1, item.uri?.toString());
+      }
+    }
+  }
+
+  await visit(await treeProvider.getChildren(), 0, undefined);
+  return collected;
+}
+
+async function collectPackageMenus() {
+  const packageJsonPath =
+    process.env.GROWI_UI_REVIEW_PACKAGE_JSON ??
+    path.resolve(process.cwd(), "package.json");
+  const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+  const menus = packageJson.contributes?.menus ?? {};
+  return Object.fromEntries(
+    Object.entries(menus)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([menuId, items]) => [
+        menuId,
+        [...(items ?? [])]
+          .map((item) => ({
+            command: item.command,
+            when: item.when,
+            group: item.group,
+            alt: item.alt,
+          }))
+          .sort((left, right) => {
+            const commandOrder = (left.command ?? "").localeCompare(
+              right.command ?? "",
+            );
+            if (commandOrder !== 0) {
+              return commandOrder;
+            }
+            const groupOrder = (left.group ?? "").localeCompare(
+              right.group ?? "",
+            );
+            if (groupOrder !== 0) {
+              return groupOrder;
+            }
+            return (left.when ?? "").localeCompare(right.when ?? "");
+          }),
+      ]),
+  );
+}
+
+async function writeJson(filePath, value) {
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function writeJsonl(filePath, values) {
+  await fs.writeFile(
+    filePath,
+    `${values.map((value) => JSON.stringify(value)).join("\n")}\n`,
+    "utf8",
+  );
+}
+
+function captureMetadataPath(screenshotPath) {
+  return screenshotPath.replace(/\.png$/u, ".capture.json");
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function parseWindowBounds(stdout) {
+  const text = stdout.trim();
+  if (text.length === 0) {
+    return { ok: false, reason: "window bounds swift returned empty output" };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      reason: `window bounds output has unexpected shape: ${text}`,
+    };
+  }
+
+  const { x, y, width, height, windowId, processId, title, processName } =
+    parsed;
+  if (
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof width !== "number" ||
+    typeof height !== "number"
+  ) {
+    return { ok: false, reason: `window bounds rectangle is invalid: ${text}` };
+  }
+  if (x < 0 || y < 0 || width <= 0 || height <= 0) {
+    return {
+      ok: false,
+      reason: `window bounds rectangle is out of range: ${text}`,
+    };
+  }
+
+  return {
+    ok: true,
+    bounds: {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height),
+      ...(typeof windowId === "number" ? { windowId } : {}),
+      ...(typeof processId === "number" ? { processId } : {}),
+      ...(title ? { title } : {}),
+      ...(processName ? { processName } : {}),
+    },
+  };
+}
+
+async function getExtensionHostWindowBounds() {
+  const script = [
+    "import CoreGraphics",
+    "import Foundation",
+    "",
+    'let preferredTitles = ["[Extension Development Host]", "vscode-growifs", "GROWI"]',
+    "let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]",
+    "guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {",
+    '  throw NSError(domain: "vscode-growifs", code: 1, userInfo: [NSLocalizedDescriptionKey: "CGWindowListCopyWindowInfo failed"])',
+    "}",
+    "",
+    "func number(_ value: Any?) -> Double? {",
+    "  if let number = value as? NSNumber { return number.doubleValue }",
+    "  return nil",
+    "}",
+    "",
+    "func candidate(from window: [String: Any]) -> [String: Any]? {",
+    '  let title = window[kCGWindowName as String] as? String ?? ""',
+    '  let owner = window[kCGWindowOwnerName as String] as? String ?? ""',
+    "  let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0",
+    "  guard layer == 0 else { return nil }",
+    '  guard owner == "Code" || owner == "Visual Studio Code" || owner == "Electron" else { return nil }',
+    "  guard let bounds = window[kCGWindowBounds as String] as? [String: Any],",
+    '    let x = number(bounds["X"]),',
+    '    let y = number(bounds["Y"]),',
+    '    let width = number(bounds["Width"]),',
+    '    let height = number(bounds["Height"]),',
+    "    let id = (window[kCGWindowNumber as String] as? NSNumber)?.intValue,",
+    "    let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue else { return nil }",
+    "  guard width > 0 && height > 0 else { return nil }",
+    "  let preferredRank = preferredTitles.firstIndex { title.contains($0) } ?? 100",
+    "  let sizeRank = (width >= 800 && height >= 600) ? 10 : 50",
+    "  return [",
+    '    "rank": preferredRank + sizeRank,',
+    '    "windowId": id,',
+    '    "processId": pid,',
+    '    "processName": owner,',
+    '    "title": title,',
+    '    "x": Int(x.rounded()),',
+    '    "y": Int(y.rounded()),',
+    '    "width": Int(width.rounded()),',
+    '    "height": Int(height.rounded())',
+    "  ]",
+    "}",
+    "",
+    "let candidates = windows.compactMap(candidate).sorted {",
+    '  let lhs = $0["rank"] as? Int ?? 999',
+    '  let rhs = $1["rank"] as? Int ?? 999',
+    "  return lhs < rhs",
+    "}",
+    "",
+    "guard var selected = candidates.first else {",
+    '  throw NSError(domain: "vscode-growifs", code: 2, userInfo: [NSLocalizedDescriptionKey: "No Code window candidate found"])',
+    "}",
+    'selected.removeValue(forKey: "rank")',
+    "let data = try JSONSerialization.data(withJSONObject: selected, options: [])",
+    "FileHandle.standardOutput.write(data)",
+  ].join("\n");
+
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/swift", ["-e", script], {
+      timeout: 30_000,
+    });
+    return parseWindowBounds(stdout);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `window bounds swift failed: ${errorMessage(error)}`,
+    };
+  }
+}
+
+function formatWindowBounds(bounds) {
+  return `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`;
+}
+
+function expandBoundsForNativeContextMenu(bounds, padding = {}) {
+  const left = Number.isFinite(padding.left) ? padding.left : 0;
+  const top = Number.isFinite(padding.top) ? padding.top : 0;
+  const right = Number.isFinite(padding.right) ? padding.right : 0;
+  const bottom = Number.isFinite(padding.bottom) ? padding.bottom : 0;
+  const x = Math.max(0, bounds.x - left);
+  const y = Math.max(0, bounds.y - top);
+  return {
+    ...bounds,
+    x,
+    y,
+    width: bounds.width + (bounds.x - x) + right,
+    height: bounds.height + (bounds.y - y) + bottom,
+  };
+}
+
+async function executeWorkbenchCommandIfAvailable(command) {
+  const commands = await vscode.commands.getCommands(true);
+  if (!commands.includes(command)) {
+    return false;
+  }
+  try {
+    await vscode.commands.executeCommand(command);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function moveCursorToCaptureSafePoint(bounds) {
+  const x = Math.max(0, bounds.x + 24);
+  const y = Math.max(0, bounds.y + bounds.height - 24);
+  const script = [
+    "import CoreGraphics",
+    "import Foundation",
+    `let point = CGPoint(x: ${x}, y: ${y})`,
+    "CGWarpMouseCursorPosition(point)",
+    "CGAssociateMouseAndMouseCursorPosition(boolean_t(1))",
+  ].join("\n");
+  try {
+    await execFileAsync("/usr/bin/swift", ["-e", script], { timeout: 30_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function prepareScreenForWindowCapture(bounds) {
+  const actions = [];
+  if (
+    await executeWorkbenchCommandIfAvailable(
+      "workbench.action.notifications.clearAll",
+    )
+  ) {
+    actions.push("workbench.action.notifications.clearAll");
+  }
+  if (await executeWorkbenchCommandIfAvailable("notifications.clearAll")) {
+    actions.push("notifications.clearAll");
+  }
+  if (
+    await executeWorkbenchCommandIfAvailable(
+      "workbench.action.closeAuxiliaryBar",
+    )
+  ) {
+    actions.push("workbench.action.closeAuxiliaryBar");
+  }
+  if (await moveCursorToCaptureSafePoint(bounds)) {
+    actions.push("cursor.safe-point");
+  }
+  await pause(250);
+  return actions;
+}
+
+async function writeCaptureMetadata(filePath, metadata) {
+  await fs.writeFile(filePath, JSON.stringify(metadata, null, 2), "utf8");
+}
+
+async function captureFullScreenFallback(
+  screenshotPath,
+  metadataPath,
+  startedAt,
+  fallbackReason,
+) {
+  await execFileAsync("screencapture", ["-x", screenshotPath], {
+    timeout: 30_000,
+  });
+  await writeCaptureMetadata(metadataPath, {
+    captureMode: "full-screen-fallback",
+    command: "screencapture -x",
+    fallbackReason,
+    preCaptureActions: [],
+    startedAt,
+    finishedAt: new Date().toISOString(),
+  });
+}
+
+async function sendMacSystemEventsKeyStroke(input) {
+  const using =
+    input.modifiers?.length > 0
+      ? ` using {${input.modifiers.map((modifier) => `${modifier} down`).join(", ")}}`
+      : "";
+  const script = [
+    'tell application "System Events"',
+    `  key code ${input.keyCode}${using}`,
+    "end tell",
+  ].join("\n");
+  await execFileAsync("/usr/bin/osascript", ["-e", script], {
+    timeout: 10_000,
+  });
+}
+
+async function activateMacProcessBestEffort(processId) {
+  if (!processId) {
+    return false;
+  }
+  const script = [
+    'tell application "System Events"',
+    `  set frontmost of first process whose unix id is ${processId} to true`,
+    "end tell",
+  ].join("\n");
+  try {
+    await execFileAsync("/usr/bin/osascript", ["-e", script], {
+      timeout: 10_000,
+    });
+    await pause(250);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resizeMacProcessWindowBestEffort(processId, frame) {
+  if (!processId || !frame) {
+    return false;
+  }
+  const position = [frame.x, frame.y].every(Number.isFinite)
+    ? `  set position of front window of targetProcess to {${frame.x}, ${frame.y}}`
+    : "";
+  const size = [frame.width, frame.height].every(Number.isFinite)
+    ? `  set size of front window of targetProcess to {${frame.width}, ${frame.height}}`
+    : "";
+  if (!position && !size) {
+    return false;
+  }
+  const script = [
+    'tell application "System Events"',
+    `  set targetProcess to first process whose unix id is ${processId}`,
+    "  set frontmost of targetProcess to true",
+    position,
+    size,
+    "end tell",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  try {
+    await execFileAsync("/usr/bin/osascript", ["-e", script], {
+      timeout: 10_000,
+    });
+    await pause(350);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sendEscapeKeyBestEffort() {
+  try {
+    await sendMacSystemEventsKeyStroke({ keyCode: 53 });
+    await pause(150);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runNativeContextMenuSetup(commands) {
+  const executed = [];
+  for (const command of commands ?? []) {
+    if (!command?.id) {
+      continue;
+    }
+    try {
+      await vscode.commands.executeCommand(command.id, ...(command.args ?? []));
+      executed.push({ command: command.id, status: "succeeded" });
+    } catch (error) {
+      executed.push({
+        command: command.id,
+        status: "failed",
+        error: errorMessage(error),
+      });
+    }
+    await pause(command.pauseMs ?? 150);
+  }
+  return executed;
+}
+
+async function runNativeContextMenuSetupKeystrokes(keystrokes) {
+  const executed = [];
+  for (const keystroke of keystrokes ?? []) {
+    if (!Number.isFinite(keystroke?.keyCode)) {
+      continue;
+    }
+    try {
+      await sendMacSystemEventsKeyStroke({
+        keyCode: keystroke.keyCode,
+        modifiers: keystroke.modifiers ?? [],
+      });
+      executed.push({
+        keyCode: keystroke.keyCode,
+        modifiers: keystroke.modifiers ?? [],
+        status: "succeeded",
+      });
+    } catch (error) {
+      executed.push({
+        keyCode: keystroke.keyCode,
+        modifiers: keystroke.modifiers ?? [],
+        status: "failed",
+        error: errorMessage(error),
+      });
+    }
+    await pause(keystroke.pauseMs ?? 150);
+  }
+  return executed;
+}
+
+async function openNativeContextMenu(target) {
+  if (target.openCommand) {
+    await vscode.commands.executeCommand(target.openCommand);
+    return {
+      method: "vscode-command",
+      command: target.openCommand,
+    };
+  }
+
+  await sendMacSystemEventsKeyStroke({
+    keyCode: 109,
+    modifiers: ["shift"],
+  });
+  return {
+    method: "system-events-keystroke",
+    keyStroke: "Shift+F10",
+  };
+}
+
+async function captureNativeContextMenuEvidenceIfRequested(
+  scenario,
+  outputDir,
+  harnessEvents,
+) {
+  const targets = scenario.nativeContextMenus ?? [];
+  if (targets.length === 0) {
+    return;
+  }
+
+  const reportPath = path.join(outputDir, "native-context-menu-report.json");
+  const report = {
+    platform: process.platform,
+    startedAt: new Date().toISOString(),
+    targets: [],
+  };
+
+  if (process.platform !== "darwin") {
+    report.targets = targets.map((target) => ({
+      name: target.name,
+      status: "skipped",
+      reason: "Native context menu capture is currently macOS-only.",
+    }));
+    report.finishedAt = new Date().toISOString();
+    await writeJson(reportPath, report);
+    return;
+  }
+
+  await fs.mkdir(path.join(outputDir, "screenshots"), { recursive: true });
+  for (const target of targets) {
+    const name = target.name ?? `target-${report.targets.length + 1}`;
+    const startedAt = new Date().toISOString();
+    const screenshotPath = path.join(
+      outputDir,
+      "screenshots",
+      `native-context-menu-${name}.png`,
+    );
+    const metadataPath = captureMetadataPath(screenshotPath);
+    const entry = {
+      name,
+      status: "unavailable",
+      setupCommands: [],
+      screenshotPath,
+      metadataPath,
+      startedAt,
+    };
+
+    try {
+      await sendEscapeKeyBestEffort();
+      const boundsBeforeSetup = await getExtensionHostWindowBounds();
+      if (!boundsBeforeSetup.ok) {
+        throw new Error(boundsBeforeSetup.reason);
+      }
+      const activated = await activateMacProcessBestEffort(
+        boundsBeforeSetup.bounds.processId,
+      );
+      const resized = await resizeMacProcessWindowBestEffort(
+        boundsBeforeSetup.bounds.processId,
+        target.windowFrame,
+      );
+      const setupBounds = resized
+        ? await getExtensionHostWindowBounds()
+        : boundsBeforeSetup;
+      if (!setupBounds.ok) {
+        throw new Error(setupBounds.reason);
+      }
+      const dismissedTransientUi = await sendEscapeKeyBestEffort();
+      const preOpenActions = await prepareScreenForWindowCapture(
+        setupBounds.bounds,
+      );
+      entry.setupCommands = await runNativeContextMenuSetup(
+        target.setupCommands,
+      );
+      entry.setupKeystrokes = await runNativeContextMenuSetupKeystrokes(
+        target.setupKeystrokes,
+      );
+      await pause(target.beforeOpenPauseMs ?? 250);
+      const openAction = await openNativeContextMenu(target);
+      await pause(target.afterOpenPauseMs ?? 500);
+
+      const boundsResult = await getExtensionHostWindowBounds();
+      if (!boundsResult.ok) {
+        throw new Error(boundsResult.reason);
+      }
+      const bounds = boundsResult.bounds;
+      await activateMacProcessBestEffort(bounds.processId);
+      const captureBounds = expandBoundsForNativeContextMenu(
+        bounds,
+        target.capturePadding,
+      );
+      const command = [
+        "-x",
+        "-R",
+        formatWindowBounds(captureBounds),
+        screenshotPath,
+      ];
+      await execFileAsync("screencapture", command, { timeout: 30_000 });
+      await writeCaptureMetadata(metadataPath, {
+        captureMode: "native-context-menu-window-region",
+        command: `screencapture ${command.slice(0, -1).join(" ")}`,
+        bounds,
+        captureBounds,
+        activated,
+        resized,
+        requestedWindowFrame: target.windowFrame,
+        dismissedTransientUi,
+        preOpenActions,
+        openAction,
+        menuVisibilityVerified: false,
+        setupCommands: entry.setupCommands,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      });
+      entry.status = "captured-unverified";
+      entry.captureMode = "native-context-menu-window-region";
+      entry.activated = activated;
+      entry.resized = resized;
+      entry.dismissedTransientUi = dismissedTransientUi;
+      entry.openAction = openAction;
+      entry.menuVisibilityVerified = false;
+      harnessEvents.push({
+        event: "artifact.nativeContextMenu.capturedUnverified",
+        target: name,
+        artifactPath: screenshotPath,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      entry.status = "unavailable";
+      entry.reason = errorMessage(error);
+      harnessEvents.push({
+        event: "artifact.nativeContextMenu.unavailable",
+        target: name,
+        reason: entry.reason,
+        timestamp: new Date().toISOString(),
+      });
+    } finally {
+      entry.finishedAt = new Date().toISOString();
+      await sendEscapeKeyBestEffort();
+      report.targets.push(entry);
+    }
+  }
+
+  report.finishedAt = new Date().toISOString();
+  await writeJson(reportPath, report);
+}
+
+async function captureUiReviewScreenshotIfRequested(harnessEvents) {
+  const screenshotPath = process.env.GROWI_UI_REVIEW_SCREENSHOT_PATH;
+  if (!screenshotPath || process.platform !== "darwin") {
+    return;
+  }
+
+  await fs.mkdir(path.dirname(screenshotPath), { recursive: true });
+  const metadataPath = captureMetadataPath(screenshotPath);
+  await pause(250);
+
+  const startedAt = new Date().toISOString();
+  const boundsResult = await getExtensionHostWindowBounds();
+  if (!boundsResult.ok) {
+    await captureFullScreenFallback(
+      screenshotPath,
+      metadataPath,
+      startedAt,
+      boundsResult.reason,
+    );
+    harnessEvents.push({
+      event: "artifact.screenshot.captured",
+      captureMode: "full-screen-fallback",
+      artifactPath: screenshotPath,
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
+  try {
+    const scenarioWindowFrame = globalThis.__growiUiReviewScenarioWindowFrame;
+    const resized = await resizeMacProcessWindowBestEffort(
+      boundsResult.bounds.processId,
+      scenarioWindowFrame,
+    );
+    const preCaptureActions = await prepareScreenForWindowCapture(
+      boundsResult.bounds,
+    );
+    const refreshedBounds = await getExtensionHostWindowBounds();
+    const bounds = refreshedBounds.ok
+      ? refreshedBounds.bounds
+      : boundsResult.bounds;
+    const command = bounds.windowId
+      ? ["-x", "-o", "-l", String(bounds.windowId), screenshotPath]
+      : ["-x", "-R", formatWindowBounds(bounds), screenshotPath];
+    await execFileAsync("screencapture", command, { timeout: 30_000 });
+    await writeCaptureMetadata(metadataPath, {
+      captureMode: "active-window",
+      command: `screencapture ${command.slice(0, -1).join(" ")}`,
+      bounds,
+      resized,
+      requestedWindowFrame: scenarioWindowFrame,
+      preCaptureActions,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    });
+    harnessEvents.push({
+      event: "artifact.screenshot.captured",
+      captureMode: "active-window",
+      artifactPath: screenshotPath,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    await captureFullScreenFallback(
+      screenshotPath,
+      metadataPath,
+      startedAt,
+      `active-window screencapture failed: ${errorMessage(error)}`,
+    );
+    harnessEvents.push({
+      event: "artifact.screenshot.captured",
+      captureMode: "full-screen-fallback",
+      artifactPath: screenshotPath,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+async function runUiReviewScenario({
+  scenarioPath,
+  outputDir,
+  baseUrl,
+  token,
+  adminUrl,
+  treeProvider,
+}) {
+  assert(outputDir, "Missing GROWI_UI_REVIEW_OUTPUT_DIR.");
+
+  const scenario = JSON.parse(await fs.readFile(scenarioPath, "utf8"));
+  globalThis.__growiUiReviewScenarioWindowFrame = scenario.windowFrame;
+  await fs.mkdir(outputDir, { recursive: true });
+
+  if (scenario.resetStats !== false) {
+    await resetStats(adminUrl);
+  }
+
+  const fixturePages = [
+    ...(scenario.fixture?.pages ?? []),
+    ...expandGeneratedPages(scenario.fixture?.generatedPages),
+  ];
+  if (fixturePages.length > 0) {
+    await updateFixture(adminUrl, fixturePages, scenario.fixture.bookmarks);
+  }
+
+  const quickPicks = [];
+  const commandTrace = [];
+  const harnessEvents = [
+    {
+      event: "scenario.started",
+      scenarioId: scenario.id,
+      timestamp: new Date().toISOString(),
+    },
+  ];
+  try {
+    for (const command of scenario.commands ?? []) {
+      harnessEvents.push({
+        event: "command.dispatch",
+        command: command.id,
+        timestamp: new Date().toISOString(),
+      });
+      await executeScenarioCommand(command, quickPicks, commandTrace);
+    }
+  } finally {
+    const uiState = {
+      scenarioId: scenario.id,
+      target: scenario.target,
+      baseUrl,
+      tokenConfigured: Boolean(token),
+      treeItems: await collectTreeItems(
+        treeProvider,
+        scenario.tree?.maxDepth ?? 2,
+      ),
+      quickPicks,
+      menus: await collectPackageMenus(),
+      activePath: await getActivePath(),
+    };
+    await captureNativeContextMenuEvidenceIfRequested(
+      scenario,
+      outputDir,
+      harnessEvents,
+    );
+    await captureUiReviewScreenshotIfRequested(harnessEvents);
+    harnessEvents.push({
+      event: "scenario.artifacts.written",
+      scenarioId: scenario.id,
+      timestamp: new Date().toISOString(),
+    });
+    await writeJson(path.join(outputDir, "ui-state.json"), uiState);
+    await writeJson(path.join(outputDir, "command-trace.json"), commandTrace);
+    await writeJson(path.join(outputDir, "ui-geometry.json"), {
+      geometryUnavailable: true,
+      source: "native-vscode-ui",
+      viewport: null,
+      elements: [],
+      relationships: [],
+      unavailableReason:
+        "Native VS Code workbench geometry is unavailable from extension-host integration tests.",
+    });
+    await writeJson(path.join(outputDir, "workspace-state.json"), {
+      workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map(
+        (folder) => folder.uri.toString(),
+      ),
+      activePath: await getActivePath(),
+    });
+    await writeJsonl(path.join(outputDir, "harness.jsonl"), harnessEvents);
+  }
+}
+
 function assertCommandsAvailable(commands, expected) {
   for (const commandId of expected) {
     assert(
@@ -427,6 +1528,18 @@ export async function run() {
   );
   await closeAllEditors();
 
+  if (process.env.GROWI_UI_REVIEW_SCENARIO) {
+    await runUiReviewScenario({
+      scenarioPath: process.env.GROWI_UI_REVIEW_SCENARIO,
+      outputDir: process.env.GROWI_UI_REVIEW_OUTPUT_DIR,
+      baseUrl,
+      token,
+      adminUrl,
+      treeProvider,
+    });
+    return;
+  }
+
   await runCase("command palette commands are registered", async () => {
     const commands = await vscode.commands.getCommands(true);
     assertCommandsAvailable(commands, [
@@ -443,16 +1556,17 @@ export async function run() {
       "growi.startEdit",
       "growi.endEdit",
       "growi.showCurrentPageActions",
+      "growi.openCurrentPageHub",
       "growi.showBookmarks",
-      "growi.showLocalRoundTripActions",
+      "growi.showLocalMirrorActions",
       "growi.refreshCurrentPage",
       "growi.refreshListing",
-      "growi.downloadCurrentPageToLocalFile",
-      "growi.compareLocalWorkFileWithCurrentPage",
-      "growi.uploadExportedLocalFileToGrowi",
-      "growi.downloadCurrentPageSetToLocalBundle",
-      "growi.compareLocalBundleWithGrowi",
-      "growi.uploadLocalBundleToGrowi",
+      "growi.createLocalMirrorForCurrentPage",
+      "growi.compareLocalMirrorWithGrowi",
+      "growi.uploadLocalMirrorToGrowi",
+      "growi.createLocalMirrorForCurrentPrefix",
+      "growi.compareLocalMirrorWithGrowi",
+      "growi.uploadLocalMirrorToGrowi",
       "growi.showCurrentPageInfo",
       "growi.showCurrentPageAttachments",
       "growi.showBacklinks",
@@ -468,12 +1582,12 @@ export async function run() {
       "growi.explorerShowCurrentPageInfo",
       "growi.explorerShowCurrentPageAttachments",
       "growi.explorerShowRevisionHistoryDiff",
-      "growi.explorerDownloadCurrentPageToLocalFile",
-      "growi.explorerDownloadCurrentPageSetToLocalBundle",
-      "growi.explorerCompareLocalWorkFileWithCurrentPage",
-      "growi.explorerUploadExportedLocalFileToGrowi",
-      "growi.explorerCompareLocalBundleWithGrowi",
-      "growi.explorerUploadLocalBundleToGrowi",
+      "growi.explorerCreateLocalMirrorForCurrentPage",
+      "growi.explorerCreateLocalMirrorForCurrentPrefix",
+      "growi.explorerCompareLocalMirrorWithGrowi",
+      "growi.explorerUploadLocalMirrorToGrowi",
+      "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+      "growi.explorerUploadLocalMirrorSubtreeToGrowi",
     ]);
   });
 
@@ -1586,7 +2700,7 @@ export async function run() {
       );
       assert(
         stalePage?.tooltip ===
-          "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
+          "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
         `Expected stale tree tooltip after editor switch: ${toJsonString(stalePage)}`,
       );
       assert(
@@ -1682,12 +2796,12 @@ export async function run() {
         (item) => item.uri.path === "/sample.md",
       );
       assert(
-        conflictPage?.description === "Conflicts",
+        conflictPage?.description === "競合",
         `Expected conflicts decoration after editor switch: ${toJsonString(conflictPage)}`,
       );
       assert(
         conflictPage?.tooltip ===
-          "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+          "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
         `Expected conflicts tooltip after editor switch: ${toJsonString(conflictPage)}`,
       );
       assert(
@@ -1926,7 +3040,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
       await vscode.commands.executeCommand(
-        "growi.downloadCurrentPageToLocalFile",
+        "growi.createLocalMirrorForCurrentPage",
       );
 
       const markdown = await fs.readFile(localPath, "utf8");
@@ -1957,7 +3071,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/team/dev/docs");
       await vscode.commands.executeCommand(
-        "growi.downloadCurrentPageSetToLocalBundle",
+        "growi.createLocalMirrorForCurrentPrefix",
       );
 
       const rootMarkdown = await fs.readFile(
@@ -2188,7 +3302,7 @@ export async function run() {
         },
         async () =>
           await vscode.commands.executeCommand(
-            "growi.compareLocalWorkFileWithCurrentPage",
+            "growi.compareLocalMirrorWithGrowi",
           ),
       );
 
@@ -2296,8 +3410,8 @@ export async function run() {
         (item) => item.uri.path === "/sample/a.md",
       );
       assert(
-        rootPage?.description === "Local Changes" &&
-          aPage?.description === "Local Changes",
+        rootPage?.description === "ローカルの変更" &&
+          aPage?.description === "ローカルの変更",
         `Expected compare snapshot decorations for /sample and /sample/a: ${toJsonString(sampleChildren)}`,
       );
 
@@ -2355,7 +3469,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/sample/hello");
       const results = await vscode.commands.executeCommand(
-        "growi.uploadExportedLocalFileToGrowi",
+        "growi.uploadLocalMirrorToGrowi",
       );
 
       assert(
@@ -2469,7 +3583,7 @@ export async function run() {
         },
         async () =>
           await vscode.commands.executeCommand(
-            "growi.compareLocalWorkFileWithCurrentPage",
+            "growi.compareLocalMirrorWithGrowi",
           ),
       );
       assert(
@@ -2478,7 +3592,7 @@ export async function run() {
       );
       await resetStats(adminUrl);
       const uploadResults = await vscode.commands.executeCommand(
-        "growi.uploadExportedLocalFileToGrowi",
+        "growi.uploadLocalMirrorToGrowi",
       );
       assert(
         uploadResults === undefined,
@@ -2599,7 +3713,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/team/dev");
       await vscode.commands.executeCommand(
-        "growi.downloadCurrentPageSetToLocalBundle",
+        "growi.createLocalMirrorForCurrentPrefix",
       );
       await fs.writeFile(
         getBundlePageFilePath("/team/dev/docs/guide/advanced"),
@@ -2644,7 +3758,7 @@ export async function run() {
             },
             async () =>
               await vscode.commands.executeCommand(
-                "growi.compareLocalBundleWithGrowi",
+                "growi.compareLocalMirrorWithGrowi",
               ),
           ),
       );
@@ -2758,7 +3872,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/team/dev/docs");
       await vscode.commands.executeCommand(
-        "growi.downloadCurrentPageSetToLocalBundle",
+        "growi.createLocalMirrorForCurrentPrefix",
       );
       await fs.writeFile(
         getBundlePageFilePath("/team/dev/docs/guide/advanced"),
@@ -2786,7 +3900,7 @@ export async function run() {
         },
         async () =>
           await vscode.commands.executeCommand(
-            "growi.uploadLocalBundleToGrowi",
+            "growi.uploadLocalMirrorToGrowi",
           ),
       );
 
@@ -2872,7 +3986,7 @@ export async function run() {
 
     await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
     await vscode.commands.executeCommand(
-      "growi.downloadCurrentPageToLocalFile",
+      "growi.createLocalMirrorForCurrentPage",
     );
     await vscode.commands.executeCommand("vscode.open", growiUri, {
       preserveFocus: true,
@@ -2892,9 +4006,7 @@ export async function run() {
     assert(replaced, "Failed to edit growi-current.md.");
     await editor.document.save();
     await resetStats(adminUrl);
-    await vscode.commands.executeCommand(
-      "growi.uploadExportedLocalFileToGrowi",
-    );
+    await vscode.commands.executeCommand("growi.uploadLocalMirrorToGrowi");
 
     const activeEditor = vscode.window.activeTextEditor;
     assert(
@@ -2938,7 +4050,7 @@ export async function run() {
     await fs.rm(localPath, { force: true });
     await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
     await vscode.commands.executeCommand(
-      "growi.downloadCurrentPageToLocalFile",
+      "growi.createLocalMirrorForCurrentPage",
     );
 
     const capturedDiffCalls = [];
@@ -2952,7 +4064,7 @@ export async function run() {
       },
       async () => {
         await vscode.commands.executeCommand(
-          "growi.compareLocalWorkFileWithCurrentPage",
+          "growi.compareLocalMirrorWithGrowi",
         );
       },
     );
@@ -3007,7 +4119,7 @@ export async function run() {
             },
             async () => {
               await vscode.commands.executeCommand(
-                "growi.compareLocalWorkFileWithCurrentPage",
+                "growi.compareLocalMirrorWithGrowi",
               );
             },
           );
@@ -3036,7 +4148,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
       await vscode.commands.executeCommand(
-        "growi.downloadCurrentPageToLocalFile",
+        "growi.createLocalMirrorForCurrentPage",
       );
 
       await vscode.commands.executeCommand("vscode.open", growiUri);
@@ -3080,7 +4192,7 @@ export async function run() {
         },
         async () => {
           await vscode.commands.executeCommand(
-            "growi.uploadExportedLocalFileToGrowi",
+            "growi.uploadLocalMirrorToGrowi",
           );
         },
       );
@@ -3126,7 +4238,7 @@ export async function run() {
 
       await vscode.commands.executeCommand("growi.openPage", "/team/dev/spec");
       await vscode.commands.executeCommand(
-        "growi.downloadCurrentPageToLocalFile",
+        "growi.createLocalMirrorForCurrentPage",
       );
 
       const exported = await fs.readFile(localPath, "utf8");
@@ -3151,7 +4263,7 @@ export async function run() {
         },
         async () => {
           await vscode.commands.executeCommand(
-            "growi.uploadExportedLocalFileToGrowi",
+            "growi.uploadLocalMirrorToGrowi",
           );
         },
       );
@@ -3192,7 +4304,7 @@ export async function run() {
         },
         async () => {
           await vscode.commands.executeCommand(
-            "growi.uploadExportedLocalFileToGrowi",
+            "growi.uploadLocalMirrorToGrowi",
           );
         },
       );
@@ -3432,8 +4544,8 @@ export async function run() {
       await withCommandExecuteOverride(
         async (next, command, args) => {
           if (
-            command === "growi.downloadCurrentPageToLocalFile" ||
-            command === "growi.downloadCurrentPageSetToLocalBundle"
+            command === "growi.createLocalMirrorForCurrentPage" ||
+            command === "growi.createLocalMirrorForCurrentPrefix"
           ) {
             delegatedCommands.push({ command, args });
             return undefined;
@@ -3454,7 +4566,7 @@ export async function run() {
                     (item) =>
                       item.label === "現在ページをローカルへダウンロード" &&
                       item.description === "growi-current.md に保存" &&
-                      item.command === "growi.downloadCurrentPageToLocalFile",
+                      item.command === "growi.createLocalMirrorForCurrentPage",
                   ),
                   `Current page download action was not offered: ${toJsonString(items)}`,
                 );
@@ -3462,8 +4574,7 @@ export async function run() {
                   (item) =>
                     item.label === "配下ページをローカルへダウンロード" &&
                     item.description === "growi-current-set/ に保存" &&
-                    item.command ===
-                      "growi.downloadCurrentPageSetToLocalBundle",
+                    item.command === "growi.createLocalMirrorForCurrentPrefix",
                 );
                 assert(
                   Boolean(bundleItem),
@@ -3489,7 +4600,7 @@ export async function run() {
       );
       assert(
         delegatedCommands[0]?.command ===
-          "growi.downloadCurrentPageSetToLocalBundle",
+          "growi.createLocalMirrorForCurrentPrefix",
         `Unexpected delegated command: ${toJsonString(delegatedCommands)}`,
       );
       assert(
@@ -3510,10 +4621,10 @@ export async function run() {
       await withCommandExecuteOverride(
         async (next, command, args) => {
           if (
-            command === "growi.compareLocalWorkFileWithCurrentPage" ||
-            command === "growi.uploadExportedLocalFileToGrowi" ||
-            command === "growi.compareLocalBundleWithGrowi" ||
-            command === "growi.uploadLocalBundleToGrowi"
+            command === "growi.compareLocalMirrorWithGrowi" ||
+            command === "growi.uploadLocalMirrorToGrowi" ||
+            command === "growi.compareLocalMirrorWithGrowi" ||
+            command === "growi.uploadLocalMirrorToGrowi"
           ) {
             delegatedCommands.push({ command, args });
             return undefined;
@@ -3536,27 +4647,25 @@ export async function run() {
                 assert(
                   items[0]?.label === "ローカルと現在ページを比較" &&
                     items[0]?.description === "growi-current.md を使用" &&
-                    items[0]?.command ===
-                      "growi.compareLocalWorkFileWithCurrentPage",
+                    items[0]?.command === "growi.compareLocalMirrorWithGrowi",
                   `Current page compare action was not first: ${toJsonString(items)}`,
                 );
                 assert(
                   items[1]?.label === "ローカルと配下ページを比較" &&
                     items[1]?.description === "growi-current-set/ を使用" &&
-                    items[1]?.command === "growi.compareLocalBundleWithGrowi",
+                    items[1]?.command === "growi.compareLocalMirrorWithGrowi",
                   `Bundle compare action was not second: ${toJsonString(items)}`,
                 );
                 assert(
                   items[2]?.label === "ローカルを現在ページへ反映" &&
                     items[2]?.description === "growi-current.md を使用" &&
-                    items[2]?.command ===
-                      "growi.uploadExportedLocalFileToGrowi",
+                    items[2]?.command === "growi.uploadLocalMirrorToGrowi",
                   `Current page upload action was not third: ${toJsonString(items)}`,
                 );
                 assert(
                   items[3]?.label === "ローカルを配下ページへ反映" &&
                     items[3]?.description === "growi-current-set/ を使用" &&
-                    items[3]?.command === "growi.uploadLocalBundleToGrowi",
+                    items[3]?.command === "growi.uploadLocalMirrorToGrowi",
                   `Bundle upload action was not fourth: ${toJsonString(items)}`,
                 );
                 return items[1];
@@ -3564,7 +4673,7 @@ export async function run() {
             },
             async () => {
               await vscode.commands.executeCommand(
-                "growi.showLocalRoundTripActions",
+                "growi.showLocalMirrorActions",
               );
             },
           );
@@ -3578,7 +4687,7 @@ export async function run() {
         )}`,
       );
       assert(
-        delegatedCommands[0]?.command === "growi.compareLocalBundleWithGrowi",
+        delegatedCommands[0]?.command === "growi.compareLocalMirrorWithGrowi",
         `Unexpected delegated command: ${toJsonString(delegatedCommands)}`,
       );
       assert(
@@ -3596,7 +4705,7 @@ export async function run() {
 
       await withCommandExecuteOverride(
         async (next, command, args) => {
-          if (command === "growi.downloadCurrentPageSetToLocalBundle") {
+          if (command === "growi.createLocalMirrorForCurrentPrefix") {
             delegatedCommands.push({ command, args });
             return undefined;
           }
@@ -3604,7 +4713,7 @@ export async function run() {
         },
         async () => {
           await vscode.commands.executeCommand(
-            "growi.explorerDownloadCurrentPageSetToLocalBundle",
+            "growi.explorerCreateLocalMirrorForCurrentPrefix",
             {
               uri: { scheme: "growi", path: "/team/dev.md" },
               contextValue: "growi.directoryPage",
@@ -3635,8 +4744,8 @@ export async function run() {
         async (next, command, args) => {
           if (
             command === "growi.showCurrentPageInfo" ||
-            command === "growi.compareLocalBundleWithGrowi" ||
-            command === "growi.uploadLocalBundleToGrowi"
+            command === "growi.compareLocalMirrorWithGrowi" ||
+            command === "growi.uploadLocalMirrorToGrowi"
           ) {
             delegatedCommands.push({ command, args });
             return undefined;
@@ -3659,14 +4768,14 @@ export async function run() {
             },
           );
           await vscode.commands.executeCommand(
-            "growi.explorerCompareLocalBundleWithGrowi",
+            "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
             {
               uri: { scheme: "growi", path: "/team/" },
               contextValue: "growi.prefixRoot",
             },
           );
           await vscode.commands.executeCommand(
-            "growi.explorerUploadLocalBundleToGrowi",
+            "growi.explorerUploadLocalMirrorSubtreeToGrowi",
             {
               uri: { scheme: "growi", path: "/team/" },
               contextValue: "growi.prefixRoot",
@@ -3698,7 +4807,7 @@ export async function run() {
         )}`,
       );
       assert(
-        delegatedCommands[2]?.command === "growi.compareLocalBundleWithGrowi" &&
+        delegatedCommands[2]?.command === "growi.compareLocalMirrorWithGrowi" &&
           delegatedCommands[2]?.args[0]?.uri?.path === "/team.md" &&
           delegatedCommands[2]?.args[0]?.scope === "subtree",
         `Unexpected local bundle compare delegation: ${toJsonString(
@@ -3706,7 +4815,7 @@ export async function run() {
         )}`,
       );
       assert(
-        delegatedCommands[3]?.command === "growi.uploadLocalBundleToGrowi" &&
+        delegatedCommands[3]?.command === "growi.uploadLocalMirrorToGrowi" &&
           delegatedCommands[3]?.args[0]?.uri?.path === "/team.md" &&
           delegatedCommands[3]?.args[0]?.scope === "subtree",
         `Unexpected local bundle upload delegation: ${toJsonString(

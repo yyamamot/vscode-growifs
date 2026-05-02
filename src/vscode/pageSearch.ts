@@ -39,6 +39,7 @@ export type FindBacklinksResult =
       backlinks: string[];
       truncatedByLimit: boolean;
       timedOut: boolean;
+      scannedCount: number;
     }
   | {
       ok: false;
@@ -149,6 +150,7 @@ export async function findBacklinks(
 
   const backlinks: string[] = [];
   let truncatedByLimit = false;
+  let scannedCount = 0;
 
   for (const candidatePath of orderedCandidates) {
     if (backlinks.length >= input.limit) {
@@ -167,6 +169,7 @@ export async function findBacklinks(
     } catch {
       return { ok: false, reason: "Unexpected" };
     }
+    scannedCount += 1;
 
     if (!readResult.ok) {
       if (readResult.reason === "BaseUrlNotConfigured") {
@@ -208,5 +211,6 @@ export async function findBacklinks(
     backlinks,
     truncatedByLimit,
     timedOut,
+    scannedCount,
   };
 }

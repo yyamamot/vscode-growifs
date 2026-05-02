@@ -1,0 +1,137 @@
+{
+  "id": "page-detail-actions",
+  "title": "Page detail QuickPick review",
+  "aliases": [
+    "page-detail",
+    "current-page-hub"
+  ],
+  "uiAreas": [
+    "quickPick",
+    "currentPage"
+  ],
+  "changedFileGlobs": [
+    "package.json",
+    "src/vscode/commands.ts",
+    "src/extension.ts",
+    "src/harness/uiReview.ts"
+  ],
+  "target": "Page detail reference-only action surface",
+  "fixture": {
+    "pages": [
+      {
+        "path": "/team/dev/spec",
+        "body": "# spec page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "spec-owner"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 2
+  },
+  "commands": [
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.openPage",
+      "args": [
+        "/team/dev/spec"
+      ]
+    },
+    {
+      "id": "growi.openCurrentPageHub",
+      "quickPick": {
+        "kind": "pageDetailActions",
+        "action": "collectOnly",
+        "select": {
+          "label": "添付一覧を表示"
+        }
+      }
+    }
+  ],
+  "checks": {
+    "requiredQuickPickItems": [
+      {
+        "name": "pageDetailActions",
+        "placeholder": "ページ詳細で確認する項目を選択してください。",
+        "item": {
+          "label": "ページ情報を表示"
+        }
+      },
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "被リンクを表示"
+        }
+      },
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "添付一覧を表示"
+        }
+      },
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "履歴差分を表示"
+        }
+      }
+    ],
+    "requiredQuickPickItemOrder": [
+      {
+        "name": "pageDetailActions",
+        "items": [
+          {
+            "label": "ページ情報を表示"
+          },
+          {
+            "label": "被リンクを表示"
+          },
+          {
+            "label": "添付一覧を表示"
+          },
+          {
+            "label": "履歴差分を表示"
+          }
+        ]
+      }
+    ],
+    "forbiddenQuickPickItems": [
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "現在ページをローカルに同期"
+        }
+      },
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "現在ページ配下をローカルに同期"
+        }
+      },
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "SCMで確認してGROWIに反映"
+        }
+      }
+    ],
+    "requiredSelectedQuickPickItems": [
+      {
+        "name": "pageDetailActions",
+        "item": {
+          "label": "添付一覧を表示"
+        }
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix",
+      "growi.openPage",
+      "growi.openCurrentPageHub"
+    ]
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "id": "current-page-actions",
+  "title": "Current page actions QuickPick review",
+  "aliases": [
+    "current-page",
+    "page-actions"
+  ],
+  "uiAreas": [
+    "quickPick",
+    "currentPage"
+  ],
+  "changedFileGlobs": [
+    "src/vscode/commands.ts",
+    "src/extension.ts",
+    "src/harness/uiReview.ts"
+  ],
+  "target": "Current page action QuickPick entries and ordering",
+  "fixture": {
+    "pages": [
+      {
+        "path": "/team/dev/spec",
+        "body": "# spec page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "spec-owner"
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.openPage",
+      "args": [
+        "/team/dev/spec"
+      ]
+    },
+    {
+      "id": "growi.showCurrentPageActions",
+      "quickPick": {
+        "kind": "currentPageActions",
+        "action": "collectOnly",
+        "select": {
+          "label": "ページ情報を表示"
+        }
+      }
+    }
+  ],
+  "checks": {
+    "requiredQuickPickItems": [
+      {
+        "name": "currentPageActions",
+        "placeholder": "現在ページに対して実行する操作を選択してください。",
+        "item": {
+          "label": "ページを更新"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "ページ情報を表示"
+        }
+      },
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "現在ページをローカルに同期",
+          "description": "__<page>__.md と .growi-mirror.json を作成または更新"
+        }
+      }
+    ],
+    "requiredQuickPickItemOrder": [
+      {
+        "name": "currentPageActions",
+        "items": [
+          {
+            "label": "ページを更新"
+          },
+          {
+            "label": "ページ名を変更"
+          },
+          {
+            "label": "ページを削除"
+          },
+          {
+            "label": "被リンクを表示"
+          },
+          {
+            "label": "ページ情報を表示"
+          }
+        ]
+      }
+    ],
+    "forbiddenQuickPickItems": [
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "URL / path を直接入力",
+          "action": "directInput"
+        }
+      }
+    ],
+    "requiredSelectedQuickPickItems": [
+      {
+        "name": "currentPageActions",
+        "item": {
+          "label": "ページ情報を表示"
+        }
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix",
+      "growi.openPage",
+      "growi.showCurrentPageActions"
+    ]
+  }
+}

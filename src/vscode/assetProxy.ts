@@ -1,14 +1,13 @@
+import { randomBytes } from "node:crypto";
 import * as http from "node:http";
 
-import {
-  buildGrowiAssetProxyUrl,
-  resolveGrowiAssetUpstreamUrl,
-} from "./growiAsset";
+import { resolveGrowiAssetUpstreamUrl } from "./growiAsset";
 
 interface GrowiAssetProxyDeps {
   getBaseUrl(): string | undefined;
   getApiToken(): Promise<string | undefined>;
   fetch?: typeof fetch;
+  proxySecret?: string;
 }
 
 interface GrowiAssetProxyRequest {
@@ -36,22 +35,54 @@ function trimToUndefined(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function parseProxyPath(urlValue: string | undefined): string | undefined {
+const GROWI_ASSET_PROXY_PATH_PREFIX = "/growi-assets/";
+const ALLOWED_GROWI_ASSET_PATH_PREFIXES = [
+  "/uploads/",
+  "/files/",
+  "/_api/attachments/",
+];
+
+function generateProxySecret(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+function buildGrowiAssetProxyUrl(
+  internalAssetId: string,
+  proxySecret: string,
+  proxyOrigin: string,
+): string {
+  return `${proxyOrigin}${GROWI_ASSET_PROXY_PATH_PREFIX}${encodeURIComponent(
+    proxySecret,
+  )}/${encodeURIComponent(internalAssetId)}`;
+}
+
+function parseProxyPath(
+  urlValue: string | undefined,
+  proxySecret: string,
+): string | undefined {
   if (!urlValue) {
     return undefined;
   }
 
   const requestUrl = new URL(urlValue, "http://127.0.0.1");
-  if (!requestUrl.pathname.startsWith("/growi-assets/")) {
+  if (!requestUrl.pathname.startsWith(GROWI_ASSET_PROXY_PATH_PREFIX)) {
     return undefined;
   }
 
-  const encodedId = requestUrl.pathname.slice("/growi-assets/".length);
-  if (!encodedId) {
+  const pathParts = requestUrl.pathname
+    .slice(GROWI_ASSET_PROXY_PATH_PREFIX.length)
+    .split("/");
+  if (pathParts.length !== 2 || !pathParts[0] || !pathParts[1]) {
     return undefined;
   }
 
   try {
+    const requestSecret = decodeURIComponent(pathParts[0]);
+    if (requestSecret !== proxySecret) {
+      return undefined;
+    }
+
+    const encodedId = pathParts[1];
     return decodeURIComponent(encodedId);
   } catch {
     return undefined;
@@ -69,6 +100,17 @@ function isSameHostAbsoluteUrl(target: string, baseUrl: string): boolean {
 
   try {
     return new URL(target).host === new URL(baseUrl).host;
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedGrowiAssetPath(target: string): boolean {
+  try {
+    const { pathname } = new URL(target);
+    return ALLOWED_GROWI_ASSET_PATH_PREFIXES.some((prefix) =>
+      pathname.startsWith(prefix),
+    );
   } catch {
     return false;
   }
@@ -107,6 +149,7 @@ function createProxyErrorResponse(
 
 export function createGrowiAssetProxyRequestHandler(deps: GrowiAssetProxyDeps) {
   const fetchImpl = deps.fetch ?? fetch;
+  const proxySecret = deps.proxySecret ?? generateProxySecret();
 
   return async (
     request: GrowiAssetProxyRequest,
@@ -115,7 +158,7 @@ export function createGrowiAssetProxyRequestHandler(deps: GrowiAssetProxyDeps) {
       return createProxyErrorResponse(405, "MethodNotAllowed");
     }
 
-    const internalAssetId = parseProxyPath(request.url);
+    const internalAssetId = parseProxyPath(request.url, proxySecret);
     if (!internalAssetId) {
       return createProxyErrorResponse(404, "NotFound");
     }
@@ -128,16 +171,21 @@ export function createGrowiAssetProxyRequestHandler(deps: GrowiAssetProxyDeps) {
       return createProxyErrorResponse(400, "UnsupportedTarget");
     }
 
+    if (
+      !baseUrl ||
+      !isSameHostAbsoluteUrl(upstreamUrl, baseUrl) ||
+      !isAllowedGrowiAssetPath(upstreamUrl)
+    ) {
+      return createProxyErrorResponse(400, "UnsupportedTarget");
+    }
+
     const apiToken = trimToUndefined(await deps.getApiToken());
     if (!apiToken) {
       return createProxyErrorResponse(401, "MissingToken");
     }
 
     try {
-      const upstreamRequestUrl =
-        baseUrl && isSameHostAbsoluteUrl(upstreamUrl, baseUrl)
-          ? appendAccessTokenQuery(upstreamUrl, apiToken)
-          : upstreamUrl;
+      const upstreamRequestUrl = appendAccessTokenQuery(upstreamUrl, apiToken);
 
       const upstreamResponse = await fetchImpl(upstreamRequestUrl, {
         headers: {
@@ -163,7 +211,11 @@ export function createGrowiAssetProxyRequestHandler(deps: GrowiAssetProxyDeps) {
 export function createGrowiAssetProxy(
   deps: GrowiAssetProxyDeps,
 ): GrowiAssetProxy {
-  const requestHandler = createGrowiAssetProxyRequestHandler(deps);
+  const proxySecret = deps.proxySecret ?? generateProxySecret();
+  const requestHandler = createGrowiAssetProxyRequestHandler({
+    ...deps,
+    proxySecret,
+  });
   let server: http.Server | undefined;
   let started = false;
   let currentPort: number | undefined;
@@ -220,6 +272,7 @@ export function createGrowiAssetProxy(
 
       return buildGrowiAssetProxyUrl(
         internalAssetId,
+        proxySecret,
         `http://127.0.0.1:${currentPort}`,
       );
     },

@@ -1,9 +1,18 @@
 import * as vscode from "vscode";
 import { normalizeCanonicalPath } from "../core/uri";
-import type { MirrorCompareScmState } from "./mirrorCompareScm";
+import type { MirrorCompareScmState } from "./mirror/mirrorCompareScm";
 import type { OpenedPageDecorationStatus } from "./pageFreshnessService";
 
 export const GROWI_EXPLORER_VIEW_ID = "growi.explorer";
+export const GROWI_LOAD_MORE_LISTING_COMMAND = "growi.loadMoreListing";
+export const GROWI_EXPLORER_OPEN_PAGE_ITEM_COMMAND =
+  "growi.explorerOpenPageItem";
+
+export interface PrefixDirectoryListingState {
+  partial: boolean;
+  fetchedCount: number;
+  hasMore: boolean;
+}
 
 export interface PrefixTreeDeps {
   getRegisteredPrefixes(): readonly string[];
@@ -11,11 +20,15 @@ export interface PrefixTreeDeps {
   readDirectory(
     uri: vscode.Uri,
   ): Thenable<readonly [string, vscode.FileType][]>;
+  getDirectoryListingState?(
+    uri: vscode.Uri,
+  ): PrefixDirectoryListingState | undefined;
 }
 
 export interface PrefixTreeItem extends vscode.TreeItem {
-  kind: "directory" | "page";
+  kind: "directory" | "page" | "loadMore";
   uri: vscode.Uri;
+  parentUri?: vscode.Uri;
 }
 
 interface TreeEntryCandidate {
@@ -32,22 +45,22 @@ const PAGE_DECORATION_PRESENTATIONS: Record<
   remoteNewer: {
     description: "remote newer",
     tooltip:
-      "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
+      "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
   },
   localChanges: {
-    description: "Local Changes",
+    description: "ローカルの変更",
     tooltip:
-      "local mirror に未反映の変更があります。Compare Local Mirror with GROWI または Upload Local Mirror to GROWI で確認してください。",
+      "ローカル側に GROWI へ未反映の変更があります。Compare Local Mirror with GROWI または GROWIに反映で確認してください。",
   },
   remoteChanges: {
-    description: "Remote Changes",
+    description: "GROWI側の変更",
     tooltip:
-      "remote 側の変更が local mirror に未取り込みです。Compare Local Mirror with GROWI または Take Remote Changes で確認してください。",
+      "GROWI側の変更がローカルに未取り込みです。Compare Local Mirror with GROWI または ローカルに取り込むで確認してください。",
   },
   conflicts: {
-    description: "Conflicts",
+    description: "競合",
     tooltip:
-      "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+      "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
   },
 };
 
@@ -87,6 +100,12 @@ function createPrefixRootItem(uri: vscode.Uri, label: string): PrefixTreeItem {
   return item;
 }
 
+function labelFromUri(uri: vscode.Uri): string {
+  const normalized = normalizeCanonicalPath(uri.path);
+  const path = normalized.ok ? normalized.value : uri.path.replace(/\/$/u, "");
+  return path === "/" ? "/" : (path.split("/").filter(Boolean).at(-1) ?? path);
+}
+
 function buildPageContextValue(
   kind: "page" | "directoryPage",
   isBookmarked: boolean,
@@ -112,7 +131,7 @@ function createPageItem(
   item.contextValue = buildPageContextValue("page", isBookmarked);
   item.iconPath = vscode.ThemeIcon.File;
   item.command = {
-    command: "vscode.open",
+    command: GROWI_EXPLORER_OPEN_PAGE_ITEM_COMMAND,
     title: "Open GROWI Page",
     arguments: [uri],
   };
@@ -126,6 +145,31 @@ function createDirectoryPageItem(
 ): PrefixTreeItem {
   const item = createPageItem(uri, label, isBookmarked);
   item.contextValue = buildPageContextValue("directoryPage", isBookmarked);
+  return item;
+}
+
+function createLoadMoreItem(
+  parentUri: vscode.Uri,
+  state: PrefixDirectoryListingState,
+): PrefixTreeItem {
+  const normalizedPath = normalizeCanonicalPath(parentUri.path);
+  const targetPath = normalizedPath.ok ? normalizedPath.value : parentUri.path;
+  const item = new vscode.TreeItem(
+    "さらに読み込む",
+    vscode.TreeItemCollapsibleState.None,
+  ) as PrefixTreeItem;
+  item.kind = "loadMore";
+  item.uri = parentUri;
+  item.parentUri = parentUri;
+  item.contextValue = "growi.loadMore";
+  item.iconPath = new vscode.ThemeIcon("cloud-download");
+  item.description = `部分表示: ${targetPath}・取得済み ${state.fetchedCount} 件`;
+  item.tooltip = `${targetPath} 配下の一部のみ表示しています。取得済み: ${state.fetchedCount} 件。選択するとこの階層の続きを取得します。`;
+  item.command = {
+    command: GROWI_LOAD_MORE_LISTING_COMMAND,
+    title: "Load More GROWI Pages",
+    arguments: [parentUri],
+  };
   return item;
 }
 
@@ -311,6 +355,20 @@ export class GrowiPrefixTreeDataProvider
     return element;
   }
 
+  getParent(element: PrefixTreeItem): PrefixTreeItem | undefined {
+    const parentUri = element.parentUri;
+    if (!parentUri || parentUri.toString() === element.uri.toString()) {
+      return undefined;
+    }
+    const parentPath = normalizeCanonicalPath(parentUri.path);
+    const isPrefixRoot =
+      parentPath.ok &&
+      this.deps.getRegisteredPrefixes().includes(parentPath.value);
+    return isPrefixRoot
+      ? createPrefixRootItem(parentUri, parentPath.value)
+      : createDirectoryItem(parentUri, labelFromUri(parentUri));
+  }
+
   async getChildren(element?: PrefixTreeItem): Promise<PrefixTreeItem[]> {
     if (!element) {
       return this.deps
@@ -339,9 +397,12 @@ export class GrowiPrefixTreeDataProvider
     }
 
     const decorationStatuses = this.buildDecorationStatuses();
-    return candidates.map((candidate) => {
+    const items = candidates.map((candidate) => {
+      let item: PrefixTreeItem;
       if (candidate.kind === "directory") {
-        return createDirectoryItem(candidate.uri, candidate.label);
+        item = createDirectoryItem(candidate.uri, candidate.label);
+        item.parentUri = element.uri;
+        return item;
       }
       const canonicalPath = normalizeCanonicalPath(candidate.uri.path);
       const normalizedPath = canonicalPath.ok ? canonicalPath.value : undefined;
@@ -349,18 +410,27 @@ export class GrowiPrefixTreeDataProvider
         ? this.deps.isBookmarked(normalizedPath)
         : false;
       if (candidate.isDirectoryPage) {
-        return applyOpenedPageDecoration(
+        item = applyOpenedPageDecoration(
           createDirectoryPageItem(candidate.uri, candidate.label, bookmarked),
           normalizedPath ?? "",
           decorationStatuses,
         );
+        item.parentUri = element.uri;
+        return item;
       }
-      return applyOpenedPageDecoration(
+      item = applyOpenedPageDecoration(
         createPageItem(candidate.uri, candidate.label, bookmarked),
         normalizedPath ?? "",
         decorationStatuses,
       );
+      item.parentUri = element.uri;
+      return item;
     });
+    const listingState = this.deps.getDirectoryListingState?.(element.uri);
+    if (listingState?.hasMore) {
+      items.push(createLoadMoreItem(element.uri, listingState));
+    }
+    return items;
   }
 
   private buildDecorationStatuses(): ReadonlyMap<

@@ -1,0 +1,201 @@
+{
+  "id": "explorer-quickpick-smoke",
+  "title": "GROWI explorer and QuickPick smoke review",
+  "aliases": [
+    "explorer-quickpick",
+    "smoke"
+  ],
+  "uiAreas": [
+    "explorer",
+    "quickPick"
+  ],
+  "changedFileGlobs": [
+    "package.json",
+    "src/extension.ts",
+    "src/vscode/prefixTree.ts",
+    "src/vscode/commands.ts",
+    "src/harness/uiReview.ts"
+  ],
+  "target": "GROWI TreeView plus Open Page and Bookmarks QuickPick",
+  "fixture": {
+    "pages": [
+      {
+        "path": "/team/dev",
+        "body": "# team dev page",
+        "updatedAt": "2026-03-08T01:00:00.000Z",
+        "updatedBy": "system"
+      },
+      {
+        "path": "/team/dev/spec",
+        "body": "# spec page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "spec-owner"
+      },
+      {
+        "path": "/team/dev/docs",
+        "body": "# docs page",
+        "updatedAt": "2026-03-08T01:02:00.000Z",
+        "updatedBy": "docs-owner"
+      },
+      {
+        "path": "/team/dev/docs/guide",
+        "body": "# guide page",
+        "updatedAt": "2026-03-08T01:03:00.000Z",
+        "updatedBy": "guide-owner"
+      },
+      {
+        "path": "/team/dev/notes",
+        "body": "# notes page",
+        "updatedAt": "2026-03-08T01:04:00.000Z",
+        "updatedBy": "notes-owner"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 3
+  },
+  "commands": [
+    {
+      "id": "growi.addPrefix",
+      "args": ["/team/dev"]
+    },
+    {
+      "id": "growi.openPage",
+      "quickPick": {
+        "kind": "openPage",
+        "query": "sp",
+        "select": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    },
+    {
+      "id": "growi.addCurrentPageBookmark"
+    },
+    {
+      "id": "growi.openPage",
+      "args": ["/team/dev/docs"]
+    },
+    {
+      "id": "growi.showBookmarks",
+      "quickPick": {
+        "kind": "bookmarks",
+        "select": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    }
+  ],
+  "checks": {
+    "requiredTreeItems": [
+      {
+        "label": "/team/dev",
+        "kind": "directory",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.prefixRoot"
+      },
+      {
+        "label": "__dev__.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.directoryPage"
+      },
+      {
+        "label": "spec.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev/spec",
+        "contextValue": "growi.pageBookmarked"
+      },
+      {
+        "label": "docs",
+        "kind": "directory",
+        "canonicalPath": "/team/dev/docs",
+        "contextValue": "growi.directory"
+      }
+    ],
+    "requiredQuickPickItems": [
+      {
+        "name": "openPage",
+        "placeholder": "登録済み Prefix 配下からページを絞り込んで選択してください。",
+        "value": "sp",
+        "item": {
+          "label": "spec",
+          "description": "/team/dev/spec",
+          "canonicalPath": "/team/dev/spec"
+        }
+      },
+      {
+        "name": "openPage",
+        "value": "sp",
+        "item": {
+          "label": "URL / path を直接入力",
+          "action": "directInput"
+        }
+      },
+      {
+        "name": "bookmarks",
+        "placeholder": "ブックマークからページを選択してください。",
+        "item": {
+          "label": "spec",
+          "description": "/team/dev/spec",
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    ],
+    "requiredQuickPickItemOrder": [
+      {
+        "name": "openPage",
+        "value": "sp",
+        "items": [
+          {
+            "canonicalPath": "/team/dev/spec"
+          },
+          {
+            "action": "directInput"
+          }
+        ]
+      }
+    ],
+    "forbiddenQuickPickItems": [
+      {
+        "name": "openPage",
+        "value": "sp",
+        "item": {
+          "canonicalPath": "/team/private/secret"
+        }
+      }
+    ],
+    "requiredSelectedQuickPickItems": [
+      {
+        "name": "openPage",
+        "value": "sp",
+        "item": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      },
+      {
+        "name": "bookmarks",
+        "item": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    ],
+    "requiredQuickPickItemActions": [
+      {
+        "name": "openPage",
+        "value": "sp",
+        "item": {
+          "label": "URL / path を直接入力"
+        },
+        "action": "directInput"
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix",
+      "growi.openPage",
+      "growi.addCurrentPageBookmark",
+      "growi.openPage",
+      "growi.showBookmarks"
+    ]
+  }
+}

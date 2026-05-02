@@ -877,6 +877,28 @@ describe("createGrowiApiAdapter", () => {
     expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
   });
 
+  it.each([
+    429, 500,
+  ] as const)("returns ApiNotSupported for page snapshot HTTP %s", async (status) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const snapshot = await adapter.fetchPageSnapshot(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    const read = await adapter.readPage(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(snapshot).toEqual({ ok: false, reason: "ApiNotSupported" });
+    expect(read).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
   it("lists pages with pagination (limit=100)", async () => {
     const firstPageItems = Array.from({ length: 100 }, (_, index) => ({
       path: `/team/dev/page-${index + 1}`,
@@ -912,6 +934,37 @@ describe("createGrowiApiAdapter", () => {
     expect(firstUrl.searchParams.get("page")).toBe("1");
     expect(secondUrl.searchParams.get("limit")).toBe("100");
     expect(secondUrl.searchParams.get("page")).toBe("2");
+  });
+
+  it("lists a single page when page option is provided", async () => {
+    const firstPageItems = Array.from({ length: 100 }, (_, index) => ({
+      path: `/team/dev/page-${index + 1}`,
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(createJsonResponse({ pages: firstPageItems }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.listPages(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+      { page: 3 },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      paths: firstPageItems.map((page) => page.path),
+      hasMore: true,
+      nextPage: 4,
+      fetchedCount: 100,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.searchParams.get("limit")).toBe("100");
+    expect(url.searchParams.get("page")).toBe("3");
   });
 
   it("returns ApiNotSupported for malformed page list payload", async () => {
@@ -1025,6 +1078,81 @@ describe("createGrowiApiAdapter", () => {
       "token-1",
     );
     expect(deniedRead).toEqual({ ok: false, reason: "PermissionDenied" });
+  });
+
+  it.each([
+    429, 500,
+  ] as const)("returns ApiNotSupported for page list HTTP %s", async (status) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.listPages(
+      "/team/dev",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it.each([
+    429, 500,
+  ] as const)("returns ApiNotSupported for revision list/read HTTP %s", async (status) => {
+    const adapter = createGrowiApiAdapter();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status })),
+    );
+    await expect(
+      adapter.listRevisions(
+        "page-123",
+        "https://growi.example.com/",
+        "token-1",
+      ),
+    ).resolves.toEqual({ ok: false, reason: "ApiNotSupported" });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status })),
+    );
+    await expect(
+      adapter.readRevision(
+        "page-123",
+        "revision-001",
+        "https://growi.example.com/",
+        "token-1",
+      ),
+    ).resolves.toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it("returns ApiNotSupported for revision list/read login redirect", async () => {
+    const adapter = createGrowiApiAdapter();
+    const loginRedirect = () =>
+      new Response(null, {
+        headers: { location: "/login" },
+        status: 302,
+      });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(loginRedirect()));
+    await expect(
+      adapter.listRevisions(
+        "page-123",
+        "https://growi.example.com/",
+        "token-1",
+      ),
+    ).resolves.toEqual({ ok: false, reason: "ApiNotSupported" });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(loginRedirect()));
+    await expect(
+      adapter.readRevision(
+        "page-123",
+        "revision-001",
+        "https://growi.example.com/",
+        "token-1",
+      ),
+    ).resolves.toEqual({ ok: false, reason: "ApiNotSupported" });
   });
 
   it("returns ConnectionFailed when page list fetch rejects", async () => {
@@ -1300,6 +1428,28 @@ describe("createGrowiApiAdapter", () => {
     expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
   });
 
+  it.each([
+    [
+      "unknown 400 validation JSON",
+      createJsonResponse({ error: "UnknownValidationError" }, 400),
+    ],
+    ["429", createJsonResponse({ error: "TooManyRequests" }, 429)],
+    ["500", createJsonResponse({ error: "InternalServerError" }, 500)],
+  ] as const)("returns ApiNotSupported for create page %s", async (_label, response) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.createPage(
+      "/team/dev/new-page",
+      "",
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
   it("resolves the same-hierarchy template before descendant templates", async () => {
     const fetchMock = vi
       .fn()
@@ -1557,6 +1707,69 @@ describe("createGrowiApiAdapter", () => {
     });
   });
 
+  it("returns ApiNotSupported for delete page login redirect", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, {
+        headers: { location: "/login" },
+        status: 302,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it.each([
+    [
+      "unknown 400 validation JSON",
+      createJsonResponse({ error: "UnknownValidationError" }, 400),
+      "Delete Page request was rejected (HTTP 400: UnknownValidationError).",
+    ],
+    [
+      "429",
+      createJsonResponse({ error: "TooManyRequests" }, 429),
+      "Delete Page request was rejected (HTTP 429: TooManyRequests).",
+    ],
+    [
+      "500",
+      createJsonResponse({ error: "InternalServerError" }, 500),
+      "Delete Page request was rejected (HTTP 500: InternalServerError).",
+    ],
+  ] as const)("returns Rejected for delete page %s", async (_label, response, message) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.deletePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        canonicalPath: "/team/dev/spec",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "Rejected",
+      message,
+    });
+  });
+
   it("returns ConnectionFailed when delete page fetch rejects", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
     vi.stubGlobal("fetch", fetchMock);
@@ -1698,6 +1911,71 @@ describe("createGrowiApiAdapter", () => {
       ok: false,
       reason: "Rejected",
       message: "Rename Page request was rejected (HTTP 400: Invalid path).",
+    });
+  });
+
+  it("returns ApiNotSupported for rename page login redirect", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, {
+        headers: { location: "/login" },
+        status: 302,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: "ApiNotSupported" });
+  });
+
+  it.each([
+    [
+      "unknown 400 validation JSON",
+      createJsonResponse({ error: "UnknownValidationError" }, 400),
+      "Rename Page request was rejected (HTTP 400: UnknownValidationError).",
+    ],
+    [
+      "429",
+      createJsonResponse({ error: "TooManyRequests" }, 429),
+      "Rename Page request was rejected (HTTP 429: TooManyRequests).",
+    ],
+    [
+      "500",
+      createJsonResponse({ error: "InternalServerError" }, 500),
+      "Rename Page request was rejected (HTTP 500: InternalServerError).",
+    ],
+  ] as const)("returns Rejected for rename page %s", async (_label, response, message) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.renamePage(
+      {
+        pageId: "page-1",
+        revisionId: "revision-1",
+        currentCanonicalPath: "/team/dev/spec",
+        targetCanonicalPath: "/team/dev/renamed-page",
+        mode: "page",
+      },
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "Rejected",
+      message,
     });
   });
 
@@ -1942,6 +2220,29 @@ describe("createGrowiApiAdapter", () => {
     expect(result).toEqual({ ok: false, reason: "ConnectionFailed" });
   });
 
+  it.each([
+    ["409", createJsonResponse({ error: "PageAlreadyExists" }, 409)],
+    ["429", createJsonResponse({ error: "TooManyRequests" }, 429)],
+    ["500", createJsonResponse({ error: "InternalServerError" }, 500)],
+    [
+      "unknown 400 validation JSON",
+      createJsonResponse({ error: "UnknownValidationError" }, 400),
+    ],
+  ] as const)("returns ApiNotSupported for write page %s", async (_label, response) => {
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const result = await adapter.writePage(
+      "# updated",
+      testEditSession,
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(result).toEqual({ ok: false, reason: "ApiNotSupported" });
+  });
+
   it("gets current user from personal-setting", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       createJsonResponse({
@@ -2038,6 +2339,37 @@ describe("createGrowiApiAdapter", () => {
       pageId: "page-1",
       isBookmarked: true,
     });
+  });
+
+  it("classifies bookmark 404 by domain", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createGrowiApiAdapter();
+    const list = await adapter.listBookmarks(
+      "user-1",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    const info = await adapter.getBookmarkInfo(
+      "page-1",
+      "https://growi.example.com/",
+      "token-1",
+    );
+    const update = await adapter.updateBookmark(
+      "page-1",
+      true,
+      "https://growi.example.com/",
+      "token-1",
+    );
+
+    expect(list).toEqual({ ok: false, reason: "ApiNotSupported" });
+    expect(info).toEqual({ ok: false, reason: "NotFound" });
+    expect(update).toEqual({ ok: false, reason: "NotFound" });
   });
 
   it("updates bookmark state with PUT /_api/v3/bookmarks", async () => {

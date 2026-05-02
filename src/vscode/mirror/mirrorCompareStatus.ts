@@ -6,7 +6,7 @@ import {
   type MirrorManifest,
   type MirrorManifestPage,
   parseMirrorManifest,
-} from "./localRoundTrip";
+} from "../localRoundTrip";
 
 export type MirrorRequestScope = "page" | "subtree";
 

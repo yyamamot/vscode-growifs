@@ -1,11 +1,11 @@
 import { normalizeCanonicalPath } from "../core/uri";
 import type { GrowiCurrentPageInfo, GrowiEditSession } from "./fsProvider";
-import type { MirrorCompareScmResource } from "./mirrorCompareScm";
+import type { MirrorCompareScmResource } from "./mirror/mirrorCompareScm";
 import {
   evaluateLoadedMirrorPageStatus,
   lookupMirrorManifestSelection,
   type MirrorCompareStatusDeps,
-} from "./mirrorCompareStatus";
+} from "./mirror/mirrorCompareStatus";
 
 export type OpenedPageDecorationStatus =
   | "none"

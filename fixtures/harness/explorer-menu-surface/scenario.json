@@ -1,0 +1,138 @@
+{
+  "id": "explorer-menu-surface",
+  "title": "Explorer menu surface review",
+  "aliases": [
+    "explorer-menu",
+    "menus"
+  ],
+  "uiAreas": [
+    "explorer",
+    "menus"
+  ],
+  "changedFileGlobs": [
+    "package.json",
+    "src/vscode/prefixTree.ts",
+    "src/extension.ts",
+    "src/harness/uiReview.ts"
+  ],
+  "target": "Explorer view title and context menu command surface",
+  "fixture": {
+    "pages": [
+      {
+        "path": "/team/dev",
+        "body": "# team dev page",
+        "updatedAt": "2026-03-08T01:00:00.000Z",
+        "updatedBy": "system"
+      },
+      {
+        "path": "/team/dev/spec",
+        "body": "# spec page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "spec-owner"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 2
+  },
+  "commands": [
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    }
+  ],
+  "checks": {
+    "requiredTreeItems": [
+      {
+        "label": "/team/dev",
+        "kind": "directory",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.prefixRoot"
+      },
+      {
+        "label": "spec.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev/spec",
+        "contextValue": "growi.page"
+      }
+    ],
+    "requiredMenuItems": [
+      {
+        "menu": "view/title",
+        "command": "growi.openPage",
+        "when": "view == growi.explorer",
+        "group": "navigation@1"
+      },
+      {
+        "menu": "view/title",
+        "command": "growi.showBookmarks",
+        "when": "view == growi.explorer",
+        "group": "navigation@4"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "04_localMirror@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageAttachments",
+        "group": "02_inspect@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowRevisionHistoryDiff",
+        "group": "02_inspect@4"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openCurrentPageHub",
+        "group": "02_inspect@5"
+      }
+    ],
+    "forbiddenMenuItems": [
+      {
+        "menu": "commandPalette",
+        "command": "growi.openPage"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && viewItem == growi.directory"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageItem",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageItem",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openDirectoryPage",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageInfo"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorToGrowi"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi"
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix"
+    ]
+  }
+}

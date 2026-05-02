@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "explorer-quickpick-smoke",
+      "aliases": [
+        "explorer-quickpick",
+        "smoke"
+      ],
+      "uiAreas": [
+        "explorer",
+        "quickPick"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/extension.ts",
+        "src/vscode/prefixTree.ts",
+        "src/vscode/commands.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "explorer-quickpick-smoke/scenario.json"
+    },
+    {
+      "id": "open-page-search",
+      "aliases": [
+        "open-page",
+        "page-search"
+      ],
+      "uiAreas": [
+        "quickPick",
+        "openPage"
+      ],
+      "changedFileGlobs": [
+        "src/vscode/commands.ts",
+        "src/extension.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "open-page-search/scenario.json"
+    },
+    {
+      "id": "bookmarks-states",
+      "aliases": [
+        "bookmarks",
+        "bookmark-states"
+      ],
+      "uiAreas": [
+        "quickPick",
+        "bookmarks",
+        "explorer"
+      ],
+      "changedFileGlobs": [
+        "src/vscode/commands.ts",
+        "src/vscode/prefixTree.ts",
+        "src/extension.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "bookmarks-states/scenario.json"
+    },
+    {
+      "id": "current-page-actions",
+      "aliases": [
+        "current-page",
+        "page-actions"
+      ],
+      "uiAreas": [
+        "quickPick",
+        "currentPage"
+      ],
+      "changedFileGlobs": [
+        "src/vscode/commands.ts",
+        "src/extension.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "current-page-actions/scenario.json"
+    },
+    {
+      "id": "page-detail-actions",
+      "aliases": [
+        "page-detail",
+        "current-page-hub"
+      ],
+      "uiAreas": [
+        "quickPick",
+        "currentPage"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/vscode/commands.ts",
+        "src/extension.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "page-detail-actions/scenario.json"
+    },
+    {
+      "id": "local-mirror-actions",
+      "aliases": [
+        "local-mirror",
+        "mirror-actions"
+      ],
+      "uiAreas": [
+        "quickPick",
+        "localMirror"
+      ],
+      "changedFileGlobs": [
+        "src/vscode/commands.ts",
+        "src/extension.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "local-mirror-actions/scenario.json"
+    },
+    {
+      "id": "explorer-menu-surface",
+      "aliases": [
+        "explorer-menu",
+        "menus"
+      ],
+      "uiAreas": [
+        "explorer",
+        "menus"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/vscode/prefixTree.ts",
+        "src/extension.ts",
+        "src/harness/uiReview.ts"
+      ],
+      "path": "explorer-menu-surface/scenario.json"
+    },
+    {
+      "id": "explorer-partial-listing",
+      "aliases": [
+        "explorer-partial",
+        "load-more"
+      ],
+      "uiAreas": [
+        "explorer",
+        "partialListing"
+      ],
+      "changedFileGlobs": [
+        "src/extension.ts",
+        "src/vscode/fsProvider.ts",
+        "src/vscode/growiApi.ts",
+        "src/vscode/prefixTree.ts",
+        "src/harness/uiReview.ts",
+        "test/integration/extension-host/run-tests.mjs",
+        "fixtures/harness/**"
+      ],
+      "path": "explorer-partial-listing/scenario.json"
+    },
+    {
+      "id": "treeview-daily-ops",
+      "aliases": [
+        "treeview-ux",
+        "daily-ops"
+      ],
+      "uiAreas": [
+        "explorer",
+        "menus",
+        "quickPick",
+        "localMirror",
+        "currentPage"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/extension.ts",
+        "src/vscode/prefixTree.ts",
+        "src/vscode/commands.ts",
+        "src/harness/uiReview.ts",
+        "fixtures/harness/**"
+      ],
+      "path": "treeview-daily-ops/scenario.json"
+    },
+    {
+      "id": "tree-item-actions-page-preview",
+      "aliases": [
+        "tree-actions-page",
+        "page-actions-preview"
+      ],
+      "uiAreas": [
+        "explorer",
+        "quickPick",
+        "menus"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/extension.ts",
+        "src/harness/uiReview.ts",
+        "fixtures/harness/**"
+      ],
+      "path": "tree-item-actions-page-preview/scenario.json"
+    },
+    {
+      "id": "tree-item-actions-directory-preview",
+      "aliases": [
+        "tree-actions-directory",
+        "directory-actions-preview"
+      ],
+      "uiAreas": [
+        "explorer",
+        "quickPick",
+        "menus"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/extension.ts",
+        "src/harness/uiReview.ts",
+        "fixtures/harness/**"
+      ],
+      "path": "tree-item-actions-directory-preview/scenario.json"
+    },
+    {
+      "id": "treeview-context-menu-evidence",
+      "aliases": [
+        "treeview-context-menu",
+        "context-menu-evidence",
+        "right-click-evidence"
+      ],
+      "uiAreas": [
+        "explorer",
+        "menus",
+        "quickPick"
+      ],
+      "changedFileGlobs": [
+        "package.json",
+        "src/extension.ts",
+        "src/vscode/prefixTree.ts",
+        "src/harness/uiReview.ts",
+        "fixtures/harness/**",
+        "docs/ui/treeview-context-menu.md"
+      ],
+      "path": "treeview-context-menu-evidence/scenario.json"
+    }
+  ]
+}

@@ -317,7 +317,7 @@ describe("GrowiFileSystemProvider", () => {
       expect.any(GrowiFileSystemProvider),
       { isCaseSensitive: true },
     );
-    expect(context.subscriptions.length).toBe(8);
+    expect(context.subscriptions.length).toBe(9);
   });
 
   it("reads file via bearer token API in two fetch steps when activated", async () => {
@@ -585,7 +585,7 @@ describe("GrowiFileSystemProvider", () => {
     }
   });
 
-  it("reads directory via pages/list API with pagination", async () => {
+  it("reads directory via pages/list API lazily and loads the next page on demand", async () => {
     const firstPagePaths = Array.from(
       { length: 100 },
       (_unused, index) => `/team/dev/page-${index + 1}`,
@@ -609,12 +609,9 @@ describe("GrowiFileSystemProvider", () => {
 
     const entries = await provider.readDirectory(uri);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "https://growi.example.com/_api/v3/pages/list?path=%2Fteam%2Fdev&limit=100&page=1",
-    );
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-      "https://growi.example.com/_api/v3/pages/list?path=%2Fteam%2Fdev&limit=100&page=2",
     );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual({
       headers: {
@@ -625,6 +622,24 @@ describe("GrowiFileSystemProvider", () => {
       redirect: "manual",
       signal: expect.any(AbortSignal),
     });
+    expect(entries).toContainEqual(["page-1.md", 0]);
+    expect(entries).toContainEqual(["page-100.md", 0]);
+    expect(entries).not.toContainEqual(["docs", 1]);
+    expect(entries).not.toContainEqual(["readme.md", 0]);
+    expect(entries).toHaveLength(100);
+    expect(provider.getReadDirectoryListingState(uri)).toEqual({
+      partial: true,
+      fetchedCount: 100,
+      hasMore: true,
+    });
+
+    await provider.loadMoreReadDirectory(uri);
+    const loadedEntries = await provider.readDirectory(uri);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "https://growi.example.com/_api/v3/pages/list?path=%2Fteam%2Fdev&limit=100&page=2",
+    );
     expect(fetchMock.mock.calls[1]?.[1]).toEqual({
       headers: {
         Accept: "application/json",
@@ -634,11 +649,16 @@ describe("GrowiFileSystemProvider", () => {
       redirect: "manual",
       signal: expect.any(AbortSignal),
     });
-    expect(entries).toContainEqual(["docs", 1]);
-    expect(entries).toContainEqual(["page-1.md", 0]);
-    expect(entries).toContainEqual(["page-100.md", 0]);
-    expect(entries).toContainEqual(["readme.md", 0]);
-    expect(entries).toHaveLength(102);
+    expect(loadedEntries).toContainEqual(["docs", 1]);
+    expect(loadedEntries).toContainEqual(["page-1.md", 0]);
+    expect(loadedEntries).toContainEqual(["page-100.md", 0]);
+    expect(loadedEntries).toContainEqual(["readme.md", 0]);
+    expect(loadedEntries).toHaveLength(102);
+    expect(provider.getReadDirectoryListingState(uri)).toEqual({
+      partial: false,
+      fetchedCount: 102,
+      hasMore: false,
+    });
   });
 
   it("classifies missing baseUrl/token and list API unsupported cases on readDirectory", async () => {
@@ -1923,9 +1943,13 @@ describe("GrowiFileSystemProvider", () => {
       await provider.readDirectory(productUri);
 
       expect(listPages).toHaveBeenCalledTimes(9);
-      expect(listPages).toHaveBeenNthCalledWith(7, "/team/dev");
-      expect(listPages).toHaveBeenNthCalledWith(8, "/team/dev/docs");
-      expect(listPages).toHaveBeenNthCalledWith(9, "/team/dev/docs/guide");
+      expect(listPages).toHaveBeenNthCalledWith(7, "/team/dev", { page: 1 });
+      expect(listPages).toHaveBeenNthCalledWith(8, "/team/dev/docs", {
+        page: 1,
+      });
+      expect(listPages).toHaveBeenNthCalledWith(9, "/team/dev/docs/guide", {
+        page: 1,
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -2305,8 +2329,8 @@ describe("GrowiFileSystemProvider", () => {
     } as vscode.Uri);
 
     expect(entries).toEqual([["test.md", 0]]);
-    expect(listPages).toHaveBeenNthCalledWith(1, "/sample");
-    expect(listPages).toHaveBeenNthCalledWith(2, "/sample/");
+    expect(listPages).toHaveBeenNthCalledWith(1, "/sample", { page: 1 });
+    expect(listPages).toHaveBeenNthCalledWith(2, "/sample/", { page: 1 });
   });
 
   it("lists immediate children for root prefix", async () => {
@@ -2404,6 +2428,34 @@ describe("GrowiFileSystemProvider", () => {
         ["設計.md", 0],
       ]);
       expect(second).toEqual(first);
+      expect(listPages).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns cached readDirectory paths without fetching", async () => {
+    vi.useFakeTimers();
+    try {
+      const listPages = vi
+        .fn<GrowiPageListReader["listPages"]>()
+        .mockResolvedValueOnce({
+          ok: true,
+          paths: ["/team/dev/設計", "/team/dev/共通/内規"],
+        });
+      const provider = createProvider({ listPages });
+
+      expect(provider.getCachedReadDirectoryPaths()).toEqual([]);
+
+      await provider.readDirectory({
+        scheme: "growi",
+        path: "/team/dev/",
+      } as vscode.Uri);
+
+      expect(provider.getCachedReadDirectoryPaths()).toEqual([
+        "/team/dev/設計",
+        "/team/dev/共通/内規",
+      ]);
       expect(listPages).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();

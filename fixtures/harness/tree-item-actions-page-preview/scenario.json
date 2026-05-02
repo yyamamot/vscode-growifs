@@ -1,0 +1,101 @@
+{
+  "id": "tree-item-actions-page-preview",
+  "title": "Tree item actions keyboard preview for page",
+  "aliases": [
+    "tree-item-actions-page"
+  ],
+  "uiAreas": [
+    "explorer",
+    "quickPick",
+    "menus"
+  ],
+  "target": "Keyboard-accessible TreeView page action preview QuickPick screenshot",
+  "fixture": {
+    "pages": [
+      {
+        "pageId": "page-alpha",
+        "path": "/team/dev/alpha",
+        "body": "# alpha page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "alpha-owner"
+      }
+    ],
+    "bookmarks": [
+      {
+        "canonicalPath": "/team/dev/alpha",
+        "addedAt": "2026-03-08T02:00:00.000Z",
+        "pageId": "page-alpha"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 2
+  },
+  "commands": [
+    {
+      "id": "workbench.view.explorer"
+    },
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev/alpha.md"
+          },
+          "contextValue": "growi.pageBookmarked"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "requiredCommandSequence": [
+      "workbench.view.explorer",
+      "growi.addPrefix",
+      "growi.showExplorerItemActions"
+    ],
+    "requiredMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageAttachments",
+        "group": "02_inspect@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowRevisionHistoryDiff",
+        "group": "02_inspect@4"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openCurrentPageHub",
+        "group": "02_inspect@5"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorWithGrowi",
+        "group": "04_localMirror@3"
+      }
+    ],
+    "forbiddenMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageInfo"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorToGrowi"
+      }
+    ]
+  }
+}

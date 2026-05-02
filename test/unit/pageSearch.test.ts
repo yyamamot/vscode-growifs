@@ -67,6 +67,7 @@ describe("findBacklinks", () => {
       backlinks: ["/team/dev/a", "/team/dev/shared", "/team/docs/c"],
       truncatedByLimit: false,
       timedOut: false,
+      scannedCount: 5,
     });
     expect(listPages).toHaveBeenNthCalledWith(1, "/team/dev");
     expect(listPages).toHaveBeenNthCalledWith(2, "/team/docs");
@@ -103,6 +104,7 @@ describe("findBacklinks", () => {
       backlinks: ["/team/dev/a", "/team/dev/b"],
       truncatedByLimit: true,
       timedOut: false,
+      scannedCount: 2,
     });
   });
 
@@ -134,6 +136,7 @@ describe("findBacklinks", () => {
       backlinks: ["/team/dev/a"],
       truncatedByLimit: false,
       timedOut: false,
+      scannedCount: 2,
     });
   });
 
@@ -168,6 +171,7 @@ describe("findBacklinks", () => {
       backlinks: ["/team/dev/a"],
       truncatedByLimit: false,
       timedOut: true,
+      scannedCount: 1,
     });
 
     vi.useRealTimers();

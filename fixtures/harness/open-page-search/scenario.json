@@ -1,0 +1,165 @@
+{
+  "id": "open-page-search",
+  "title": "Open Page QuickPick search review",
+  "aliases": [
+    "open-page",
+    "page-search"
+  ],
+  "uiAreas": [
+    "quickPick",
+    "openPage"
+  ],
+  "changedFileGlobs": [
+    "src/vscode/commands.ts",
+    "src/vscode/fsProvider.ts",
+    "src/extension.ts",
+    "src/harness/uiReview.ts"
+  ],
+  "target": "Open Page QuickPick lazy bounded search and direct input fallback",
+  "fixture": {
+    "pages": [
+      {
+        "path": "/team/dev/spec",
+        "body": "# spec page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "spec-owner"
+      },
+      {
+        "path": "/team/dev/docs",
+        "body": "# docs page",
+        "updatedAt": "2026-03-08T01:02:00.000Z",
+        "updatedBy": "docs-owner"
+      },
+      {
+        "path": "/team/dev/docs/spec-review",
+        "body": "# spec review page",
+        "updatedAt": "2026-03-08T01:03:00.000Z",
+        "updatedBy": "review-owner"
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.openPage",
+      "quickPick": {
+        "kind": "openPage",
+        "query": "spec",
+        "select": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      }
+    },
+    {
+      "id": "growi.openPage",
+      "quickPick": {
+        "kind": "openPage",
+        "query": "zzz",
+        "select": {
+          "action": "directInput"
+        }
+      }
+    }
+  ],
+  "checks": {
+    "requiredQuickPickItems": [
+      {
+        "name": "openPage",
+        "placeholder": "登録済み Prefix 配下からページを絞り込んで選択してください。",
+        "value": "spec",
+        "item": {
+          "label": "spec",
+          "description": "/team/dev/spec",
+          "canonicalPath": "/team/dev/spec"
+        }
+      },
+      {
+        "name": "openPage",
+        "value": "spec",
+        "item": {
+          "label": "URL / path を直接入力",
+          "action": "directInput"
+        }
+      },
+      {
+        "name": "openPage",
+        "value": "zzz",
+        "item": {
+          "label": "URL / path を直接入力",
+          "action": "directInput"
+        }
+      }
+    ],
+    "requiredQuickPickItemOrder": [
+      {
+        "name": "openPage",
+        "value": "spec",
+        "items": [
+          {
+            "canonicalPath": "/team/dev/spec"
+          },
+          {
+            "canonicalPath": "/team/dev/docs/spec-review"
+          },
+          {
+            "action": "directInput"
+          }
+        ]
+      },
+      {
+        "name": "openPage",
+        "value": "zzz",
+        "items": [
+          {
+            "action": "directInput"
+          }
+        ]
+      }
+    ],
+    "forbiddenQuickPickItems": [
+      {
+        "name": "openPage",
+        "value": "spec",
+        "item": {
+          "canonicalPath": "/team/dev/docs"
+        }
+      }
+    ],
+    "requiredSelectedQuickPickItems": [
+      {
+        "name": "openPage",
+        "value": "spec",
+        "item": {
+          "canonicalPath": "/team/dev/spec"
+        }
+      },
+      {
+        "name": "openPage",
+        "value": "zzz",
+        "item": {
+          "action": "directInput"
+        }
+      }
+    ],
+    "requiredQuickPickItemActions": [
+      {
+        "name": "openPage",
+        "value": "spec",
+        "item": {
+          "label": "URL / path を直接入力"
+        },
+        "action": "directInput"
+      }
+    ],
+    "requiredCommandSequence": [
+      "growi.addPrefix",
+      "growi.openPage",
+      "growi.openPage"
+    ]
+  }
+}

@@ -122,11 +122,25 @@ export type GrowiCurrentRevisionReader = {
 };
 
 export type GrowiPageListResult =
-  | { ok: true; paths: string[] }
+  | {
+      ok: true;
+      paths: string[];
+      hasMore?: boolean;
+      nextPage?: number;
+      fetchedCount?: number;
+    }
   | { ok: false; reason: GrowiAccessFailureReason };
 
+export type GrowiPageListOptions = {
+  page?: number;
+  limit?: number;
+};
+
 export type GrowiPageListReader = {
-  listPages(canonicalPrefixPath: string): Promise<GrowiPageListResult>;
+  listPages(
+    canonicalPrefixPath: string,
+    options?: GrowiPageListOptions,
+  ): Promise<GrowiPageListResult>;
 };
 
 export type GrowiEditSession = {
@@ -154,6 +168,12 @@ export type GrowiCurrentPageInfo = {
   path: string;
   lastUpdatedBy: string;
   lastUpdatedAt: string;
+};
+
+export type GrowiDirectoryListingState = {
+  partial: boolean;
+  fetchedCount: number;
+  hasMore: boolean;
 };
 
 type FailureKind =
@@ -317,6 +337,10 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
     string,
     {
       entries: [string, vscode.FileType][];
+      paths: string[];
+      hasMore: boolean;
+      nextPage?: number;
+      fetchedCount: number;
       expiresAtMs: number;
     }
   >();
@@ -430,6 +454,74 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
     return this.currentPageInfo.get(normalized.value);
   }
 
+  getReadDirectoryListingState(
+    uriOrCanonicalDirectoryPath: vscode.Uri | string,
+  ): GrowiDirectoryListingState | undefined {
+    const rawPath =
+      typeof uriOrCanonicalDirectoryPath === "string"
+        ? uriOrCanonicalDirectoryPath
+        : (uriOrCanonicalDirectoryPath.path ?? "");
+    const normalized = normalizeCanonicalPath(rawPath);
+    if (!normalized.ok) {
+      return undefined;
+    }
+
+    const cached = this.readDirectoryCache.get(normalized.value);
+    if (!cached) {
+      return undefined;
+    }
+    return {
+      partial: cached.hasMore,
+      fetchedCount: cached.fetchedCount,
+      hasMore: cached.hasMore,
+    };
+  }
+
+  getCachedReadDirectoryPaths(): string[] {
+    const now = Date.now();
+    const paths = new Set<string>();
+    for (const cached of this.readDirectoryCache.values()) {
+      if (cached.expiresAtMs <= now) {
+        continue;
+      }
+      for (const path of cached.paths) {
+        paths.add(path);
+      }
+    }
+    return [...paths];
+  }
+
+  async loadMoreReadDirectory(uri: vscode.Uri): Promise<void> {
+    const normalized = normalizeCanonicalPath(uri.path ?? "");
+    if (!normalized.ok) {
+      throw vscode.FileSystemError.FileNotFound(uri);
+    }
+
+    const prefix = normalized.value;
+    const cached = this.readDirectoryCache.get(prefix);
+    if (!cached?.hasMore || !cached.nextPage) {
+      return;
+    }
+
+    const listResult = await this.listDirectoryPaths(prefix, {
+      page: cached.nextPage,
+    });
+    if (!listResult.ok) {
+      throw createListReaderError(listResult.reason);
+    }
+
+    const paths = [...cached.paths, ...listResult.paths];
+    this.readDirectoryCache.set(prefix, {
+      entries: this.buildDirectoryEntries(prefix, paths),
+      paths,
+      hasMore: listResult.hasMore === true,
+      nextPage: listResult.nextPage,
+      fetchedCount: paths.length,
+      expiresAtMs:
+        Date.now() + GrowiFileSystemProvider.READ_DIRECTORY_CACHE_TTL_MS,
+    });
+  }
+
   private setCurrentPageInfo(
     canonicalPath: string,
     info: GrowiCurrentPageInfo | undefined,
@@ -443,9 +535,11 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
 
   private async listDirectoryPaths(
     canonicalDirectoryPath: string,
+    options?: GrowiPageListOptions,
   ): Promise<GrowiPageListResult> {
     const initialResult = await this.listReader.listPages(
       canonicalDirectoryPath,
+      options,
     );
     if (!initialResult.ok || canonicalDirectoryPath === "/") {
       return initialResult;
@@ -459,12 +553,72 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
       return initialResult;
     }
 
-    const fallbackResult = await this.listReader.listPages(descendantPrefix);
+    const fallbackResult = await this.listReader.listPages(
+      descendantPrefix,
+      options,
+    );
     if (!fallbackResult.ok) {
       return initialResult;
     }
 
     return fallbackResult;
+  }
+
+  private buildDirectoryEntries(
+    prefix: string,
+    paths: readonly string[],
+  ): [string, vscode.FileType][] {
+    const prefixWithSlash = prefix === "/" ? "/" : `${prefix}/`;
+    const entries = new Map<string, { hasPage: boolean; hasChild: boolean }>();
+
+    for (const path of paths) {
+      if (!path.startsWith(prefixWithSlash)) {
+        continue;
+      }
+
+      const remaining = path.slice(prefixWithSlash.length);
+      if (remaining.length === 0) {
+        continue;
+      }
+
+      const firstSlash = remaining.indexOf("/");
+      const name =
+        firstSlash === -1 ? remaining : remaining.slice(0, firstSlash);
+      if (name.length === 0) {
+        continue;
+      }
+
+      const current = entries.get(name) ?? {
+        hasPage: false,
+        hasChild: false,
+      };
+
+      if (firstSlash === -1) {
+        current.hasPage = true;
+      } else {
+        current.hasChild = true;
+      }
+
+      entries.set(name, current);
+    }
+
+    const result: [string, vscode.FileType][] = [];
+    const names = [...entries.keys()].sort((a, b) => a.localeCompare(b));
+    for (const name of names) {
+      const entry = entries.get(name);
+      if (!entry) {
+        continue;
+      }
+
+      if (entry.hasPage) {
+        result.push([`${name}.md`, vscode.FileType.File]);
+      }
+      if (entry.hasChild) {
+        result.push([name, vscode.FileType.Directory]);
+      }
+    }
+
+    return result;
   }
 
   private isSameOrDescendantPath(path: string, prefix: string): boolean {
@@ -618,8 +772,7 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
       this.readDirectoryCache.delete(prefix);
     }
 
-    const prefixWithSlash = prefix === "/" ? "/" : `${prefix}/`;
-    const listResult = await this.listDirectoryPaths(prefix);
+    const listResult = await this.listDirectoryPaths(prefix, { page: 1 });
     if (!listResult.ok) {
       if (this.isRegisteredPrefixRoot(prefix)) {
         return [];
@@ -628,57 +781,14 @@ export class GrowiFileSystemProvider implements vscode.FileSystemProvider {
     }
     const paths = listResult.paths;
 
-    const entries = new Map<string, { hasPage: boolean; hasChild: boolean }>();
-
-    for (const path of paths) {
-      if (!path.startsWith(prefixWithSlash)) {
-        continue;
-      }
-
-      const remaining = path.slice(prefixWithSlash.length);
-      if (remaining.length === 0) {
-        continue;
-      }
-
-      const firstSlash = remaining.indexOf("/");
-      const name =
-        firstSlash === -1 ? remaining : remaining.slice(0, firstSlash);
-      if (name.length === 0) {
-        continue;
-      }
-
-      const current = entries.get(name) ?? {
-        hasPage: false,
-        hasChild: false,
-      };
-
-      if (firstSlash === -1) {
-        current.hasPage = true;
-      } else {
-        current.hasChild = true;
-      }
-
-      entries.set(name, current);
-    }
-
-    const result: [string, vscode.FileType][] = [];
-    const names = [...entries.keys()].sort((a, b) => a.localeCompare(b));
-    for (const name of names) {
-      const entry = entries.get(name);
-      if (!entry) {
-        continue;
-      }
-
-      if (entry.hasPage) {
-        result.push([`${name}.md`, vscode.FileType.File]);
-      }
-      if (entry.hasChild) {
-        result.push([name, vscode.FileType.Directory]);
-      }
-    }
+    const result = this.buildDirectoryEntries(prefix, paths);
 
     this.readDirectoryCache.set(prefix, {
       entries: result,
+      paths,
+      hasMore: listResult.hasMore === true,
+      nextPage: listResult.nextPage,
+      fetchedCount: paths.length,
       expiresAtMs:
         Date.now() + GrowiFileSystemProvider.READ_DIRECTORY_CACHE_TTL_MS,
     });

@@ -1,0 +1,765 @@
+{
+  "id": "treeview-context-menu-evidence",
+  "title": "TreeView context menu 3-layer evidence review",
+  "aliases": [
+    "treeview-context-menu",
+    "context-menu-evidence",
+    "right-click-evidence"
+  ],
+  "uiAreas": [
+    "explorer",
+    "menus",
+    "quickPick"
+  ],
+  "changedFileGlobs": [
+    "package.json",
+    "src/extension.ts",
+    "src/vscode/prefixTree.ts",
+    "src/harness/uiReview.ts",
+    "fixtures/harness/**",
+    "docs/ui/treeview-context-menu.md"
+  ],
+  "target": "TreeView right-click context menu evidence across native menu, keyboard QuickPick preview, and deterministic package menu model",
+  "reviewFocus": [
+    "Whether right-click actions differ correctly for prefix root, directory page, virtual directory, bookmarked page, and load-more targets.",
+    "Whether the keyboard-accessible GROWI: Show Tree Item Actions QuickPick is a stable visual proxy for the same target-specific action sets.",
+    "Whether destructive actions and remote-write-like mirror upload actions are absent or separated according to the context menu policy.",
+    "Whether Layer 1 screenshots, Layer 2 QuickPick screenshots, and Layer 3 deterministic menu evidence are sufficient for VLM/LLM review without executing destructive commands."
+  ],
+  "uxReviewQuestions": [
+    "Can a reviewer tell which actions apply to the page itself versus pages under a directory or prefix?",
+    "Does the right-click UX avoid exposing page-only actions on virtual directories and load-more rows?",
+    "Are dangerous actions labeled clearly enough to distinguish page deletion from prefix removal?",
+    "Does the QuickPick preview preserve enough ordering and target context to review right-click UX when native context menu screenshots are unavailable?",
+    "Which findings should become follow-up IMP candidates rather than being fixed inside this evidence scenario?"
+  ],
+  "evidenceLayers": [
+    {
+      "name": "Layer 1 native context menu screenshot",
+      "source": ".tmp/ui-review-pack/.../screenshots/",
+      "role": "Best-effort supporting evidence for the actual VS Code right-click surface",
+      "status": "supporting"
+    },
+    {
+      "name": "Layer 2 keyboard action preview QuickPick screenshot",
+      "source": "ui-state.json quickPicks and screenshots from growi.showExplorerItemActions",
+      "role": "Stable visual evidence for target-specific action sets exposed through GROWI: Show Tree Item Actions",
+      "status": "stable"
+    },
+    {
+      "name": "Layer 3 deterministic menu model",
+      "source": "ui-state.json menus from package.json contributes.menus.view/item/context",
+      "role": "Source of truth for menu commands, when clauses, groups, required entries, and forbidden entries",
+      "status": "source-of-truth"
+    }
+  ],
+  "fixture": {
+    "pages": [
+      {
+        "pageId": "page-dev-root",
+        "path": "/team/dev",
+        "body": "# team dev page",
+        "updatedAt": "2026-03-08T01:00:00.000Z",
+        "updatedBy": "system"
+      },
+      {
+        "pageId": "page-alpha",
+        "path": "/team/dev/alpha",
+        "body": "# alpha page",
+        "updatedAt": "2026-03-08T01:01:00.000Z",
+        "updatedBy": "alpha-owner"
+      },
+      {
+        "pageId": "page-docs",
+        "path": "/team/dev/docs",
+        "body": "# docs page",
+        "updatedAt": "2026-03-08T01:02:00.000Z",
+        "updatedBy": "docs-owner"
+      },
+      {
+        "pageId": "page-guide",
+        "path": "/team/dev/docs/guide",
+        "body": "# guide page",
+        "updatedAt": "2026-03-08T01:03:00.000Z",
+        "updatedBy": "guide-owner"
+      }
+    ],
+    "generatedPages": [
+      {
+        "prefix": "/team/dev/many",
+        "count": 101,
+        "namePrefix": "page-",
+        "bodyPrefix": "# generated page ",
+        "updatedBy": "load-more-owner"
+      }
+    ],
+    "bookmarks": [
+      {
+        "canonicalPath": "/team/dev/alpha",
+        "addedAt": "2026-03-08T02:00:00.000Z",
+        "pageId": "page-alpha"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 3
+  },
+  "nativeContextMenus": [
+    {
+      "name": "focused-tree-item-shift-f10",
+      "setupCommands": [
+        {
+          "id": "workbench.view.explorer"
+        },
+        {
+          "id": "growi.__test.revealExplorerTreeItem",
+          "args": [
+            "/team/dev/alpha",
+            {
+              "select": true,
+              "focus": true,
+              "expand": 1
+            }
+          ]
+        }
+      ],
+      "setupKeystrokes": [],
+      "windowFrame": {
+        "x": 120,
+        "y": 24,
+        "width": 1440,
+        "height": 1080
+      },
+      "capturePadding": {
+        "right": 0,
+        "bottom": 0
+      },
+      "beforeOpenPauseMs": 300,
+      "afterOpenPauseMs": 700
+    },
+    {
+      "name": "focused-tree-item-list-command",
+      "setupCommands": [
+        {
+          "id": "workbench.view.explorer"
+        },
+        {
+          "id": "growi.__test.revealExplorerTreeItem",
+          "args": [
+            "/team/dev/alpha",
+            {
+              "select": true,
+              "focus": true,
+              "expand": 1
+            }
+          ]
+        }
+      ],
+      "setupKeystrokes": [],
+      "openCommand": "list.showContextMenu",
+      "windowFrame": {
+        "x": 120,
+        "y": 24,
+        "width": 1440,
+        "height": 1080
+      },
+      "capturePadding": {
+        "right": 0,
+        "bottom": 0
+      },
+      "beforeOpenPauseMs": 300,
+      "afterOpenPauseMs": 700
+    }
+  ],
+  "commands": [
+    {
+      "id": "workbench.view.explorer"
+    },
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.explorer.focus"
+    },
+    {
+      "id": "list.expand"
+    },
+    {
+      "id": "list.expand"
+    },
+    {
+      "id": "growi.showBookmarks",
+      "quickPick": {
+        "kind": "bookmarks",
+        "select": {
+          "label": "__sync_bookmarks_no_match__"
+        }
+      }
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev/alpha.md"
+          },
+          "contextValue": "growi.pageBookmarked"
+        }
+      ],
+      "quickPick": {
+        "kind": "treeItemActions",
+        "name": "treeItemActions.pageBookmarked",
+        "action": "collectOnly",
+        "select": {
+          "label": "__collect_only_no_action__"
+        }
+      }
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev/docs.md"
+          },
+          "contextValue": "growi.directoryPage"
+        }
+      ],
+      "quickPick": {
+        "kind": "treeItemActions",
+        "name": "treeItemActions.directoryPage",
+        "action": "collectOnly",
+        "select": {
+          "label": "__collect_only_no_action__"
+        }
+      }
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev/docs/"
+          },
+          "contextValue": "growi.directory"
+        }
+      ],
+      "quickPick": {
+        "kind": "treeItemActions",
+        "name": "treeItemActions.directory",
+        "action": "collectOnly",
+        "select": {
+          "label": "__collect_only_no_action__"
+        }
+      }
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev"
+          },
+          "contextValue": "growi.prefixRoot"
+        }
+      ],
+      "quickPick": {
+        "kind": "treeItemActions",
+        "name": "treeItemActions.prefixRoot",
+        "action": "collectOnly",
+        "select": {
+          "label": "__collect_only_no_action__"
+        }
+      }
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev/alpha.md"
+          },
+          "contextValue": "growi.pageBookmarked"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "requiredTreeItems": [
+      {
+        "label": "/team/dev",
+        "kind": "directory",
+        "canonicalPath": "/team/dev",
+        "contextValue": "growi.prefixRoot"
+      },
+      {
+        "label": "__docs__.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev/docs",
+        "contextValue": "growi.directoryPage"
+      },
+      {
+        "label": "docs",
+        "kind": "directory",
+        "canonicalPath": "/team/dev/docs",
+        "contextValue": "growi.directory"
+      },
+      {
+        "label": "alpha.md",
+        "kind": "page",
+        "canonicalPath": "/team/dev/alpha",
+        "contextValue": "growi.pageBookmarked"
+      },
+      {
+        "label": "さらに読み込む",
+        "kind": "loadMore",
+        "canonicalPath": "/team/dev/many",
+        "contextValue": "growi.loadMore",
+        "description": "部分表示: /team/dev/many・取得済み 100 件"
+      }
+    ],
+    "requiredQuickPickItems": [
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "ブラウザで表示"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "ページを更新"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "ページ詳細を開く"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "ブックマークから削除"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "このページをローカルに同期"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "このページの差分を確認"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "ページを削除"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "ブラウザで表示"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "ページ詳細を開く"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "ここに作成"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "ページ名を変更"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "ブックマークに追加"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "このページをローカルに同期"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "配下ページをローカルに同期"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "このページの差分を確認"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "ページを削除"
+        }
+      },
+      {
+        "name": "treeItemActions.directory",
+        "item": {
+          "label": "ここに作成"
+        }
+      },
+      {
+        "name": "treeItemActions.directory",
+        "item": {
+          "label": "配下ページの差分を確認"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "Prefix ページを開く"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "ブラウザで表示"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "ここに作成"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "配下ページをローカルに同期"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "配下ページの差分を確認"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "プレフィックスを削除"
+        }
+      }
+    ],
+    "forbiddenQuickPickItems": [
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "Prefix ページを開く"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "配下ページをローカルに同期"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "被リンクを表示"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "添付一覧を表示"
+        }
+      },
+      {
+        "name": "treeItemActions.pageBookmarked",
+        "item": {
+          "label": "履歴差分を表示"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "被リンクを表示"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "添付一覧を表示"
+        }
+      },
+      {
+        "name": "treeItemActions.directoryPage",
+        "item": {
+          "label": "履歴差分を表示"
+        }
+      },
+      {
+        "name": "treeItemActions.directory",
+        "item": {
+          "label": "ブラウザで表示"
+        }
+      },
+      {
+        "name": "treeItemActions.directory",
+        "item": {
+          "label": "ページを削除"
+        }
+      },
+      {
+        "name": "treeItemActions.prefixRoot",
+        "item": {
+          "label": "ページを削除"
+        }
+      }
+    ],
+    "requiredMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "01_open@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerRefreshCurrentPage",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "02_inspect@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openCurrentPageHub",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "02_inspect@2"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.removeCurrentPageBookmark",
+        "when": "view == growi.explorer && viewItem == growi.pageBookmarked",
+        "group": "03_structureEdit@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "04_localMirror@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorWithGrowi",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "04_localMirror@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)",
+        "group": "06_danger@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "01_open@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openCurrentPageHub",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "02_inspect@2"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreatePageHere",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "03_structureEdit@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerRenamePage",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "03_structureEdit@2"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.addCurrentPageBookmark",
+        "when": "view == growi.explorer && viewItem == growi.directoryPage",
+        "group": "03_structureEdit@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPage",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "04_localMirror@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "04_localMirror@2"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorWithGrowi",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "04_localMirror@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && (viewItem == growi.directoryPage || viewItem == growi.directoryPageBookmarked)",
+        "group": "06_danger@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreatePageHere",
+        "when": "view == growi.explorer && viewItem == growi.directory",
+        "group": "03_structureEdit@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+        "when": "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)",
+        "group": "04_localMirror@4"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openPrefixRootPage",
+        "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+        "group": "01_open@2"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+        "group": "01_open@3"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreatePageHere",
+        "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+        "group": "03_structureEdit@1"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
+        "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+        "group": "04_localMirror@2"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.deletePrefix",
+        "when": "view == growi.explorer && viewItem == growi.prefixRoot",
+        "group": "06_danger@2"
+      }
+    ],
+    "forbiddenMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.openPrefixRootPage",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
+        "when": "view == growi.explorer && (viewItem == growi.page || viewItem == growi.pageBookmarked)"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && viewItem == growi.directory"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && viewItem == growi.directory"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && viewItem == growi.prefixRoot"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.openPrefixRootPage",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreatePageHere",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.deletePrefix",
+        "when": "view == growi.explorer && viewItem == growi.loadMore"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorToGrowi"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageInfo"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowBacklinks"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowCurrentPageAttachments"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerShowRevisionHistoryDiff"
+      }
+    ],
+    "requiredCommandSequence": [
+      "workbench.view.explorer",
+      "growi.addPrefix",
+      "growi.showExplorerItemActions"
+    ]
+  }
+}

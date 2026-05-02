@@ -1,38 +1,32 @@
-import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import * as vscode from "vscode";
-import { buildGrowiUriFromInput } from "./core/uri";
+import { assertPathOutsideExtensionRootForMutation } from "./core/mutationGuard";
+import { buildGrowiUriFromInput, normalizeCanonicalPath } from "./core/uri";
 import { createGrowiAssetProxy } from "./vscode/assetProxy";
 import {
+  combineDisposables,
+  registerBookmarkCommands,
+  registerCurrentPageCommands,
+  registerMirrorCommands,
+  registerNavigationCommands,
+  registerPrefixCommands,
+} from "./vscode/commandRegistration";
+import {
   type BookmarkListEntry,
+  buildOpenPageSearchEntry,
   createAddCurrentPageBookmarkCommand,
   createAddPrefixCommand,
   createClearPrefixesCommand,
-  createCompareLocalBundleWithGrowiCommand,
+  createCompareLocalMirrorSubtreeWithGrowiCommand,
   createConfigureApiTokenCommand,
   createConfigureBaseUrlCommand,
   createCreatePageCommand,
   createDeletePageCommand,
   createDeletePrefixCommand,
-  createDownloadCurrentPageSetToLocalBundleCommand,
-  createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
-  createExplorerCompareLocalBundleWithGrowiCommand,
-  createExplorerCompareLocalWorkFileWithCurrentPageCommand,
-  createExplorerCreatePageHereCommand,
-  createExplorerDeletePageCommand,
-  createExplorerDownloadCurrentPageSetToLocalBundleCommand,
-  createExplorerDownloadCurrentPageToLocalFileCommand,
-  createExplorerOpenPageInBrowserCommand,
-  createExplorerOpenPageItemCommand,
-  createExplorerRefreshCurrentPageCommand,
-  createExplorerRenamePageCommand,
-  createExplorerShowBacklinksCommand,
-  createExplorerShowCurrentPageAttachmentsCommand,
-  createExplorerShowCurrentPageInfoCommand,
-  createExplorerShowRevisionHistoryDiffCommand,
-  createExplorerUploadExportedLocalFileToGrowiCommand,
-  createExplorerUploadLocalBundleToGrowiCommand,
+  createLocalMirrorForCurrentPageCommand,
+  createLocalMirrorForCurrentPrefixCommand,
+  createOpenCurrentPageHubCommand,
   createOpenDirectoryPageCommand,
   createOpenPageCommand,
   createOpenPrefixRootPageCommand,
@@ -50,22 +44,36 @@ import {
   createShowCurrentPageActionsCommand,
   createShowCurrentPageAttachmentsCommand,
   createShowCurrentPageInfoCommand,
-  createShowLocalRoundTripActionsCommand,
+  createShowLocalMirrorActionsCommand,
   createShowRevisionHistoryDiffCommand,
   createStartEditCommand,
-  createUploadLocalBundleToGrowiCommand,
-  GROWI_COMMANDS,
-  GROWI_SECRET_KEYS,
+  createUploadLocalMirrorSubtreeToGrowiCommand,
   isOpenPageDirectInputPreferred,
+  loadCurrentPageDetailSummary,
   type OpenPageSearchEntry,
   rankOpenPageSearchEntries,
 } from "./vscode/commands";
-import { createGrowiDocumentSymbolProvider } from "./vscode/documentSymbols";
 import {
-  collectDrawioAutoFoldSelectionLines,
-  createDrawioFoldingRangeProvider,
-} from "./vscode/drawioFolding";
+  GROWI_COMMANDS,
+  GROWI_README_URI,
+  GROWI_SECRET_KEYS,
+  OPEN_PAGE_DIRECT_INPUT_DESCRIPTION,
+  OPEN_PAGE_DIRECT_INPUT_LABEL,
+  OPEN_PAGE_QUICK_PICK_PLACEHOLDER,
+  SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX,
+  SHOW_BOOKMARKS_PLACEHOLDER,
+  SHOW_BOOKMARKS_STATUS_OUTSIDE_PREFIX,
+  SHOW_BOOKMARKS_STATUS_UNRESOLVABLE,
+} from "./vscode/commandsConstants";
+import {
+  getGrowiLocalMirrorMaxPrefixPages,
+  getGrowiPageListingInitialPageSize,
+  getGrowiPageListingMaxAutoPagesPerPrefix,
+} from "./vscode/config";
+import { createCurrentPageDetailWebviewController } from "./vscode/currentPageDetailWebview";
+import { registerDocumentProviderFeature } from "./vscode/documentProviderFeature";
 import { createEditSessionRegistry } from "./vscode/editSessionRegistry";
+import { createGrowiExplorerFeature } from "./vscode/explorerFeature";
 import {
   type GrowiCurrentRevisionReader,
   type GrowiEditSession,
@@ -73,6 +81,7 @@ import {
   GrowiFileSystemProvider,
   type GrowiPageCreator,
   type GrowiPageDeleter,
+  type GrowiPageListOptions,
   type GrowiPageListReader,
   type GrowiPageReader,
   type GrowiPageRenameResult,
@@ -82,53 +91,50 @@ import {
 import type { GrowiBookmarkEntry } from "./vscode/growiApi";
 import { createGrowiApiAdapter } from "./vscode/growiApi";
 import {
-  collectGrowiLinkDiagnostics,
-  createGrowiDefinitionProvider,
-  createGrowiDocumentLinkProvider,
-} from "./vscode/linkNavigation";
-import {
   extendMarkdownPreviewIt,
   setGrowiAssetProxyUrlResolver,
 } from "./vscode/markdownPreview";
 import type {
   MirrorCompareScmResource,
   MirrorCompareScmState,
-} from "./vscode/mirrorCompareScm";
-import { createGrowiMirrorCompareSourceControl } from "./vscode/mirrorCompareSourceControl";
+} from "./vscode/mirror/mirrorCompareScm";
+import { createGrowiMirrorCompareSourceControl } from "./vscode/mirror/mirrorCompareSourceControl";
+import { createVscodeMirrorLocalChangeMonitor } from "./vscode/mirror/mirrorLocalChangeMonitor";
+import { createMirrorRemoteMetadataChecker } from "./vscode/mirror/mirrorRemoteMetadataCheck";
 import { createPageFreshnessService } from "./vscode/pageFreshnessService";
 import {
   createPageReferenceResolver,
   type ResolveParsedGrowiReferenceResult,
 } from "./vscode/pageReferenceResolver";
 import { createPrefixRegistry } from "./vscode/prefixRegistry";
-import {
-  createGrowiPrefixTreeDataProvider,
-  GROWI_EXPLORER_VIEW_ID,
-} from "./vscode/prefixTree";
 import { GrowiRevisionContentProvider } from "./vscode/revisionContentProvider";
 import { GROWI_REVISION_SCHEME } from "./vscode/revisionModel";
+import { registerRuntimeLogFeature } from "./vscode/runtimeLogFeature";
 import { RuntimeLogger } from "./vscode/runtimeLogger";
 
+export {
+  assertPathOutsideExtensionRootForMutation,
+  isPathWithinOrEqual,
+  resolveRealPathForMutationGuard,
+} from "./core/mutationGuard";
 export { buildGrowiUriFromInput, normalizeCanonicalPath } from "./core/uri";
 export {
   createAddCurrentPageBookmarkCommand,
   createAddPrefixCommand,
   createClearPrefixesCommand,
-  createCompareLocalBundleWithGrowiCommand,
-  createCompareLocalWorkFileWithCurrentPageCommand,
+  createCompareLocalMirrorSubtreeWithGrowiCommand,
+  createCompareLocalMirrorWithGrowiCommand,
   createConfigureApiTokenCommand,
   createConfigureBaseUrlCommand,
   createCreatePageCommand,
   createDeletePrefixCommand,
-  createDownloadCurrentPageSetToLocalBundleCommand,
-  createDownloadCurrentPageToLocalFileCommand,
   createEndEditCommand,
-  createExplorerCompareLocalBundleWithGrowiCommand,
-  createExplorerCompareLocalWorkFileWithCurrentPageCommand,
+  createExplorerCompareLocalMirrorSubtreeWithGrowiCommand,
+  createExplorerCompareLocalMirrorWithGrowiCommand,
+  createExplorerCreateLocalMirrorForCurrentPageCommand,
+  createExplorerCreateLocalMirrorForCurrentPrefixCommand,
   createExplorerCreatePageHereCommand,
   createExplorerDeletePageCommand,
-  createExplorerDownloadCurrentPageSetToLocalBundleCommand,
-  createExplorerDownloadCurrentPageToLocalFileCommand,
   createExplorerOpenPageInBrowserCommand,
   createExplorerOpenPageItemCommand,
   createExplorerRefreshCurrentPageCommand,
@@ -136,8 +142,10 @@ export {
   createExplorerShowBacklinksCommand,
   createExplorerShowCurrentPageInfoCommand,
   createExplorerShowRevisionHistoryDiffCommand,
-  createExplorerUploadExportedLocalFileToGrowiCommand,
-  createExplorerUploadLocalBundleToGrowiCommand,
+  createExplorerUploadLocalMirrorSubtreeToGrowiCommand,
+  createExplorerUploadLocalMirrorToGrowiCommand,
+  createLocalMirrorForCurrentPageCommand,
+  createLocalMirrorForCurrentPrefixCommand,
   createOpenPageCommand,
   createOpenReadmeCommand,
   createRefreshCurrentPageCommand,
@@ -149,14 +157,14 @@ export {
   createShowBookmarksCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageInfoCommand,
-  createShowLocalRoundTripActionsCommand,
+  createShowLocalMirrorActionsCommand,
   createShowRevisionHistoryDiffCommand,
   createStartEditCommand,
-  createUploadExportedLocalFileToGrowiCommand,
-  createUploadLocalBundleToGrowiCommand,
-  GROWI_COMMANDS,
+  createUploadLocalMirrorSubtreeToGrowiCommand,
+  createUploadLocalMirrorToGrowiCommand,
   normalizeBaseUrl,
 } from "./vscode/commands";
+export { GROWI_COMMANDS } from "./vscode/commandsConstants";
 
 function getErrorText(error: unknown): string {
   if (error instanceof Error) {
@@ -220,7 +228,7 @@ export function activate(context: vscode.ExtensionContext): void {
     userId: undefined as string | undefined,
     bookmarks: [] as GrowiBookmarkEntry[],
   };
-  const prefixTreeDataProvider = createGrowiPrefixTreeDataProvider({
+  const explorerFeature = createGrowiExplorerFeature({
     getRegisteredPrefixes() {
       return prefixRegistry.getPrefixes(
         vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
@@ -240,7 +248,11 @@ export function activate(context: vscode.ExtensionContext): void {
     readDirectory(uri) {
       return vscode.workspace.fs.readDirectory(uri);
     },
+    getDirectoryListingState(uri) {
+      return fileSystemProvider.getReadDirectoryListingState(uri);
+    },
   });
+  const prefixTreeDataProvider = explorerFeature.prefixTreeDataProvider;
   const outputChannel = (
     vscode.window as typeof vscode.window & {
       createOutputChannel?: (
@@ -253,6 +265,15 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const runtimeLogger = new RuntimeLogger();
   const mirrorCompareSourceControl = createGrowiMirrorCompareSourceControl();
+  const extensionRoot = context.extensionUri?.fsPath ?? process.cwd();
+  const readmeContentProvider: vscode.TextDocumentContentProvider = {
+    async provideTextDocumentContent() {
+      const bytes = await vscode.workspace.fs.readFile(
+        vscode.Uri.file(path.join(extensionRoot, "README.md")),
+      );
+      return new TextDecoder().decode(bytes);
+    },
+  };
   const appendRuntimeStatus = (prefix: string) => {
     const status = runtimeLogger.getRuntimeLogStatus();
     outputChannel.appendLine(
@@ -333,6 +354,7 @@ export function activate(context: vscode.ExtensionContext): void {
     GROWI_COMMANDS.compareLocalMirrorWithGrowi,
     GROWI_COMMANDS.uploadLocalMirrorToGrowi,
     GROWI_COMMANDS.scmCompareMirrorAgain,
+    GROWI_COMMANDS.scmCheckRemoteMetadata,
     GROWI_COMMANDS.scmUploadMirrorResources,
     GROWI_COMMANDS.scmTakeRemoteMirrorResources,
     GROWI_COMMANDS.showCurrentPageInfo,
@@ -455,9 +477,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return `group(${value.id})`;
     }
 
-    return `object(keys=${Object.keys(value)
-      .slice(0, 4)
-      .join(",")})`;
+    return `object(keys=${Object.keys(value).slice(0, 4).join(",")})`;
   };
   const describeScmCommandArgs = (args: readonly unknown[]): string => {
     if (args.length === 0) {
@@ -518,7 +538,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const refreshGrowiExplorer = () => {
-    prefixTreeDataProvider.refresh();
+    explorerFeature.refresh();
   };
 
   const getConfiguredApiContext = async () => {
@@ -536,6 +556,56 @@ export function activate(context: vscode.ExtensionContext): void {
 
     return { ok: true, baseUrl, apiToken } as const;
   };
+
+  const mirrorRemoteMetadataChecker = createMirrorRemoteMetadataChecker({
+    getWorkspaceFolders: () => vscode.workspace.workspaceFolders,
+    getBaseUrl: () =>
+      vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
+    async readLocalFile(localPath) {
+      const bytes = await vscode.workspace.fs.readFile(
+        vscode.Uri.file(localPath),
+      );
+      return new TextDecoder().decode(bytes);
+    },
+    async getPageInfo(canonicalPath) {
+      const configured = await getConfiguredApiContext();
+      if (!configured.ok) {
+        return configured;
+      }
+      return growiApi.getPageInfo(
+        canonicalPath,
+        configured.baseUrl,
+        configured.apiToken,
+      );
+    },
+    getMirrorCompareSourceControlState: () =>
+      mirrorCompareSourceControl.getState(),
+    setMirrorCompareSourceControlState: (state) =>
+      mirrorCompareSourceControl.setState(state),
+    setMirrorCompareTreeSnapshotState: (state) => {
+      prefixTreeDataProvider.setCompareSnapshot(state);
+      prefixTreeDataProvider.refresh();
+    },
+    now: () => Date.now(),
+  });
+
+  const mirrorLocalChangeMonitor = createVscodeMirrorLocalChangeMonitor({
+    getBaseUrl: () =>
+      vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
+    getMirrorCompareSourceControlState: () =>
+      mirrorCompareSourceControl.getState(),
+    setMirrorCompareSourceControlState: (state) =>
+      mirrorCompareSourceControl.setState(state),
+    setMirrorCompareTreeSnapshotState: (state) => {
+      prefixTreeDataProvider.setCompareSnapshot(state);
+      prefixTreeDataProvider.refresh();
+    },
+    onLocalOnlyRefresh: ({ localChangedResources }) => {
+      void mirrorRemoteMetadataChecker.checkLocalChangedResources(
+        localChangedResources,
+      );
+    },
+  });
 
   const replaceBookmarkCache = (
     baseUrl: string,
@@ -696,7 +766,10 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
   const pageListReader: GrowiPageListReader = {
-    async listPages(canonicalPrefixPath: string) {
+    async listPages(
+      canonicalPrefixPath: string,
+      options?: GrowiPageListOptions,
+    ) {
       const configured = await getConfiguredApiContext();
       if (!configured.ok) {
         return configured;
@@ -706,6 +779,12 @@ export function activate(context: vscode.ExtensionContext): void {
         canonicalPrefixPath,
         configured.baseUrl,
         configured.apiToken,
+        options?.limit === undefined
+          ? {
+              ...options,
+              limit: getGrowiPageListingInitialPageSize(),
+            }
+          : options,
       );
     },
   };
@@ -837,6 +916,37 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     },
   });
+
+  const collectOpenPageInitialCandidatePaths = (): string[] => {
+    const paths = new Set<string>();
+    const baseUrl = vscode.workspace
+      .getConfiguration("growi")
+      .get<string>("baseUrl");
+    if (baseUrl && bookmarkCache.baseUrl === baseUrl) {
+      for (const bookmark of bookmarkCache.bookmarks) {
+        paths.add(bookmark.canonicalPath);
+      }
+    }
+
+    for (const document of vscode.workspace.textDocuments) {
+      if (
+        document.uri.scheme !== "growi" ||
+        !document.uri.path.endsWith(".md")
+      ) {
+        continue;
+      }
+      const normalized = normalizeCanonicalPath(document.uri.path.slice(0, -3));
+      if (normalized.ok) {
+        paths.add(normalized.value);
+      }
+    }
+
+    for (const cachedPath of fileSystemProvider.getCachedReadDirectoryPaths()) {
+      paths.add(cachedPath);
+    }
+
+    return [...paths];
+  };
 
   const deps = {
     async addBookmark(canonicalPath: string, pageId?: string) {
@@ -983,6 +1093,12 @@ export function activate(context: vscode.ExtensionContext): void {
         configured.apiToken,
       );
     },
+    async checkRemoteMetadataForPage(canonicalPath: string) {
+      return mirrorRemoteMetadataChecker.checkPageMetadata(canonicalPath, {
+        respectCooldown: true,
+        allowCreateState: true,
+      });
+    },
     closeEditSession(canonicalPath: string) {
       editSessionRegistry.closeEditSession(canonicalPath);
     },
@@ -1020,6 +1136,15 @@ export function activate(context: vscode.ExtensionContext): void {
     getRegisteredPrefixes() {
       return prefixRegistry.getPrefixes(deps.getBaseUrl());
     },
+    getOpenPageInitialCandidatePaths() {
+      return collectOpenPageInitialCandidatePaths();
+    },
+    getOpenPageBoundedSearchLimit() {
+      return getGrowiPageListingMaxAutoPagesPerPrefix();
+    },
+    getLocalMirrorMaxPrefixPages() {
+      return getGrowiLocalMirrorMaxPrefixPages();
+    },
     isBookmarked(canonicalPath: string) {
       const baseUrl = deps.getBaseUrl();
       if (!baseUrl || bookmarkCache.baseUrl !== baseUrl) {
@@ -1035,7 +1160,10 @@ export function activate(context: vscode.ExtensionContext): void {
     invalidateReadFileCache(canonicalPath: string) {
       fileSystemProvider.invalidateReadFileCache(canonicalPath);
     },
-    async listPages(canonicalPrefixPath: string) {
+    async listPages(
+      canonicalPrefixPath: string,
+      options?: GrowiPageListOptions,
+    ) {
       const configured = await getConfiguredApiContext();
       if (!configured.ok) {
         return configured;
@@ -1045,6 +1173,12 @@ export function activate(context: vscode.ExtensionContext): void {
         canonicalPrefixPath,
         configured.baseUrl,
         configured.apiToken,
+        options?.limit === undefined
+          ? {
+              ...options,
+              limit: getGrowiPageListingInitialPageSize(),
+            }
+          : options,
       );
     },
     async createPage(canonicalPath: string, body: string) {
@@ -1539,6 +1673,7 @@ export function activate(context: vscode.ExtensionContext): void {
         placeHolder: string;
         directInputLabel: string;
         directInputDescription: string;
+        search(query: string): Promise<readonly OpenPageSearchEntry[]>;
       },
     ) {
       return await new Promise<string | { action: "directInput" } | undefined>(
@@ -1568,15 +1703,40 @@ export function activate(context: vscode.ExtensionContext): void {
             action: "directInput" as const,
             alwaysShow: true,
           };
+          let searchSequence = 0;
 
-          const updateItems = () => {
-            const rankedItems = rankOpenPageSearchEntries(
-              items,
-              quickPick.value,
-            );
-            quickPick.items = isOpenPageDirectInputPreferred(quickPick.value)
+          const setRankedItems = (
+            entries: readonly OpenPageSearchEntry[],
+            query: string,
+          ) => {
+            const rankedItems = rankOpenPageSearchEntries(entries, query);
+            quickPick.items = isOpenPageDirectInputPreferred(query)
               ? [directInputItem, ...rankedItems]
               : [...rankedItems, directInputItem];
+          };
+
+          const updateItems = () => {
+            const query = quickPick.value;
+            const sequence = ++searchSequence;
+            if (query.trim().length === 0) {
+              setRankedItems(items, query);
+              return;
+            }
+
+            void options
+              .search(query)
+              .then((searchedItems) => {
+                if (settled || sequence !== searchSequence) {
+                  return;
+                }
+                setRankedItems(searchedItems, query);
+              })
+              .catch(() => {
+                if (settled || sequence !== searchSequence) {
+                  return;
+                }
+                quickPick.items = [directInputItem];
+              });
           };
 
           quickPick.placeholder = options.placeHolder;
@@ -1703,12 +1863,14 @@ export function activate(context: vscode.ExtensionContext): void {
       refreshGrowiExplorer();
     },
     async deleteLocalPath(localPath: string) {
+      await assertPathOutsideExtensionRootForMutation(extensionRoot, localPath);
       await vscode.workspace.fs.delete(vscode.Uri.file(localPath), {
         recursive: true,
         useTrash: false,
       });
     },
     async writeLocalFile(localPath: string, content: string) {
+      await assertPathOutsideExtensionRootForMutation(extensionRoot, localPath);
       await vscode.workspace.fs.createDirectory(
         vscode.Uri.file(path.dirname(localPath)),
       );
@@ -1762,45 +1924,78 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const openPageCommand = createOpenPageCommand(deps);
-  const openPageCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.openPage,
-    openPageCommand,
-  );
-  const addCurrentPageBookmarkCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.addCurrentPageBookmark,
-    createAddCurrentPageBookmarkCommand(deps),
-  );
-  const removeCurrentPageBookmarkCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.removeCurrentPageBookmark,
-    createRemoveCurrentPageBookmarkCommand(deps),
-  );
-  const showBookmarksCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.showBookmarks,
-    createShowBookmarksCommand(deps),
-  );
-  const createPageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.createPage,
-    createCreatePageCommand(deps),
-  );
-  const deletePageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.deletePage,
-    createDeletePageCommand(deps),
-  );
-  const renamePageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.renamePage,
-    createRenamePageCommand(deps),
-  );
-  const refreshCurrentPageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.refreshCurrentPage,
-    async (uri?: unknown) => {
-      await createRefreshCurrentPageCommand(deps)(uri as never);
-      await reevaluateActiveGrowiPageStatus();
+  const currentPageDetailWebviewController =
+    createCurrentPageDetailWebviewController({
+      extensionUri: context.extensionUri,
+      executeCommand(command: string, ...args: unknown[]) {
+        return vscode.commands.executeCommand(command, ...args);
+      },
+    });
+  let reevaluateActiveGrowiPageStatus = async (): Promise<void> => {};
+  const compareLocalMirrorWithGrowiCommand =
+    createCompareLocalMirrorSubtreeWithGrowiCommand(deps);
+  const scmCompareMirrorAgainCommand = createScmCompareMirrorAgainCommand(deps);
+  const scmUploadMirrorResourcesCommand =
+    createScmUploadMirrorResourcesCommand(deps);
+  const scmTakeRemoteMirrorResourcesCommand =
+    createScmTakeRemoteMirrorResourcesCommand(deps);
+  const navigationCommandsDisposable = registerNavigationCommands([
+    {
+      commandId: GROWI_COMMANDS.openPage,
+      handler: openPageCommand,
+      registrar: registerGrowiCommand,
     },
-  );
-  const showCurrentPageActionsCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.showCurrentPageActions,
-      createShowCurrentPageActionsCommand({
+  ]);
+  const readmeCommandDisposable = registerNavigationCommands([
+    {
+      commandId: GROWI_COMMANDS.openReadme,
+      handler: createOpenReadmeCommand({
+        async openUri(uri: string) {
+          await deps.openUri(uri);
+        },
+      }),
+    },
+  ]);
+  const bookmarkCommandsDisposable = registerBookmarkCommands([
+    {
+      commandId: GROWI_COMMANDS.addCurrentPageBookmark,
+      handler: createAddCurrentPageBookmarkCommand(deps),
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.removeCurrentPageBookmark,
+      handler: createRemoveCurrentPageBookmarkCommand(deps),
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.showBookmarks,
+      handler: createShowBookmarksCommand(deps),
+      registrar: registerGrowiCommand,
+    },
+  ]);
+  const currentPageCommandsDisposable = registerCurrentPageCommands([
+    {
+      commandId: GROWI_COMMANDS.createPage,
+      handler: createCreatePageCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.deletePage,
+      handler: createDeletePageCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.renamePage,
+      handler: createRenamePageCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.refreshCurrentPage,
+      handler: async (uri?: unknown) => {
+        await createRefreshCurrentPageCommand(deps)(uri as never);
+        await reevaluateActiveGrowiPageStatus();
+      },
+    },
+    {
+      commandId: GROWI_COMMANDS.showCurrentPageActions,
+      handler: createShowCurrentPageActionsCommand({
         getActiveEditorUri() {
           return deps.getActiveEditorUri();
         },
@@ -1820,11 +2015,64 @@ export function activate(context: vscode.ExtensionContext): void {
           return await vscode.window.showQuickPick(items, options);
         },
       }),
-    );
-  const showLocalMirrorActionsCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.showLocalMirrorActions",
-      createShowLocalRoundTripActionsCommand({
+    },
+    {
+      commandId: GROWI_COMMANDS.openCurrentPageHub,
+      handler: createOpenCurrentPageHubCommand({
+        getActiveEditorUri() {
+          return deps.getActiveEditorUri();
+        },
+        isBookmarked(canonicalPath: string) {
+          return deps.isBookmarked(canonicalPath);
+        },
+        async executeCommand(command: string, ...args: unknown[]) {
+          await vscode.commands.executeCommand(command, ...args);
+        },
+        async loadPageDetailSummary(canonicalPath: string) {
+          return await loadCurrentPageDetailSummary(deps, canonicalPath);
+        },
+        async openPageDetailWebview(input) {
+          currentPageDetailWebviewController.open(input);
+        },
+        showErrorMessage(message: string) {
+          deps.showErrorMessage(message);
+        },
+        async showQuickPick(
+          items: readonly { label: string; command: string }[],
+          options: { placeHolder: string },
+        ) {
+          return await vscode.window.showQuickPick(items, options);
+        },
+      }),
+    },
+    {
+      commandId: GROWI_COMMANDS.startEdit,
+      handler: createStartEditCommand(deps),
+    },
+    { commandId: GROWI_COMMANDS.endEdit, handler: createEndEditCommand(deps) },
+    {
+      commandId: GROWI_COMMANDS.showCurrentPageInfo,
+      handler: createShowCurrentPageInfoCommand(deps),
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.showCurrentPageAttachments,
+      handler: createShowCurrentPageAttachmentsCommand(deps),
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.showRevisionHistoryDiff,
+      handler: createShowRevisionHistoryDiffCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.showBacklinks,
+      handler: createShowBacklinksCommand(deps),
+    },
+  ]);
+  const mirrorCommandsDisposable = registerMirrorCommands([
+    {
+      commandId: GROWI_COMMANDS.showLocalMirrorActions,
+      handler: createShowLocalMirrorActionsCommand({
         getActiveEditorUri() {
           return deps.getActiveEditorUri();
         },
@@ -1841,46 +2089,39 @@ export function activate(context: vscode.ExtensionContext): void {
           return await vscode.window.showQuickPick(items, options);
         },
       }),
-    );
-  const createLocalMirrorForCurrentPageCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.createLocalMirrorForCurrentPage",
-      async (target?: unknown) => {
-        await createDownloadCurrentPageToLocalFileCommand(deps)(
-          target as never,
-        );
+    },
+    {
+      commandId: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
+      handler: async (target?: unknown) => {
+        await createLocalMirrorForCurrentPageCommand(deps)(target as never);
         await reevaluateActiveGrowiPageStatus();
       },
-    );
-  const createLocalMirrorForCurrentPrefixCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.createLocalMirrorForCurrentPrefix",
-      async (target?: unknown) => {
-        const exported = await createDownloadCurrentPageSetToLocalBundleCommand(
-          deps,
-        )(target as never);
+    },
+    {
+      commandId: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
+      handler: async (target?: unknown) => {
+        const exported = await createLocalMirrorForCurrentPrefixCommand(deps)(
+          target as never,
+        );
         if (exported) {
           await reevaluateActiveGrowiPageStatus();
         }
         return exported;
       },
-    );
-  const refreshLocalMirrorCommandDisposable = vscode.commands.registerCommand(
-    "growi.refreshLocalMirror",
-    async (target?: unknown) => {
-      const result = await createRefreshLocalMirrorCommand(deps)(
-        target as never,
-      );
-      await reevaluateActiveGrowiPageStatus();
-      return result;
     },
-  );
-  const compareLocalMirrorWithGrowiCommand =
-    createCompareLocalBundleWithGrowiCommand(deps);
-  const compareLocalMirrorWithGrowiCommandDisposable =
-    registerGrowiCommand(
-      "growi.compareLocalMirrorWithGrowi",
-      async (target?: unknown) => {
+    {
+      commandId: GROWI_COMMANDS.refreshLocalMirror,
+      handler: async (target?: unknown) => {
+        const result = await createRefreshLocalMirrorCommand(deps)(
+          target as never,
+        );
+        await reevaluateActiveGrowiPageStatus();
+        return result;
+      },
+    },
+    {
+      commandId: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
+      handler: async (target?: unknown) => {
         const compared = await compareLocalMirrorWithGrowiCommand(
           target as never,
         );
@@ -1889,38 +2130,42 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         return compared;
       },
-    );
-  const uploadLocalMirrorToGrowiCommandDisposable =
-    registerGrowiCommand(
-      "growi.uploadLocalMirrorToGrowi",
-      async (target?: unknown) => {
-        const uploaded = await createUploadLocalBundleToGrowiCommand(deps)(
-          target as never,
-        );
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.uploadLocalMirrorToGrowi,
+      handler: async (target?: unknown) => {
+        const uploaded = await createUploadLocalMirrorSubtreeToGrowiCommand(
+          deps,
+        )(target as never);
         if (uploaded) {
           await reevaluateActiveGrowiPageStatus();
         }
         return uploaded;
       },
-    );
-  const scmCompareMirrorAgainCommand = createScmCompareMirrorAgainCommand(deps);
-  const scmCompareMirrorAgainCommandDisposable =
-    registerGrowiCommand(
-      GROWI_COMMANDS.scmCompareMirrorAgain,
-      async () => {
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.scmCompareMirrorAgain,
+      handler: async () => {
         const compared = await scmCompareMirrorAgainCommand();
         if (compared) {
           await reevaluateActiveGrowiPageStatus();
         }
         return compared;
       },
-    );
-  const scmUploadMirrorResourcesCommand =
-    createScmUploadMirrorResourcesCommand(deps);
-  const scmUploadMirrorResourcesCommandDisposable =
-    registerGrowiCommand(
-      GROWI_COMMANDS.scmUploadMirrorResources,
-      async (...args: unknown[]) => {
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.scmCheckRemoteMetadata,
+      handler: async () => {
+        return await mirrorRemoteMetadataChecker.checkCurrentMirrorMetadata();
+      },
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.scmUploadMirrorResources,
+      handler: async (...args: unknown[]) => {
         const resources =
           mirrorCompareSourceControl.getResourcesFromCommandArgs(args) ?? [];
         await logScmCommandContext(
@@ -1948,13 +2193,11 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         return results;
       },
-    );
-  const scmTakeRemoteMirrorResourcesCommand =
-    createScmTakeRemoteMirrorResourcesCommand(deps);
-  const scmTakeRemoteMirrorResourcesCommandDisposable =
-    registerGrowiCommand(
-      GROWI_COMMANDS.scmTakeRemoteMirrorResources,
-      async (...args: unknown[]) => {
+      registrar: registerGrowiCommand,
+    },
+    {
+      commandId: GROWI_COMMANDS.scmTakeRemoteMirrorResources,
+      handler: async (...args: unknown[]) => {
         const resources =
           mirrorCompareSourceControl.getResourcesFromCommandArgs(args) ?? [];
         await logScmCommandContext(
@@ -1982,188 +2225,52 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         return results;
       },
-    );
-  const startEditCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.startEdit,
-    createStartEditCommand(deps),
-  );
-  const endEditCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.endEdit,
-    createEndEditCommand(deps),
-  );
-  const refreshListingCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.refreshListing,
-    createRefreshListingCommand(deps),
-  );
-  const showCurrentPageInfoCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.showCurrentPageInfo,
-    createShowCurrentPageInfoCommand(deps),
-  );
-  const showCurrentPageAttachmentsCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.showCurrentPageAttachments,
-    createShowCurrentPageAttachmentsCommand(deps),
-  );
-  const showRevisionHistoryDiffCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.showRevisionHistoryDiff,
-      createShowRevisionHistoryDiffCommand(deps),
-    );
-  const addPrefixCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.addPrefix,
-    createAddPrefixCommand(deps),
-  );
-  const openPrefixRootPageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.openPrefixRootPage,
-    createOpenPrefixRootPageCommand(deps),
-  );
-  const openDirectoryPageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.openDirectoryPage,
-    createOpenDirectoryPageCommand(deps),
-  );
-  const explorerOpenPageItemCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.explorerOpenPageItem,
-    createExplorerOpenPageItemCommand(deps),
-  );
-  const explorerOpenPageInBrowserCommandDisposable = registerGrowiCommand(
-    GROWI_COMMANDS.explorerOpenPageInBrowser,
-    createExplorerOpenPageInBrowserCommand(deps),
-  );
-  const explorerCreatePageHereCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.explorerCreatePageHere,
-      createExplorerCreatePageHereCommand(deps),
-    );
-  const explorerRenamePageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.explorerRenamePage,
-    createExplorerRenamePageCommand(deps),
-  );
-  const explorerDeletePageCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.explorerDeletePage,
-    createExplorerDeletePageCommand(deps),
-  );
-  const explorerRefreshCurrentPageCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.explorerRefreshCurrentPage,
-      createExplorerRefreshCurrentPageCommand(deps),
-    );
-  const explorerShowBacklinksCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.explorerShowBacklinks,
-      createExplorerShowBacklinksCommand(deps),
-    );
-  const explorerShowCurrentPageInfoCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.explorerShowCurrentPageInfo,
-      createExplorerShowCurrentPageInfoCommand(deps),
-    );
-  const explorerShowCurrentPageAttachmentsCommandDisposable =
-    registerGrowiCommand(
-      GROWI_COMMANDS.explorerShowCurrentPageAttachments,
-      createExplorerShowCurrentPageAttachmentsCommand(deps),
-    );
-  const explorerShowRevisionHistoryDiffCommandDisposable =
-    vscode.commands.registerCommand(
-      GROWI_COMMANDS.explorerShowRevisionHistoryDiff,
-      createExplorerShowRevisionHistoryDiffCommand(deps),
-    );
-  const explorerCreateLocalMirrorForCurrentPageCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.explorerCreateLocalMirrorForCurrentPage",
-      createExplorerDownloadCurrentPageToLocalFileCommand(deps),
-    );
-  const explorerCreateLocalMirrorForCurrentPrefixCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.explorerCreateLocalMirrorForCurrentPrefix",
-      createExplorerDownloadCurrentPageSetToLocalBundleCommand(deps),
-    );
-  const explorerCompareLocalMirrorWithGrowiCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.explorerCompareLocalMirrorWithGrowi",
-      createExplorerCompareLocalWorkFileWithCurrentPageCommand(deps),
-    );
-  const explorerUploadLocalMirrorToGrowiCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.explorerUploadLocalMirrorToGrowi",
-      createExplorerUploadExportedLocalFileToGrowiCommand(deps),
-    );
-  const explorerCompareLocalMirrorSubtreeWithGrowiCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
-      createExplorerCompareLocalBundleWithGrowiCommand(deps),
-    );
-  const explorerUploadLocalMirrorSubtreeToGrowiCommandDisposable =
-    vscode.commands.registerCommand(
-      "growi.explorerUploadLocalMirrorSubtreeToGrowi",
-      createExplorerUploadLocalBundleToGrowiCommand(deps),
-    );
-  const clearPrefixesCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.clearPrefixes,
-    createClearPrefixesCommand(deps),
-  );
-  const deletePrefixCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.deletePrefix,
-    createDeletePrefixCommand(deps),
-  );
-  const showBacklinksCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.showBacklinks,
-    createShowBacklinksCommand(deps),
-  );
-  const openReadmeCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.openReadme,
-    createOpenReadmeCommand({
-      getExtensionRoot() {
-        return context.extensionUri?.fsPath ?? process.cwd();
-      },
-      async openLocalFile(localPath: string) {
-        await deps.openLocalFile(localPath);
-      },
-    }),
-  );
-  const clearRuntimeLogsCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.clearRuntimeLogs,
-    async () => {
-      if (!runtimeLogsEnabled) {
-        void vscode.window.showInformationMessage(
-          "Runtime logs are available only in debug-f5 mode.",
-        );
-        return 0;
-      }
-
-      const directory = runtimeLogger.getResolvedRuntimeLogDirectory();
-      if (!directory) {
-        const status = runtimeLogger.getRuntimeLogStatus();
-        void vscode.window.showInformationMessage(
-          `Runtime log path is not resolved yet. mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`,
-        );
-        return 0;
-      }
-
-      let removed = 0;
-      try {
-        const entries = await readdir(directory, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-            await rm(
-              vscode.Uri.joinPath(vscode.Uri.file(directory), entry.name)
-                .fsPath,
-              { force: true },
-            );
-            removed += 1;
-          }
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw error;
-        }
-      }
-
-      runtimeLogger.resetRuntimeLogState();
-      void vscode.window.showInformationMessage(
-        `Removed ${removed} runtime log file(s).`,
-      );
-      return removed;
+      registrar: registerGrowiCommand,
     },
-  );
+  ]);
+  const prefixCommandsDisposable = registerPrefixCommands([
+    {
+      commandId: GROWI_COMMANDS.refreshListing,
+      handler: createRefreshListingCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.addPrefix,
+      handler: createAddPrefixCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.openPrefixRootPage,
+      handler: createOpenPrefixRootPageCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.openDirectoryPage,
+      handler: createOpenDirectoryPageCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.clearPrefixes,
+      handler: createClearPrefixesCommand(deps),
+    },
+    {
+      commandId: GROWI_COMMANDS.deletePrefix,
+      handler: createDeletePrefixCommand(deps),
+    },
+  ]);
+  const loadMoreListingCommandDisposable =
+    explorerFeature.registerLoadMoreListingCommand({
+      async loadMoreReadDirectory(uri) {
+        await fileSystemProvider.loadMoreReadDirectory(uri);
+      },
+      showErrorMessage(message: string) {
+        void vscode.window.showErrorMessage(message);
+      },
+    });
+  const explorerCommandsDisposable = explorerFeature.registerExplorerCommands({
+    commandDeps: deps,
+    tracedCommandRegistrar: registerGrowiCommand,
+  });
+  const runtimeLogCommandsDisposable = registerRuntimeLogFeature({
+    runtimeLogger,
+    runtimeLogsEnabled,
+  });
   const pageFreshnessService = createPageFreshnessService({
     getLocalWorkspaceRoot() {
       const folder = vscode.workspace.workspaceFolders?.find(
@@ -2193,29 +2300,6 @@ export function activate(context: vscode.ExtensionContext): void {
       return await currentRevisionReader.getCurrentRevision(canonicalPath);
     },
   });
-  const revealRuntimeLogsCommandDisposable = vscode.commands.registerCommand(
-    GROWI_COMMANDS.revealRuntimeLogs,
-    async () => {
-      if (!runtimeLogsEnabled) {
-        void vscode.window.showInformationMessage(
-          "Runtime logs are available only in debug-f5 mode.",
-        );
-        return;
-      }
-
-      const directory = runtimeLogger.getResolvedRuntimeLogDirectory();
-      if (!directory) {
-        const status = runtimeLogger.getRuntimeLogStatus();
-        void vscode.window.showInformationMessage(
-          `Runtime log path is not resolved yet. mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`,
-        );
-        return;
-      }
-
-      await vscode.env.openExternal(vscode.Uri.file(directory));
-      return directory;
-    },
-  );
   const getResolvedRuntimeLogDirectoryCommandDisposable =
     vscode.commands.registerCommand(
       "growi.__test.getResolvedRuntimeLogDirectory",
@@ -2233,8 +2317,260 @@ export function activate(context: vscode.ExtensionContext): void {
       "growi.__test.getMirrorCompareSourceControlState",
       async () => mirrorCompareSourceControl.getState(),
     );
-
-  const linkNavigationDeps = {
+  const explorerTestSupportCommandsDisposable =
+    explorerFeature.registerTestSupportCommands(deps);
+  const collectOpenPageQuickPickStateCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.collectOpenPageQuickPickState",
+      async (query = "") => {
+        const prefixes = prefixRegistry.getPrefixes(
+          vscode.workspace.getConfiguration("growi").get<string>("baseUrl"),
+        );
+        const normalizedQuery = String(query).trim();
+        const canonicalPaths = new Set(
+          normalizedQuery.length === 0
+            ? collectOpenPageInitialCandidatePaths()
+            : [],
+        );
+        if (normalizedQuery.length > 0) {
+          const listedPages = await Promise.all(
+            prefixes.map(
+              async (prefix) =>
+                await pageListReader.listPages(prefix, {
+                  page: 1,
+                  limit: getGrowiPageListingMaxAutoPagesPerPrefix(),
+                }),
+            ),
+          );
+          for (const result of listedPages) {
+            if (!result.ok) {
+              continue;
+            }
+            for (const canonicalPath of result.paths) {
+              canonicalPaths.add(canonicalPath);
+            }
+          }
+        }
+        const entries = [...canonicalPaths]
+          .sort((left, right) => {
+            const labelOrder = left.localeCompare(right, "ja");
+            return labelOrder !== 0 ? labelOrder : left.localeCompare(right);
+          })
+          .map((canonicalPath) => buildOpenPageSearchEntry(canonicalPath));
+        const rankedItems = rankOpenPageSearchEntries(entries, query);
+        const directInputItem = {
+          label: OPEN_PAGE_DIRECT_INPUT_LABEL,
+          description: OPEN_PAGE_DIRECT_INPUT_DESCRIPTION,
+          action: "directInput" as const,
+        };
+        const items = isOpenPageDirectInputPreferred(query)
+          ? [directInputItem, ...rankedItems]
+          : [...rankedItems, directInputItem];
+        return {
+          name: "openPage",
+          placeholder: OPEN_PAGE_QUICK_PICK_PLACEHOLDER,
+          value: query,
+          items: items.map((item) => ({
+            label: item.label,
+            description: item.description,
+            canonicalPath:
+              "canonicalPath" in item ? item.canonicalPath : undefined,
+            action: item.action,
+          })),
+        };
+      },
+    );
+  const collectBookmarksQuickPickStateCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.collectBookmarksQuickPickState",
+      async () => {
+        const bookmarksResult = await syncBookmarks();
+        const bookmarks = bookmarksResult.ok
+          ? await buildBookmarkListEntries(bookmarksResult.bookmarks)
+          : [];
+        const formatBookmarkDetail = (bookmark: BookmarkListEntry) => {
+          if (bookmark.status === "unresolvable") {
+            return `${SHOW_BOOKMARKS_STATUS_UNRESOLVABLE} ・ ${SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX} ${bookmark.addedAt}`;
+          }
+          if (bookmark.status === "outsidePrefix") {
+            return `${SHOW_BOOKMARKS_STATUS_OUTSIDE_PREFIX} ・ ${SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX} ${bookmark.addedAt}`;
+          }
+          return `${SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX} ${bookmark.addedAt}`;
+        };
+        return {
+          name: "bookmarks",
+          placeholder: SHOW_BOOKMARKS_PLACEHOLDER,
+          items: bookmarks.map((bookmark) => ({
+            label:
+              bookmark.canonicalPath.split("/").filter(Boolean).at(-1) ??
+              bookmark.canonicalPath,
+            description: bookmark.canonicalPath,
+            detail: formatBookmarkDetail(bookmark),
+            canonicalPath: bookmark.canonicalPath,
+            pageId: bookmark.pageId,
+            status: bookmark.status,
+            buttons: [{ tooltip: "ブックマークから削除", iconPath: "trash" }],
+          })),
+        };
+      },
+    );
+  const collectCurrentPageActionsQuickPickStateCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.collectCurrentPageActionsQuickPickState",
+      async (uri?: unknown) => {
+        let collected:
+          | {
+              placeholder: string;
+              items: readonly {
+                label: string;
+                description?: string;
+                command: string;
+              }[];
+            }
+          | undefined;
+        await createShowCurrentPageActionsCommand({
+          getActiveEditorUri() {
+            return deps.getActiveEditorUri();
+          },
+          isBookmarked(canonicalPath: string) {
+            return deps.isBookmarked(canonicalPath);
+          },
+          async executeCommand() {
+            return;
+          },
+          showErrorMessage(message: string) {
+            deps.showErrorMessage(message);
+          },
+          async showQuickPick(
+            items: readonly {
+              label: string;
+              description?: string;
+              command: string;
+            }[],
+            options: { placeHolder: string },
+          ) {
+            collected = {
+              placeholder: options.placeHolder,
+              items: items.map((item) => ({
+                label: item.label,
+                description: item.description,
+                command: item.command,
+              })),
+            };
+            return undefined;
+          },
+        })(uri as never);
+        return {
+          name: "currentPageActions",
+          placeholder: collected?.placeholder ?? "",
+          items: collected?.items ?? [],
+        };
+      },
+    );
+  const collectPageDetailActionsQuickPickStateCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.collectPageDetailActionsQuickPickState",
+      async (uri?: unknown) => {
+        let collected:
+          | {
+              placeholder: string;
+              items: readonly {
+                label: string;
+                description?: string;
+                command: string;
+              }[];
+            }
+          | undefined;
+        await createOpenCurrentPageHubCommand({
+          getActiveEditorUri() {
+            return deps.getActiveEditorUri();
+          },
+          isBookmarked(canonicalPath: string) {
+            return deps.isBookmarked(canonicalPath);
+          },
+          async executeCommand() {
+            return;
+          },
+          showErrorMessage(message: string) {
+            deps.showErrorMessage(message);
+          },
+          async showQuickPick(
+            items: readonly {
+              label: string;
+              description?: string;
+              command: string;
+            }[],
+            options: { placeHolder: string },
+          ) {
+            collected = {
+              placeholder: options.placeHolder,
+              items: items.map((item) => ({
+                label: item.label,
+                description: item.description,
+                command: item.command,
+              })),
+            };
+            return undefined;
+          },
+        })(uri as never);
+        return {
+          name: "pageDetailActions",
+          placeholder: collected?.placeholder ?? "",
+          items: collected?.items ?? [],
+        };
+      },
+    );
+  const collectLocalMirrorActionsQuickPickStateCommandDisposable =
+    vscode.commands.registerCommand(
+      "growi.__test.collectLocalMirrorActionsQuickPickState",
+      async (uri?: unknown) => {
+        let collected:
+          | {
+              placeholder: string;
+              items: readonly {
+                label: string;
+                description?: string;
+                command: string;
+              }[];
+            }
+          | undefined;
+        await createShowLocalMirrorActionsCommand({
+          getActiveEditorUri() {
+            return deps.getActiveEditorUri();
+          },
+          async executeCommand() {
+            return;
+          },
+          showErrorMessage(message: string) {
+            deps.showErrorMessage(message);
+          },
+          async showQuickPick(
+            items: readonly {
+              label: string;
+              description?: string;
+              command: string;
+            }[],
+            options: { placeHolder: string },
+          ) {
+            collected = {
+              placeholder: options.placeHolder,
+              items: items.map((item) => ({
+                label: item.label,
+                description: item.description,
+                command: item.command,
+              })),
+            };
+            return undefined;
+          },
+        })(uri as never);
+        return {
+          name: "localMirrorActions",
+          placeholder: collected?.placeholder ?? "",
+          items: collected?.items ?? [],
+        };
+      },
+    );
+  const documentProviderFeature = registerDocumentProviderFeature({
     getBaseUrl() {
       return vscode.workspace.getConfiguration("growi").get<string>("baseUrl");
     },
@@ -2243,347 +2579,66 @@ export function activate(context: vscode.ExtensionContext): void {
     ): Promise<ResolveParsedGrowiReferenceResult> {
       return await pageReferenceResolver.resolveReference(reference);
     },
-  };
-
-  const vscodeModule = vscode as unknown as Record<string, unknown>;
-  const languagesApi = Object.hasOwn(vscodeModule, "languages")
-    ? (vscodeModule.languages as
-        | {
-            createDiagnosticCollection?: (
-              name?: string,
-            ) => vscode.DiagnosticCollection;
-            registerDefinitionProvider?: (
-              selector: vscode.DocumentSelector,
-              provider: vscode.DefinitionProvider,
-            ) => vscode.Disposable;
-            registerDocumentLinkProvider?: (
-              selector: vscode.DocumentSelector,
-              provider: vscode.DocumentLinkProvider,
-            ) => vscode.Disposable;
-            registerDocumentSymbolProvider?: (
-              selector: vscode.DocumentSelector,
-              provider: vscode.DocumentSymbolProvider,
-            ) => vscode.Disposable;
-            registerFoldingRangeProvider?: (
-              selector: vscode.DocumentSelector,
-              provider: vscode.FoldingRangeProvider,
-            ) => vscode.Disposable;
-          }
-        | undefined)
-    : undefined;
-  const workspaceApi = vscode.workspace as unknown as {
-    onDidOpenTextDocument?: (
-      listener: (document: vscode.TextDocument) => unknown,
-    ) => vscode.Disposable;
-    onDidChangeTextDocument?: (
-      listener: (event: { document: vscode.TextDocument }) => unknown,
-    ) => vscode.Disposable;
-    onDidCloseTextDocument?: (
-      listener: (document: vscode.TextDocument) => unknown,
-    ) => vscode.Disposable;
-    textDocuments?: readonly vscode.TextDocument[];
-  };
-  const windowApi = vscode.window as unknown as {
-    activeTextEditor?: vscode.TextEditor;
-    createStatusBarItem?: (
-      id?: string,
-      alignment?: vscode.StatusBarAlignment,
-      priority?: number,
-    ) => vscode.StatusBarItem;
-    onDidChangeActiveTextEditor?: (
-      listener: (editor: vscode.TextEditor | undefined) => unknown,
-    ) => vscode.Disposable;
-  };
-
-  const documentLinkProviderDisposable =
-    languagesApi?.registerDocumentLinkProvider?.(
-      { language: "markdown", scheme: "growi" },
-      createGrowiDocumentLinkProvider(linkNavigationDeps),
-    ) ?? noopDisposable;
-  const definitionProviderDisposable =
-    languagesApi?.registerDefinitionProvider?.(
-      { language: "markdown", scheme: "growi" },
-      createGrowiDefinitionProvider(linkNavigationDeps),
-    ) ?? noopDisposable;
-  const documentSymbolProviderDisposable =
-    languagesApi?.registerDocumentSymbolProvider?.(
-      { language: "markdown", scheme: "growi" },
-      createGrowiDocumentSymbolProvider(),
-    ) ?? noopDisposable;
-  const drawioFoldingRangeProviderDisposable =
-    languagesApi?.registerFoldingRangeProvider?.(
-      { language: "markdown", scheme: "growi" },
-      createDrawioFoldingRangeProvider(),
-    ) ?? noopDisposable;
-  const diagnosticsCollection =
-    languagesApi?.createDiagnosticCollection?.("growi-link-navigation") ??
-    undefined;
-  const drawioAutoFoldedDocumentUris = new Set<string>();
-
-  const updateLinkDiagnostics = (document: vscode.TextDocument) => {
-    if (
-      !diagnosticsCollection ||
-      document.uri.scheme !== "growi" ||
-      document.languageId !== "markdown"
-    ) {
-      return;
-    }
-
-    void collectGrowiLinkDiagnostics(document, linkNavigationDeps).then(
-      (diagnostics) => {
-        diagnosticsCollection.set(document.uri, diagnostics);
+    editSessionRegistry,
+    fileSystemProvider,
+    mirrorRemoteMetadataChecker,
+    pageFreshnessService,
+    prefixTreeDataProvider,
+  });
+  reevaluateActiveGrowiPageStatus =
+    documentProviderFeature.reevaluateActiveGrowiPageStatus;
+  const testSupportCommandsDisposable = combineDisposables([
+    getResolvedRuntimeLogDirectoryCommandDisposable,
+    getMirrorCompareSourceControlStateCommandDisposable,
+    explorerTestSupportCommandsDisposable,
+    collectOpenPageQuickPickStateCommandDisposable,
+    collectBookmarksQuickPickStateCommandDisposable,
+    collectCurrentPageActionsQuickPickStateCommandDisposable,
+    collectPageDetailActionsQuickPickStateCommandDisposable,
+    collectLocalMirrorActionsQuickPickStateCommandDisposable,
+  ]);
+  const activationDisposables = combineDisposables([
+    navigationCommandsDisposable,
+    bookmarkCommandsDisposable,
+    currentPageCommandsDisposable,
+    mirrorCommandsDisposable,
+    prefixCommandsDisposable,
+    loadMoreListingCommandDisposable,
+    explorerCommandsDisposable,
+    runtimeLogCommandsDisposable,
+    testSupportCommandsDisposable,
+    documentProviderFeature.disposable,
+    currentPageDetailWebviewController,
+    outputChannel,
+    {
+      dispose() {
+        setGrowiAssetProxyUrlResolver(undefined);
+        void assetProxy.dispose();
       },
-    );
-  };
-
-  const clearLinkDiagnostics = (document: vscode.TextDocument) => {
-    if (!diagnosticsCollection || document.uri.scheme !== "growi") {
-      return;
-    }
-
-    diagnosticsCollection.delete(document.uri);
-  };
-
-  const updateEditSessionDirty = (document: vscode.TextDocument) => {
-    if (document.uri.scheme !== "growi" || document.languageId !== "markdown") {
-      return;
-    }
-
-    const editSession = editSessionRegistry.getEditSession(document.uri.path);
-    if (!editSession) {
-      return;
-    }
-
-    const dirty = document.getText() !== editSession.baseBody;
-    editSessionRegistry.updateEditSession(document.uri.path, (session) => ({
-      ...session,
-      dirty,
-    }));
-  };
-  const editStatusBarItem =
-    windowApi.createStatusBarItem?.(
-      "growi.editSessionStatus",
-      vscode.StatusBarAlignment.Left,
-      100,
-    ) ?? undefined;
-
-  const isGrowiFilePage = (document: vscode.TextDocument | undefined) =>
-    Boolean(
-      document &&
-        document.uri.scheme === "growi" &&
-        document.uri.path !== "/" &&
-        !document.uri.path.endsWith("/"),
-    );
-  const isGrowiMarkdownPage = (document: vscode.TextDocument | undefined) =>
-    Boolean(isGrowiFilePage(document) && document?.languageId === "markdown");
-
-  const maybeAutoFoldDrawioDocument = async (
-    editor: vscode.TextEditor | undefined = windowApi.activeTextEditor,
-  ) => {
-    if (!editor || !isGrowiMarkdownPage(editor.document)) {
-      return;
-    }
-
-    const documentUri = editor.document.uri.toString();
-    if (drawioAutoFoldedDocumentUris.has(documentUri)) {
-      return;
-    }
-
-    const selectionLines = collectDrawioAutoFoldSelectionLines(editor.document);
-    if (selectionLines.length === 0) {
-      return;
-    }
-
-    drawioAutoFoldedDocumentUris.add(documentUri);
-    try {
-      await vscode.commands.executeCommand("editor.fold", { selectionLines });
-    } catch {
-      drawioAutoFoldedDocumentUris.delete(documentUri);
-    }
-  };
-
-  const updateEditStatusBar = (
-    editor: vscode.TextEditor | undefined = windowApi.activeTextEditor,
-  ) => {
-    if (!editStatusBarItem || !editor) {
-      editStatusBarItem?.hide();
-      return;
-    }
-
-    const { document } = editor;
-    if (document.uri.scheme !== "growi") {
-      editStatusBarItem.hide();
-      return;
-    }
-
-    if (document.uri.path === "/" || document.uri.path.endsWith("/")) {
-      editStatusBarItem.hide();
-      return;
-    }
-
-    const isEditing = Boolean(
-      editSessionRegistry.getEditSession(document.uri.path),
-    );
-    editStatusBarItem.text = isEditing ? "$(unlock) 編集中" : "$(lock) 閲覧中";
-    editStatusBarItem.command = isEditing
-      ? GROWI_COMMANDS.endEdit
-      : GROWI_COMMANDS.startEdit;
-    editStatusBarItem.show();
-  };
-
-  const resolveGrowiPageCanonicalPath = (
-    document: vscode.TextDocument | undefined,
-  ): string | undefined => {
-    if (!document || document.uri.scheme !== "growi") {
-      return undefined;
-    }
-    if (!document.uri.path.endsWith(".md")) {
-      return undefined;
-    }
-
-    const normalized = buildGrowiUriFromInput(document.uri.path);
-    if (!normalized.ok || normalized.value.canonicalPath === "/") {
-      return undefined;
-    }
-
-    return normalized.value.canonicalPath;
-  };
-
-  async function updatePageLiveStatus(
-    document: vscode.TextDocument | undefined,
-  ): Promise<void> {
-    const canonicalPath = resolveGrowiPageCanonicalPath(document);
-    if (!canonicalPath) {
-      return;
-    }
-
-    const liveState =
-      await pageFreshnessService.getOpenedPageLiveState(canonicalPath);
-    if (liveState.decorationStatus === "none") {
-      prefixTreeDataProvider.clearStaleState(canonicalPath);
-    } else {
-      prefixTreeDataProvider.setPageDecorationStatus(
-        canonicalPath,
-        liveState.decorationStatus,
-      );
-    }
-    prefixTreeDataProvider.refresh();
-  }
-
-  async function reevaluateActiveGrowiPageStatus(): Promise<void> {
-    await updatePageLiveStatus(windowApi.activeTextEditor?.document);
-  }
-
-  for (const document of workspaceApi.textDocuments ?? []) {
-    updateLinkDiagnostics(document);
-  }
-  updateEditStatusBar();
-  void maybeAutoFoldDrawioDocument();
-
-  const onDidOpenTextDocumentDisposable =
-    workspaceApi.onDidOpenTextDocument?.((document) => {
-      updateLinkDiagnostics(document);
-      if (
-        windowApi.activeTextEditor?.document.uri.toString() ===
-        document.uri.toString()
-      ) {
-        void maybeAutoFoldDrawioDocument(windowApi.activeTextEditor);
-      }
-    }) ?? noopDisposable;
-  const onDidChangeTextDocumentDisposable =
-    workspaceApi.onDidChangeTextDocument?.((event) => {
-      updateLinkDiagnostics(event.document);
-      updateEditSessionDirty(event.document);
-      void reevaluateActiveGrowiPageStatus();
-    }) ?? noopDisposable;
-  const onDidCloseTextDocumentDisposable =
-    workspaceApi.onDidCloseTextDocument?.((document) => {
-      clearLinkDiagnostics(document);
-      drawioAutoFoldedDocumentUris.delete(document.uri.toString());
-    }) ?? noopDisposable;
-  const onDidChangeActiveTextEditorDisposable =
-    windowApi.onDidChangeActiveTextEditor?.((editor) => {
-      updateEditStatusBar(editor);
-      void maybeAutoFoldDrawioDocument(editor);
-      void updatePageLiveStatus(editor?.document);
-    }) ?? noopDisposable;
-  const onDidChangeEditSessionDisposable = editSessionRegistry.onDidChange(
-    (event) => {
-      updateEditStatusBar();
-      if (event.kind === "set" || event.kind === "close") {
-        fileSystemProvider.fireFileChangedForCanonicalPath(event.canonicalPath);
-        void reevaluateActiveGrowiPageStatus();
-      }
     },
-  );
-
-  const navigationCommandsDisposable: vscode.Disposable = {
+  ]);
+  const registerTextDocumentContentProvider = (
+    vscode.workspace as unknown as {
+      registerTextDocumentContentProvider?: (
+        scheme: string,
+        provider: vscode.TextDocumentContentProvider,
+      ) => vscode.Disposable;
+    }
+  ).registerTextDocumentContentProvider;
+  const revisionContentProviderDisposable =
+    registerTextDocumentContentProvider?.(
+      GROWI_REVISION_SCHEME,
+      revisionContentProvider,
+    ) ?? noopDisposable;
+  const readmeContentProviderDisposable =
+    registerTextDocumentContentProvider?.(
+      vscode.Uri.parse(GROWI_README_URI).scheme,
+      readmeContentProvider,
+    ) ?? noopDisposable;
+  const textDocumentContentProvidersDisposable: vscode.Disposable = {
     dispose() {
-      openPageCommandDisposable.dispose();
-      addCurrentPageBookmarkCommandDisposable.dispose();
-      removeCurrentPageBookmarkCommandDisposable.dispose();
-      showBookmarksCommandDisposable.dispose();
-      createPageCommandDisposable.dispose();
-      deletePageCommandDisposable.dispose();
-      renamePageCommandDisposable.dispose();
-      refreshCurrentPageCommandDisposable.dispose();
-      showCurrentPageActionsCommandDisposable.dispose();
-      showLocalMirrorActionsCommandDisposable.dispose();
-      startEditCommandDisposable.dispose();
-      endEditCommandDisposable.dispose();
-      refreshLocalMirrorCommandDisposable.dispose();
-      createLocalMirrorForCurrentPageCommandDisposable.dispose();
-      createLocalMirrorForCurrentPrefixCommandDisposable.dispose();
-      compareLocalMirrorWithGrowiCommandDisposable.dispose();
-      uploadLocalMirrorToGrowiCommandDisposable.dispose();
-      scmCompareMirrorAgainCommandDisposable.dispose();
-      scmUploadMirrorResourcesCommandDisposable.dispose();
-      scmTakeRemoteMirrorResourcesCommandDisposable.dispose();
-      refreshListingCommandDisposable.dispose();
-      showCurrentPageInfoCommandDisposable.dispose();
-      showCurrentPageAttachmentsCommandDisposable.dispose();
-      showRevisionHistoryDiffCommandDisposable.dispose();
-      addPrefixCommandDisposable.dispose();
-      openPrefixRootPageCommandDisposable.dispose();
-      openDirectoryPageCommandDisposable.dispose();
-      explorerOpenPageItemCommandDisposable.dispose();
-      explorerOpenPageInBrowserCommandDisposable.dispose();
-      explorerCreatePageHereCommandDisposable.dispose();
-      explorerRenamePageCommandDisposable.dispose();
-      explorerDeletePageCommandDisposable.dispose();
-      explorerRefreshCurrentPageCommandDisposable.dispose();
-      explorerShowBacklinksCommandDisposable.dispose();
-      explorerShowCurrentPageInfoCommandDisposable.dispose();
-      explorerShowCurrentPageAttachmentsCommandDisposable.dispose();
-      explorerShowRevisionHistoryDiffCommandDisposable.dispose();
-      explorerCreateLocalMirrorForCurrentPageCommandDisposable.dispose();
-      explorerCreateLocalMirrorForCurrentPrefixCommandDisposable.dispose();
-      explorerCompareLocalMirrorWithGrowiCommandDisposable.dispose();
-      explorerUploadLocalMirrorToGrowiCommandDisposable.dispose();
-      explorerCompareLocalMirrorSubtreeWithGrowiCommandDisposable.dispose();
-      explorerUploadLocalMirrorSubtreeToGrowiCommandDisposable.dispose();
-      clearPrefixesCommandDisposable.dispose();
-      deletePrefixCommandDisposable.dispose();
-      showBacklinksCommandDisposable.dispose();
-      openReadmeCommandDisposable.dispose();
-      clearRuntimeLogsCommandDisposable.dispose();
-      revealRuntimeLogsCommandDisposable.dispose();
-      getResolvedRuntimeLogDirectoryCommandDisposable.dispose();
-      getMirrorCompareSourceControlStateCommandDisposable.dispose();
-      documentLinkProviderDisposable.dispose();
-      definitionProviderDisposable.dispose();
-      documentSymbolProviderDisposable.dispose();
-      drawioFoldingRangeProviderDisposable.dispose();
-      onDidOpenTextDocumentDisposable.dispose();
-      onDidChangeTextDocumentDisposable.dispose();
-      onDidCloseTextDocumentDisposable.dispose();
-      onDidChangeActiveTextEditorDisposable.dispose();
-      onDidChangeEditSessionDisposable.dispose();
-      editStatusBarItem?.dispose();
-      diagnosticsCollection?.dispose();
-      outputChannel.dispose();
-      setGrowiAssetProxyUrlResolver(undefined);
-      void assetProxy.dispose();
+      revisionContentProviderDisposable.dispose();
+      readmeContentProviderDisposable.dispose();
     },
   };
 
@@ -2592,28 +2647,9 @@ export function activate(context: vscode.ExtensionContext): void {
       isCaseSensitive: true,
     }),
     mirrorCompareSourceControl.sourceControl,
-    (
-      vscode.workspace as unknown as {
-        registerTextDocumentContentProvider?: (
-          scheme: string,
-          provider: vscode.TextDocumentContentProvider,
-        ) => vscode.Disposable;
-      }
-    ).registerTextDocumentContentProvider?.(
-      GROWI_REVISION_SCHEME,
-      revisionContentProvider,
-    ) ?? noopDisposable,
-    (
-      vscode.window as unknown as {
-        registerTreeDataProvider?: (
-          viewId: string,
-          treeDataProvider: vscode.TreeDataProvider<unknown>,
-        ) => vscode.Disposable;
-      }
-    ).registerTreeDataProvider?.(
-      GROWI_EXPLORER_VIEW_ID,
-      prefixTreeDataProvider,
-    ) ?? noopDisposable,
+    mirrorLocalChangeMonitor,
+    textDocumentContentProvidersDisposable,
+    explorerFeature.registerTreeView(),
     vscode.commands.registerCommand(
       GROWI_COMMANDS.configureBaseUrl,
       createConfigureBaseUrlCommand(deps),
@@ -2622,8 +2658,8 @@ export function activate(context: vscode.ExtensionContext): void {
       GROWI_COMMANDS.configureApiToken,
       createConfigureApiTokenCommand(deps),
     ),
-    openReadmeCommandDisposable,
-    navigationCommandsDisposable,
+    readmeCommandDisposable,
+    activationDisposables,
   );
 }
 

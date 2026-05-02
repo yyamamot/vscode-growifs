@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +51,15 @@ vi.mock("vscode", () => {
 
       constructor(id: string) {
         this.id = id;
+      }
+    },
+    RelativePattern: class {
+      base: string;
+      pattern: string;
+
+      constructor(base: string, pattern: string) {
+        this.base = base;
+        this.pattern = pattern;
       }
     },
     TreeItemCollapsibleState: {
@@ -120,8 +129,26 @@ vi.mock("vscode", () => {
         hide: vi.fn(),
         dispose: vi.fn(),
       })),
+      createQuickPick: vi.fn(() => ({
+        ignoreFocusOut: false,
+        placeholder: "",
+        items: [],
+        selectedItems: [],
+        onDidAccept: vi.fn(() => ({ dispose: vi.fn() })),
+        onDidHide: vi.fn(() => ({ dispose: vi.fn() })),
+        show: vi.fn(),
+        hide: vi.fn(),
+        dispose: vi.fn(),
+      })),
+      createTreeView: vi.fn(() => ({
+        selection: [],
+        onDidChangeSelection: vi.fn(() => ({ dispose: vi.fn() })),
+        reveal: vi.fn(async () => {}),
+        dispose: vi.fn(),
+      })),
       registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
       onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidChangeWindowState: vi.fn(() => ({ dispose: vi.fn() })),
       showErrorMessage: vi.fn(),
       showInformationMessage: vi.fn(),
       showInputBox: vi.fn(),
@@ -136,9 +163,19 @@ vi.mock("vscode", () => {
         workspaceState.workspaceFolders = value;
       },
       fs: {
+        createDirectory: vi.fn(async () => {}),
+        delete: vi.fn(async () => {}),
         readDirectory: vi.fn(async () => []),
         readFile: vi.fn(async () => new TextEncoder().encode("")),
+        writeFile: vi.fn(async () => {}),
       },
+      createFileSystemWatcher: vi.fn(() => ({
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+        onDidCreate: vi.fn(() => ({ dispose: vi.fn() })),
+        onDidDelete: vi.fn(() => ({ dispose: vi.fn() })),
+        dispose: vi.fn(),
+      })),
+      findFiles: vi.fn(async () => []),
       getConfiguration: vi.fn(() => ({
         get: vi.fn(),
         update: vi.fn(),
@@ -183,11 +220,19 @@ vi.mock("vscode", () => {
 import * as vscode from "vscode";
 import { activate, deactivate, extendMarkdownIt } from "../../src/extension";
 import * as assetProxy from "../../src/vscode/assetProxy";
-import { GROWI_COMMANDS } from "../../src/vscode/commands";
+import {
+  GROWI_COMMANDS,
+  GROWI_README_URI,
+} from "../../src/vscode/commandsConstants";
+import {
+  resolveGrowiLocalMirrorMaxPrefixPages,
+  resolveGrowiPageListingInitialPageSize,
+  resolveGrowiPageListingMaxAutoPagesPerPrefix,
+} from "../../src/vscode/config";
 import {
   GROWI_MIRROR_COMPARE_SOURCE_CONTROL_ID,
   GROWI_MIRROR_COMPARE_SOURCE_CONTROL_LABEL,
-} from "../../src/vscode/mirrorCompareSourceControl";
+} from "../../src/vscode/mirror/mirrorCompareSourceControl";
 import { PREFIX_REGISTRY_STATE_KEY } from "../../src/vscode/prefixRegistry";
 import { GROWI_REVISION_SCHEME } from "../../src/vscode/revisionModel";
 
@@ -212,6 +257,7 @@ function createContext(options?: {
   fetchMock?: ReturnType<typeof vi.fn>;
   prefixes?: string[];
   readFileMock?: ReturnType<typeof vi.fn>;
+  extensionRoot?: string;
 }) {
   const baseUrl =
     options && "baseUrl" in options
@@ -221,6 +267,7 @@ function createContext(options?: {
     options && "apiToken" in options ? options.apiToken : "test-token";
   const fetchMock = options?.fetchMock ?? vi.fn();
   const prefixes = options?.prefixes ?? [];
+  const extensionRoot = options?.extensionRoot ?? process.cwd();
   const workspaceStateStore = {
     byBaseUrl: baseUrl
       ? {
@@ -276,6 +323,12 @@ function createContext(options?: {
 
   return {
     context: {
+      extensionUri: {
+        fsPath: extensionRoot,
+        path: extensionRoot,
+        scheme: "file",
+        toString: () => `file:${extensionRoot}`,
+      },
       secrets: {
         get: vi.fn(async () => apiToken),
         store: vi.fn(),
@@ -300,10 +353,10 @@ function createContext(options?: {
       },
     } as never,
     extensionUri: {
-      fsPath: process.cwd(),
-      path: process.cwd(),
+      fsPath: extensionRoot,
+      path: extensionRoot,
       scheme: "file",
-      toString: () => `file:${process.cwd()}`,
+      toString: () => `file:${extensionRoot}`,
     },
     fetchMock,
   };
@@ -350,6 +403,18 @@ describe("bootstrap extension entrypoint", () => {
     expect(typeof deactivate).toBe("function");
   });
 
+  it("resolves bounded listing and local mirror configuration defaults", () => {
+    expect(resolveGrowiPageListingInitialPageSize(undefined)).toBe(100);
+    expect(resolveGrowiPageListingMaxAutoPagesPerPrefix(undefined)).toBe(300);
+    expect(resolveGrowiLocalMirrorMaxPrefixPages(undefined)).toBe(50);
+  });
+
+  it("clamps invalid and excessive bounded configuration values", () => {
+    expect(resolveGrowiPageListingInitialPageSize(0)).toBe(1);
+    expect(resolveGrowiPageListingMaxAutoPagesPerPrefix(3.8)).toBe(3);
+    expect(resolveGrowiLocalMirrorMaxPrefixPages(999)).toBe(200);
+  });
+
   it("registers growi.startEdit and growi.endEdit on activate", () => {
     const registerCommandMock = vi.mocked(vscode.commands.registerCommand);
     registerCommandMock.mockClear();
@@ -393,6 +458,10 @@ describe("bootstrap extension entrypoint", () => {
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.openCurrentPageHub,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.addCurrentPageBookmark,
       expect.any(Function),
     );
@@ -414,6 +483,10 @@ describe("bootstrap extension entrypoint", () => {
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.scmCompareMirrorAgain,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      GROWI_COMMANDS.scmCheckRemoteMetadata,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -442,6 +515,10 @@ describe("bootstrap extension entrypoint", () => {
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
       GROWI_COMMANDS.openDirectoryPage,
+      expect.any(Function),
+    );
+    expect(registerCommandMock).toHaveBeenCalledWith(
+      "growi.showExplorerItemActions",
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
@@ -489,27 +566,27 @@ describe("bootstrap extension entrypoint", () => {
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.explorerDownloadCurrentPageToLocalFile,
+      GROWI_COMMANDS.explorerCreateLocalMirrorForCurrentPage,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.explorerDownloadCurrentPageSetToLocalBundle,
+      GROWI_COMMANDS.explorerCreateLocalMirrorForCurrentPrefix,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.explorerCompareLocalWorkFileWithCurrentPage,
+      GROWI_COMMANDS.explorerCompareLocalMirrorWithGrowi,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.explorerUploadExportedLocalFileToGrowi,
+      GROWI_COMMANDS.explorerUploadLocalMirrorToGrowi,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.explorerCompareLocalBundleWithGrowi,
+      GROWI_COMMANDS.explorerCompareLocalMirrorSubtreeWithGrowi,
       expect.any(Function),
     );
     expect(registerCommandMock).toHaveBeenCalledWith(
-      GROWI_COMMANDS.explorerUploadLocalBundleToGrowi,
+      GROWI_COMMANDS.explorerUploadLocalMirrorSubtreeToGrowi,
       expect.any(Function),
     );
   });
@@ -577,20 +654,63 @@ describe("bootstrap extension entrypoint", () => {
     expect(statusBarItem?.show).toHaveBeenCalled();
   });
 
-  it("registers the GROWI explorer tree data provider on activate", () => {
-    const registerTreeDataProviderMock = vi.mocked(
-      vscode.window.registerTreeDataProvider,
-    );
+  it("registers the GROWI explorer tree view on activate", () => {
+    const createTreeViewMock = vi.mocked(vscode.window.createTreeView);
     const { context } = createContext({
       prefixes: ["/team/dev", "/team/ops"],
     });
 
     activate(context);
 
-    expect(registerTreeDataProviderMock).toHaveBeenCalledWith(
+    expect(createTreeViewMock).toHaveBeenCalledWith(
       "growi.explorer",
-      expect.any(Object),
+      expect.objectContaining({
+        treeDataProvider: expect.any(Object),
+      }),
     );
+  });
+
+  it("opens tree item actions for the selected GROWI explorer item", async () => {
+    vi.mocked(vscode.window.createTreeView).mockReturnValueOnce({
+      selection: [
+        {
+          uri: { scheme: "growi", path: "/team/dev/spec.md" },
+          contextValue: "growi.page",
+        },
+      ],
+      onDidChangeSelection: vi.fn(() => ({ dispose: vi.fn() })),
+      dispose: vi.fn(),
+    } as never);
+    const { context } = createContext({
+      prefixes: ["/team/dev"],
+    });
+
+    activate(context);
+
+    await resolveRegisteredCommand("growi.showExplorerItemActions")();
+
+    const quickPick = vi
+      .mocked(vscode.window.createQuickPick)
+      .mock.results.at(-1)?.value as {
+      placeholder: string;
+      items: { label: string }[];
+      show: ReturnType<typeof vi.fn>;
+    };
+    expect(quickPick.placeholder).toBe(
+      "Tree item action を選択してください: /team/dev/spec",
+    );
+    expect(quickPick.items.map((item) => item.label)).toEqual([
+      "ブラウザで表示",
+      "ページを更新",
+      "ページ詳細を開く",
+      "ここに作成",
+      "ページ名を変更",
+      "ブックマークに追加",
+      "このページをローカルに同期",
+      "このページの差分を確認",
+      "ページを削除",
+    ]);
+    expect(quickPick.show).toHaveBeenCalled();
   });
 
   it("marks the active growi page stale and clears it on refresh", async () => {
@@ -642,8 +762,8 @@ describe("bootstrap extension entrypoint", () => {
     ).mock.calls[0]?.[1] as unknown as {
       readFile(uri: { path: string }): Promise<Uint8Array>;
     };
-    const treeProvider = vi.mocked(vscode.window.registerTreeDataProvider).mock
-      .calls[0]?.[1] as unknown as {
+    const treeProvider = vi.mocked(vscode.window.createTreeView).mock
+      .calls[0]?.[1].treeDataProvider as unknown as {
       getChildren(element?: {
         kind: "directory" | "page";
         uri: { path: string };
@@ -712,7 +832,7 @@ describe("bootstrap extension entrypoint", () => {
     expect(stalePage).toBeDefined();
     expect(stalePage?.description).toBe("remote newer");
     expect(stalePage?.tooltip).toBe(
-      "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
+      "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
     );
     expect((stalePage?.iconPath as { id?: string } | undefined)?.id).toBe(
       "warning",
@@ -846,8 +966,8 @@ describe("bootstrap extension entrypoint", () => {
     ).mock.calls[0]?.[1] as unknown as {
       readFile(uri: { path: string }): Promise<Uint8Array>;
     };
-    const treeProvider = vi.mocked(vscode.window.registerTreeDataProvider).mock
-      .calls[0]?.[1] as unknown as {
+    const treeProvider = vi.mocked(vscode.window.createTreeView).mock
+      .calls[0]?.[1].treeDataProvider as unknown as {
       getChildren(element?: {
         kind: "directory" | "page";
         uri: { path: string };
@@ -910,9 +1030,9 @@ describe("bootstrap extension entrypoint", () => {
     const conflictPage = (await treeProvider.getChildren(root as never)).find(
       (item) => item.uri.path === "/team/dev/spec.md",
     );
-    expect(conflictPage?.description).toBe("Conflicts");
+    expect(conflictPage?.description).toBe("競合");
     expect(conflictPage?.tooltip).toBe(
-      "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+      "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
     );
     expect((conflictPage?.iconPath as { id?: string } | undefined)?.id).toBe(
       "warning",
@@ -1254,7 +1374,7 @@ describe("bootstrap extension entrypoint", () => {
     expect(updateWorkspaceFoldersMock).not.toHaveBeenCalled();
   });
 
-  it("opens the bundled README via vscode.open", async () => {
+  it("opens the bundled README through a readonly virtual document", async () => {
     const executeCommandMock = vi.mocked(vscode.commands.executeCommand);
     const { context } = createContext();
 
@@ -1265,10 +1385,220 @@ describe("bootstrap extension entrypoint", () => {
     expect(executeCommandMock).toHaveBeenCalledWith(
       "vscode.open",
       expect.objectContaining({
+        scheme: "growi-readme",
+        path: "/README.md",
+      }),
+    );
+    expect(executeCommandMock).not.toHaveBeenCalledWith(
+      "vscode.open",
+      expect.objectContaining({
         scheme: "file",
         path: expect.stringMatching(/\/README\.md$/),
       }),
     );
+    expect(
+      vi.mocked(vscode.workspace.registerTextDocumentContentProvider),
+    ).toHaveBeenCalledWith(
+      GROWI_README_URI.split(":")[0],
+      expect.objectContaining({
+        provideTextDocumentContent: expect.any(Function),
+      }),
+    );
+  });
+
+  it("rejects local mirror writes under the extension root", async () => {
+    const writeFileMock = vi.mocked(vscode.workspace.fs.writeFile);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-001",
+            revision: { _id: "rev-001" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# spec",
+          },
+        }),
+      );
+    const { context } = createContext({ fetchMock });
+    (
+      vscode.workspace as unknown as {
+        workspaceFolders: {
+          uri: {
+            scheme: string;
+            fsPath: string;
+            path: string;
+            toString(): string;
+          };
+          name: string;
+        }[];
+      }
+    ).workspaceFolders = [
+      {
+        uri: {
+          scheme: "file",
+          fsPath: process.cwd(),
+          path: process.cwd(),
+          toString: () => `file:${process.cwd()}`,
+        },
+        name: "extension-root",
+      },
+    ];
+
+    activate(context);
+
+    await resolveRegisteredCommand(
+      GROWI_COMMANDS.createLocalMirrorForCurrentPage,
+    )();
+
+    expect(writeFileMock).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Page を完了できませんでした。",
+    );
+  });
+
+  it("rejects local mirror writes through a symlinked workspace inside the extension root", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "growifs-guard-"));
+    try {
+      const extensionRoot = path.join(tempRoot, "extension");
+      const symlinkedWorkspaceRoot = path.join(tempRoot, "linked-workspace");
+      const symlinkType = process.platform === "win32" ? "junction" : "dir";
+      await mkdir(extensionRoot);
+      await symlink(extensionRoot, symlinkedWorkspaceRoot, symlinkType);
+
+      const writeFileMock = vi.mocked(vscode.workspace.fs.writeFile);
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            page: {
+              _id: "page-001",
+              revision: { _id: "rev-001" },
+              updatedAt: "2026-03-08T09:00:00.000Z",
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            revision: {
+              body: "# spec",
+            },
+          }),
+        );
+      const { context } = createContext({ fetchMock, extensionRoot });
+      (
+        vscode.workspace as unknown as {
+          workspaceFolders: {
+            uri: {
+              scheme: string;
+              fsPath: string;
+              path: string;
+              toString(): string;
+            };
+            name: string;
+          }[];
+        }
+      ).workspaceFolders = [
+        {
+          uri: {
+            scheme: "file",
+            fsPath: symlinkedWorkspaceRoot,
+            path: symlinkedWorkspaceRoot,
+            toString: () => `file:${symlinkedWorkspaceRoot}`,
+          },
+          name: "linked-workspace",
+        },
+      ];
+
+      activate(context);
+
+      await resolveRegisteredCommand(
+        GROWI_COMMANDS.createLocalMirrorForCurrentPage,
+      )();
+
+      expect(writeFileMock).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Page を完了できませんでした。",
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps normal workspace .growi-mirrors writes intact", async () => {
+    const writeFileMock = vi.mocked(vscode.workspace.fs.writeFile);
+    const createDirectoryMock = vi.mocked(vscode.workspace.fs.createDirectory);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          page: {
+            _id: "page-001",
+            revision: { _id: "rev-001" },
+            updatedAt: "2026-03-08T09:00:00.000Z",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          revision: {
+            body: "# spec",
+          },
+        }),
+      );
+    const { context } = createContext({ fetchMock });
+    (
+      vscode.workspace as unknown as {
+        workspaceFolders: {
+          uri: {
+            scheme: string;
+            fsPath: string;
+            path: string;
+            toString(): string;
+          };
+          name: string;
+        }[];
+      }
+    ).workspaceFolders = [
+      {
+        uri: {
+          scheme: "file",
+          fsPath: "/workspace",
+          path: "/workspace",
+          toString: () => "file:/workspace",
+        },
+        name: "workspace",
+      },
+    ];
+
+    activate(context);
+
+    await resolveRegisteredCommand(
+      GROWI_COMMANDS.createLocalMirrorForCurrentPage,
+    )();
+
+    expect(createDirectoryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.stringMatching(
+          /^\/workspace\/\.growi-mirrors\/growi\.example\.com\/team\/dev\/spec/,
+        ),
+      }),
+    );
+    expect(writeFileMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.stringMatching(
+          /^\/workspace\/\.growi-mirrors\/growi\.example\.com\/team\/dev\/spec\//,
+        ),
+      }),
+      expect.any(Uint8Array),
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it("bootstraps startEdit via bearer token API with two fetch steps", async () => {
@@ -1615,12 +1945,12 @@ describe("bootstrap extension entrypoint", () => {
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
         {
-          label: "現在ページのローカルミラーを同期",
+          label: "現在ページをローカルに同期",
           description: "__<page>__.md と .growi-mirror.json を作成または更新",
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "現在ページ配下をローカルミラーに同期",
+          label: "現在ページ配下をローカルに同期",
           description: "prefix mirror を作成または更新",
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
         },
@@ -1645,9 +1975,9 @@ describe("bootstrap extension entrypoint", () => {
     activate(context);
 
     showQuickPickMock.mockResolvedValueOnce({
-      label: "ローカルミラーを反映",
-      description: "changed pages のみ送信",
-      command: GROWI_COMMANDS.uploadLocalMirrorToGrowi,
+      label: "SCMで確認してGROWIに反映",
+      description: "比較結果をSCMで確認してから反映",
+      command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
     } as never);
 
     await resolveRegisteredCommand(GROWI_COMMANDS.showLocalMirrorActions)();
@@ -1655,19 +1985,19 @@ describe("bootstrap extension entrypoint", () => {
     expect(showQuickPickMock).toHaveBeenCalledWith(
       [
         {
-          label: "現在ページのローカルミラーを同期",
+          label: "現在ページをローカルに同期",
           description: "mirror が無ければ作成、あれば更新",
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "ローカルミラーを比較",
+          label: "GROWIとの差分を確認",
           description: "mirror manifest を使用",
           command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
         {
-          label: "ローカルミラーを反映",
-          description: "changed pages のみ送信",
-          command: GROWI_COMMANDS.uploadLocalMirrorToGrowi,
+          label: "SCMで確認してGROWIに反映",
+          description: "比較結果をSCMで確認してから反映",
+          command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
       ],
       {
@@ -1675,7 +2005,7 @@ describe("bootstrap extension entrypoint", () => {
       },
     );
     expect(executeCommandMock).toHaveBeenLastCalledWith(
-      GROWI_COMMANDS.uploadLocalMirrorToGrowi,
+      GROWI_COMMANDS.compareLocalMirrorWithGrowi,
       expect.objectContaining({
         scheme: "growi",
         path: "/team/dev/spec.md",

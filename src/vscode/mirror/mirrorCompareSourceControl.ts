@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { UriLike } from "./commands";
+import type { UriLike } from "../commands";
 import type {
   MirrorCompareScmResource,
   MirrorCompareScmState,
@@ -137,16 +137,13 @@ export function createGrowiMirrorCompareSourceControl(
 
   const changesGroup = sourceControl.createResourceGroup(
     "changes",
-    "Local Changes",
+    "ローカルの変更",
   );
   const remoteChangedGroup = sourceControl.createResourceGroup(
     "remoteChanged",
-    "Remote Changes",
+    "GROWI側の変更",
   );
-  const conflictsGroup = sourceControl.createResourceGroup(
-    "conflicts",
-    "Conflicts",
-  );
+  const conflictsGroup = sourceControl.createResourceGroup("conflicts", "競合");
 
   const getResourcesForGroup = (
     groupId: MirrorCompareScmGroupId,
@@ -297,7 +294,10 @@ export function createGrowiMirrorCompareSourceControl(
         return [...topLevelResources.values()];
       }
 
-      const topLevelGroupResources = new Map<string, MirrorCompareScmResource>();
+      const topLevelGroupResources = new Map<
+        string,
+        MirrorCompareScmResource
+      >();
       collectTopLevelGroupResources(args, topLevelGroupResources);
       if (topLevelGroupResources.size > 0) {
         return [...topLevelGroupResources.values()];

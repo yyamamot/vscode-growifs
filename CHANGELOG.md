@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.7 (2026-05-02)
+
+- `GROWI` Explorer の prefix 展開を lazy page loading にし、大規模 prefix では `さらに読み込む` で追加取得できるようにしました
+- TreeView 右クリック menu と local mirror / SCM の導線・文言を大幅に見直し、操作対象と反映方向を分かりやすくしました
+- local mirror のローカルファイル変更を自動検出し、差分確認を押さなくても SCM に反映されるようにしました
+- Marketplace / VSIX インストール後に拡張ディレクトリを書き換えないよう、`Open README` と local mirror の write / delete 経路を install root 非変更にしました
+
 ## 0.0.6 (2026-04-19)
 
 - `Open Page` で `/` 始まりや `http(s)://` を入力したとき、`URL / path を直接入力` が先頭に出るようになり、候補検索と見分けやすくなりました

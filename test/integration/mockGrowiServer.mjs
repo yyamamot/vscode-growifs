@@ -605,16 +605,17 @@ export async function startMockGrowiServer(options = {}) {
         userRootBookmarks: rootBookmarks
           .map((bookmark) => {
             const page = fixture.pageById.get(bookmark.pageId);
-            if (!page) {
+            const canonicalPath = bookmark.canonicalPath ?? page?.path;
+            if (!canonicalPath) {
               return undefined;
             }
             return {
               _id: `bookmark-${bookmark.pageId}`,
               createdAt: bookmark.addedAt,
               page: {
-                _id: page.pageId,
-                path: page.path,
-                updatedAt: page.updatedAt,
+                _id: page?.pageId ?? bookmark.pageId,
+                path: canonicalPath,
+                updatedAt: page?.updatedAt ?? bookmark.addedAt,
               },
             };
           })
@@ -912,6 +913,10 @@ export async function startMockGrowiServer(options = {}) {
                 .map((bookmark) => ({
                   pageId: bookmark.pageId,
                   addedAt: bookmark.addedAt,
+                  canonicalPath:
+                    typeof bookmark.canonicalPath === "string"
+                      ? normalizeCanonicalPath(bookmark.canonicalPath)
+                      : undefined,
                 }))
             : [];
           requestStats.create = 0;

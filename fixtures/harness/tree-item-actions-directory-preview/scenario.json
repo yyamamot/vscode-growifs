@@ -1,0 +1,81 @@
+{
+  "id": "tree-item-actions-directory-preview",
+  "title": "Tree item actions keyboard preview for directory",
+  "aliases": [
+    "tree-item-actions-directory"
+  ],
+  "uiAreas": [
+    "explorer",
+    "quickPick",
+    "menus"
+  ],
+  "target": "Keyboard-accessible TreeView directory action preview QuickPick screenshot",
+  "fixture": {
+    "pages": [
+      {
+        "pageId": "page-guide",
+        "path": "/team/dev/docs/guide",
+        "body": "# guide page",
+        "updatedAt": "2026-03-08T01:03:00.000Z",
+        "updatedBy": "guide-owner"
+      }
+    ]
+  },
+  "tree": {
+    "maxDepth": 2
+  },
+  "commands": [
+    {
+      "id": "workbench.view.explorer"
+    },
+    {
+      "id": "growi.addPrefix",
+      "args": [
+        "/team/dev"
+      ]
+    },
+    {
+      "id": "growi.showExplorerItemActions",
+      "args": [
+        {
+          "uri": {
+            "scheme": "growi",
+            "path": "/team/dev/docs/"
+          },
+          "contextValue": "growi.directory"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "requiredCommandSequence": [
+      "workbench.view.explorer",
+      "growi.addPrefix",
+      "growi.showExplorerItemActions"
+    ],
+    "requiredMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCreatePageHere",
+        "when": "view == growi.explorer && viewItem == growi.directory"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
+        "when": "view == growi.explorer && (viewItem == growi.directory || viewItem == growi.prefixRoot)"
+      }
+    ],
+    "forbiddenMenuItems": [
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerDeletePage",
+        "when": "view == growi.explorer && viewItem == growi.directory"
+      },
+      {
+        "menu": "view/item/context",
+        "command": "growi.explorerOpenPageInBrowser",
+        "when": "view == growi.explorer && viewItem == growi.directory"
+      }
+    ]
+  }
+}

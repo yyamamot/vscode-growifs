@@ -167,6 +167,38 @@ describe("GrowiPrefixTreeDataProvider", () => {
     ]);
   });
 
+  it("appends load more item for partial directory listings", async () => {
+    const provider = createGrowiPrefixTreeDataProvider({
+      getRegisteredPrefixes: () => ["/team"],
+      isBookmarked: vi.fn(() => false),
+      readDirectory: vi.fn(async () =>
+        createDirectoryEntries([["spec.md", vscode.FileType.File]]),
+      ),
+      getDirectoryListingState: vi.fn(() => ({
+        partial: true,
+        fetchedCount: 100,
+        hasMore: true,
+      })),
+    });
+
+    const [root] = await provider.getChildren();
+    const children = await provider.getChildren(root);
+
+    const loadMore = children.at(-1);
+    expect(loadMore?.kind).toBe("loadMore");
+    expect(loadMore?.label).toBe("さらに読み込む");
+    expect(loadMore?.description).toBe("部分表示: /team・取得済み 100 件");
+    expect(loadMore?.tooltip).toBe(
+      "/team 配下の一部のみ表示しています。取得済み: 100 件。選択するとこの階層の続きを取得します。",
+    );
+    expect(loadMore?.contextValue).toBe("growi.loadMore");
+    expect(loadMore?.command).toEqual({
+      command: "growi.loadMoreListing",
+      title: "Load More GROWI Pages",
+      arguments: [root.uri],
+    });
+  });
+
   it("uses __root__.md as the synthetic page label for the slash prefix", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/"],
@@ -184,7 +216,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
     expect(children[0]?.uri.toString()).toBe("growi:/.md");
   });
 
-  it("assigns vscode.open command to page items", async () => {
+  it("assigns the explorer open wrapper command to page items", async () => {
     const provider = createGrowiPrefixTreeDataProvider({
       getRegisteredPrefixes: () => ["/team"],
       isBookmarked: vi.fn(() => false),
@@ -197,7 +229,7 @@ describe("GrowiPrefixTreeDataProvider", () => {
     const [page] = await provider.getChildren(root);
 
     expect(page.command).toEqual({
-      command: "vscode.open",
+      command: "growi.explorerOpenPageItem",
       title: "Open GROWI Page",
       arguments: [page.uri],
     });
@@ -239,15 +271,15 @@ describe("GrowiPrefixTreeDataProvider", () => {
     );
     expect(stalePage?.description).toBe("remote newer");
     expect(stalePage?.tooltip).toBe(
-      "remote の revision が local base revision より新しい状態です。Refresh Current Page で再読込してください。",
+      "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
     );
-    expect(remoteChangedPage?.description).toBe("Remote Changes");
+    expect(remoteChangedPage?.description).toBe("GROWI側の変更");
     expect(remoteChangedPage?.tooltip).toBe(
-      "remote 側の変更が local mirror に未取り込みです。Compare Local Mirror with GROWI または Take Remote Changes で確認してください。",
+      "GROWI側の変更がローカルに未取り込みです。Compare Local Mirror with GROWI または ローカルに取り込むで確認してください。",
     );
-    expect(conflictPage?.description).toBe("Conflicts");
+    expect(conflictPage?.description).toBe("競合");
     expect(conflictPage?.tooltip).toBe(
-      "local mirror と remote の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+      "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
     );
   });
 
@@ -333,8 +365,8 @@ describe("GrowiPrefixTreeDataProvider", () => {
       (item) => item.uri.path === "/team/dev/remote.md",
     );
 
-    expect(conflictPage?.description).toBe("Conflicts");
-    expect(remotePage?.description).toBe("Remote Changes");
+    expect(conflictPage?.description).toBe("競合");
+    expect(remotePage?.description).toBe("GROWI側の変更");
 
     provider.clearCompareSnapshot();
 
