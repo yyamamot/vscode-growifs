@@ -183,7 +183,7 @@ describe("evaluateUiReviewEvidence", () => {
                   canonicalPath: "/team/dev/spec",
                 },
                 {
-                  label: "URL / path を直接入力",
+                  label: "Enter URL / path directly",
                   action: "directInput",
                 },
               ],
@@ -220,7 +220,7 @@ describe("evaluateUiReviewEvidence", () => {
           requiredQuickPickItemActions: [
             {
               name: "openPage",
-              item: { label: "URL / path を直接入力" },
+              item: { label: "Enter URL / path directly" },
               action: "directInput",
             },
           ],
@@ -333,6 +333,37 @@ describe("evaluateUiReviewEvidence", () => {
         name: "requiredMenuItem",
         pass: false,
         result: "human-review",
+      }),
+    );
+  });
+
+  it("fails when collected UI evidence contains Japanese text", () => {
+    const evaluation = evaluateUiReviewEvidence(
+      {
+        uiState: {
+          treeItems: [],
+          quickPicks: [
+            {
+              name: "pageDetailActions",
+              items: [{ label: "\u6dfb\u4ed8\u4e00\u89a7\u3092\u8868\u793a" }],
+            },
+          ],
+        },
+        commandTrace: [],
+      },
+      {
+        id: "no-japanese-ui",
+        checks: {
+          forbiddenJapaneseText: true,
+        },
+      },
+    );
+
+    expect(evaluation.result).toBe("needs-fix");
+    expect(evaluation.checks).toContainEqual(
+      expect.objectContaining({
+        name: "forbiddenJapaneseText",
+        pass: false,
       }),
     );
   });

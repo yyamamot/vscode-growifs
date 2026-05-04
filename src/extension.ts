@@ -90,6 +90,8 @@ import {
 } from "./vscode/fsProvider";
 import type { GrowiBookmarkEntry } from "./vscode/growiApi";
 import { createGrowiApiAdapter } from "./vscode/growiApi";
+import { localize } from "./vscode/l10n";
+import { registerLlmSkillPackCommands } from "./vscode/llmSkillPackCommands";
 import {
   extendMarkdownPreviewIt,
   setGrowiAssetProxyUrlResolver,
@@ -299,16 +301,25 @@ export function activate(context: vscode.ExtensionContext): void {
         ? "InvalidApiToken"
         : "ApiTokenNotConfigured";
     }
-    if (text.includes("permission denied") || text.includes("アクセス権")) {
+    if (
+      text.includes("permission denied") ||
+      text.includes("\u30a2\u30af\u30bb\u30b9\u6a29")
+    ) {
       return "PermissionDenied";
     }
-    if (text.includes("接続に失敗") || text.includes("failed to connect")) {
+    if (
+      text.includes("\u63a5\u7d9a\u306b\u5931\u6557") ||
+      text.includes("failed to connect")
+    ) {
       return "ConnectionFailed";
     }
-    if (text.includes("未対応") || text.includes("not supported")) {
+    if (text.includes("\u672a\u5bfe\u5fdc") || text.includes("not supported")) {
       return "ApiNotSupported";
     }
-    if (text.includes("見つから") || text.includes("not found")) {
+    if (
+      text.includes("\u898b\u3064\u304b\u3089") ||
+      text.includes("not found")
+    ) {
       return "NotFound";
     }
     if (text.includes("invalid target")) {
@@ -1570,15 +1581,15 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     async showEndEditDiscardConfirmation() {
       const selected = await vscode.window.showInformationMessage(
-        "未保存の変更を破棄して編集を終了しますか？",
+        localize("Discard unsaved changes and end editing?"),
         { modal: true },
-        "保存してReadOnlyに戻る",
-        "破棄して戻る",
+        localize("Save and Return to Read-only"),
+        localize("Discard and Return"),
       );
-      if (selected === "保存してReadOnlyに戻る") {
+      if (selected === localize("Save and Return to Read-only")) {
         return "saveAndReturn" as const;
       }
-      if (selected === "破棄して戻る") {
+      if (selected === localize("Discard and Return")) {
         return "discardAndReturn" as const;
       }
       return "cancel" as const;
@@ -1605,38 +1616,48 @@ export function activate(context: vscode.ExtensionContext): void {
       prefixes: readonly string[],
     ) {
       const selected = await vscode.window.showWarningMessage(
-        `現在の接続先 ${baseUrl} に登録された Prefix を削除しますか?\n${prefixes.join("\n")}`,
+        localize(
+          "Delete prefixes registered for the current connection {0}?\n{1}",
+          baseUrl,
+          prefixes.join("\n"),
+        ),
         { modal: true },
-        "削除する",
+        localize("Delete"),
       );
-      return selected === "削除する";
+      return selected === localize("Delete");
     },
     async showRenameScopeConfirmation(canonicalPath: string) {
       const selected = await vscode.window.showWarningMessage(
-        `${canonicalPath} には配下ページがあります。Rename Page の範囲を選択してください。`,
+        localize(
+          "{0} has child pages. Select the Rename Page scope.",
+          canonicalPath,
+        ),
         { modal: true },
-        "このページのみ",
-        "配下も含める",
+        localize("This Page Only"),
+        localize("Include Children"),
       );
-      if (selected === "このページのみ") {
+      if (selected === localize("This Page Only")) {
         return "single" as const;
       }
-      if (selected === "配下も含める") {
+      if (selected === localize("Include Children")) {
         return "subtree" as const;
       }
       return "cancel" as const;
     },
     async showDeleteScopeConfirmation(canonicalPath: string) {
       const selected = await vscode.window.showWarningMessage(
-        `${canonicalPath} には配下ページがあります。Delete Page の範囲を選択してください。`,
+        localize(
+          "{0} has child pages. Select the Delete Page scope.",
+          canonicalPath,
+        ),
         { modal: true },
-        "このページのみ",
-        "配下も含める",
+        localize("This Page Only"),
+        localize("Include Children"),
       );
-      if (selected === "このページのみ") {
+      if (selected === localize("This Page Only")) {
         return "single" as const;
       }
-      if (selected === "配下も含める") {
+      if (selected === localize("Include Children")) {
         return "subtree" as const;
       }
       return "cancel" as const;
@@ -1647,12 +1668,12 @@ export function activate(context: vscode.ExtensionContext): void {
     ) {
       const selected = await vscode.window.showWarningMessage(
         mode === "subtree"
-          ? `${canonicalPath} と配下ページをゴミ箱に移動しますか？`
-          : `${canonicalPath} をゴミ箱に移動しますか？`,
+          ? localize("Move {0} and child pages to trash?", canonicalPath)
+          : localize("Move {0} to trash?", canonicalPath),
         { modal: true },
-        "ゴミ箱に移動する",
+        localize("Move to Trash"),
       );
-      return selected === "ゴミ箱に移動する";
+      return selected === localize("Move to Trash");
     },
     async executeCommand(command: string, ...args: unknown[]) {
       await vscode.commands.executeCommand(command, ...args);
@@ -1794,7 +1815,7 @@ export function activate(context: vscode.ExtensionContext): void {
         >();
         const removeButton: vscode.QuickInputButton = {
           iconPath: new vscode.ThemeIcon("trash"),
-          tooltip: "ブックマークから削除",
+          tooltip: localize("Remove Bookmark"),
         };
         let settled = false;
         const settle = (
@@ -1902,7 +1923,9 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!proxyUrl && !hasShownAssetProxyUnavailableMessage) {
       hasShownAssetProxyUnavailableMessage = true;
       void vscode.window.showErrorMessage(
-        "GROWI image proxy is unavailable; image preview may be incomplete.",
+        localize(
+          "GROWI image proxy is unavailable; image preview may be incomplete.",
+        ),
       );
     }
 
@@ -2228,6 +2251,11 @@ export function activate(context: vscode.ExtensionContext): void {
       registrar: registerGrowiCommand,
     },
   ]);
+  const llmSkillPackCommandsDisposable = combineDisposables(
+    registerLlmSkillPackCommands({
+      getMirrorCompareScmState: () => mirrorCompareSourceControl.getState(),
+    }),
+  );
   const prefixCommandsDisposable = registerPrefixCommands([
     {
       commandId: GROWI_COMMANDS.refreshListing,
@@ -2409,7 +2437,9 @@ export function activate(context: vscode.ExtensionContext): void {
             canonicalPath: bookmark.canonicalPath,
             pageId: bookmark.pageId,
             status: bookmark.status,
-            buttons: [{ tooltip: "ブックマークから削除", iconPath: "trash" }],
+            buttons: [
+              { tooltip: localize("Remove Bookmark"), iconPath: "trash" },
+            ],
           })),
         };
       },
@@ -2602,6 +2632,7 @@ export function activate(context: vscode.ExtensionContext): void {
     bookmarkCommandsDisposable,
     currentPageCommandsDisposable,
     mirrorCommandsDisposable,
+    llmSkillPackCommandsDisposable,
     prefixCommandsDisposable,
     loadMoreListingCommandDisposable,
     explorerCommandsDisposable,

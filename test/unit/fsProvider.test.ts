@@ -2133,35 +2133,35 @@ describe("GrowiFileSystemProvider", () => {
         currentRevision: { ok: true, revisionId: "rev-002" },
         expectedError: /revision conflict detected/,
         expectedMessage:
-          "保存できません: 他の更新が先に保存されました。ページを再読込して内容を確認してください。",
+          "Cannot save: another update was saved first. Reload the page and check the content.",
       },
       {
         name: "permission denied",
         writePage: async () => ({ ok: false, reason: "PermissionDenied" }),
         expectedError: /permission denied/,
         expectedMessage:
-          "保存できません: 更新権限がありません。GROWI の権限設定を確認してください。",
+          "Cannot save: no update permission. Check GROWI permissions.",
       },
       {
         name: "api not supported",
         writePage: async () => ({ ok: false, reason: "ApiNotSupported" }),
         expectedError: /write page API is not supported/,
         expectedMessage:
-          "保存できません: 更新 API が未対応です。接続先の GROWI 環境を確認してください。",
+          "Cannot save: update API is not supported. Check the target GROWI environment.",
       },
       {
         name: "connection failed",
         writePage: async () => ({ ok: false, reason: "ConnectionFailed" }),
         expectedError: /failed to connect to GROWI/,
         expectedMessage:
-          "保存できません: GROWI への接続に失敗しました。接続先と認証情報を確認してください。",
+          "Cannot save: connection to GROWI failed. Check the target server and credentials.",
       },
       {
         name: "current revision failed",
         currentRevision: { ok: false },
         expectedError: /failed to fetch current revision/,
         expectedMessage:
-          "保存できません: 最新 revision の確認に失敗しました。接続状態を確認して再試行してください。",
+          "Cannot save: failed to check the latest revision. Check the connection and try again.",
       },
       {
         name: "other failure",
@@ -2169,7 +2169,7 @@ describe("GrowiFileSystemProvider", () => {
           throw new Error("unexpected failure");
         },
         expectedError: /unexpected failure/,
-        expectedMessage: "保存できません: 保存処理に失敗しました。",
+        expectedMessage: "Cannot save: save failed.",
       },
     ];
 

@@ -186,10 +186,10 @@ describe("GrowiPrefixTreeDataProvider", () => {
 
     const loadMore = children.at(-1);
     expect(loadMore?.kind).toBe("loadMore");
-    expect(loadMore?.label).toBe("さらに読み込む");
-    expect(loadMore?.description).toBe("部分表示: /team・取得済み 100 件");
+    expect(loadMore?.label).toBe("Load More");
+    expect(loadMore?.description).toBe("Partial: /team / fetched 100");
     expect(loadMore?.tooltip).toBe(
-      "/team 配下の一部のみ表示しています。取得済み: 100 件。選択するとこの階層の続きを取得します。",
+      "Only part of /team is shown. Fetched: 100. Select this item to fetch more in this hierarchy.",
     );
     expect(loadMore?.contextValue).toBe("growi.loadMore");
     expect(loadMore?.command).toEqual({
@@ -271,15 +271,15 @@ describe("GrowiPrefixTreeDataProvider", () => {
     );
     expect(stalePage?.description).toBe("remote newer");
     expect(stalePage?.tooltip).toBe(
-      "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
+      "GROWI has a newer version. Reload with Refresh Current Page.",
     );
-    expect(remoteChangedPage?.description).toBe("GROWI側の変更");
+    expect(remoteChangedPage?.description).toBe("GROWI Changes");
     expect(remoteChangedPage?.tooltip).toBe(
-      "GROWI側の変更がローカルに未取り込みです。Compare Local Mirror with GROWI または ローカルに取り込むで確認してください。",
+      "GROWI changes have not been taken into local files. Check with Compare Local Mirror with GROWI or Take into Local.",
     );
-    expect(conflictPage?.description).toBe("競合");
+    expect(conflictPage?.description).toBe("Conflicts");
     expect(conflictPage?.tooltip).toBe(
-      "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+      "Both local and GROWI have changes. Check diffs with Compare Local Mirror with GROWI.",
     );
   });
 
@@ -365,8 +365,8 @@ describe("GrowiPrefixTreeDataProvider", () => {
       (item) => item.uri.path === "/team/dev/remote.md",
     );
 
-    expect(conflictPage?.description).toBe("競合");
-    expect(remotePage?.description).toBe("GROWI側の変更");
+    expect(conflictPage?.description).toBe("Conflicts");
+    expect(remotePage?.description).toBe("GROWI Changes");
 
     provider.clearCompareSnapshot();
 

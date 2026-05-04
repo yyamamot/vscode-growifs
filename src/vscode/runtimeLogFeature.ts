@@ -2,6 +2,7 @@ import { readdir, rm } from "node:fs/promises";
 import * as vscode from "vscode";
 import { registerRuntimeLogCommands } from "./commandRegistration";
 import { GROWI_COMMANDS } from "./commandsConstants";
+import { localize } from "./l10n";
 import type { RuntimeLogger } from "./runtimeLogger";
 
 export interface RuntimeLogFeatureDependencies {
@@ -19,7 +20,7 @@ export function registerRuntimeLogFeature({
       handler: async () => {
         if (!runtimeLogsEnabled) {
           void vscode.window.showInformationMessage(
-            "Runtime logs are available only in debug-f5 mode.",
+            localize("Runtime logs are available only in debug-f5 mode."),
           );
           return 0;
         }
@@ -28,7 +29,12 @@ export function registerRuntimeLogFeature({
         if (!directory) {
           const status = runtimeLogger.getRuntimeLogStatus();
           void vscode.window.showInformationMessage(
-            `Runtime log path is not resolved yet. mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`,
+            localize(
+              "Runtime log path is not resolved yet. mode={0} configuredPath={1} workspaceResolved={2}",
+              status.mode,
+              status.configuredPath,
+              status.workspaceResolved,
+            ),
           );
           return 0;
         }
@@ -54,7 +60,7 @@ export function registerRuntimeLogFeature({
 
         runtimeLogger.resetRuntimeLogState();
         void vscode.window.showInformationMessage(
-          `Removed ${removed} runtime log file(s).`,
+          localize("Removed {0} runtime log file(s).", removed),
         );
         return removed;
       },
@@ -64,7 +70,7 @@ export function registerRuntimeLogFeature({
       handler: async () => {
         if (!runtimeLogsEnabled) {
           void vscode.window.showInformationMessage(
-            "Runtime logs are available only in debug-f5 mode.",
+            localize("Runtime logs are available only in debug-f5 mode."),
           );
           return;
         }
@@ -73,7 +79,12 @@ export function registerRuntimeLogFeature({
         if (!directory) {
           const status = runtimeLogger.getRuntimeLogStatus();
           void vscode.window.showInformationMessage(
-            `Runtime log path is not resolved yet. mode=${status.mode} configuredPath=${status.configuredPath} workspaceResolved=${status.workspaceResolved}`,
+            localize(
+              "Runtime log path is not resolved yet. mode={0} configuredPath={1} workspaceResolved={2}",
+              status.mode,
+              status.configuredPath,
+              status.workspaceResolved,
+            ),
           );
           return;
         }

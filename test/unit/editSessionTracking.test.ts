@@ -506,16 +506,16 @@ describe("edit session dirty tracking", () => {
         }
       | undefined;
     expect(statusBarItem).toBeDefined();
-    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.text).toBe("$(lock) Read-only");
     expect(statusBarItem?.command).toBe("growi.startEdit");
     expect(statusBarItem?.show).toHaveBeenCalled();
 
     registryMock.setEditSession("/team/dev/page", createSession());
-    expect(statusBarItem?.text).toBe("$(unlock) 編集中");
+    expect(statusBarItem?.text).toBe("$(unlock) Editing");
     expect(statusBarItem?.command).toBe("growi.endEdit");
 
     registryMock.closeEditSession("/team/dev/page");
-    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.text).toBe("$(lock) Read-only");
     expect(statusBarItem?.command).toBe("growi.startEdit");
   });
 
@@ -602,21 +602,21 @@ describe("edit session dirty tracking", () => {
       | undefined;
 
     expect(statusBarItem).toBeDefined();
-    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.text).toBe("$(lock) Read-only");
     expect(statusBarItem?.command).toBe("growi.startEdit");
 
     registryMock.setEditSession("/team/dev/page-1", createSession());
-    expect(statusBarItem?.text).toBe("$(unlock) 編集中");
+    expect(statusBarItem?.text).toBe("$(unlock) Editing");
     expect(statusBarItem?.command).toBe("growi.endEdit");
 
     const page2Editor = { document: page2 };
     setActiveTextEditor(page2Editor);
     listenerStore.onDidChangeActiveTextEditor?.(page2Editor);
-    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.text).toBe("$(lock) Read-only");
     expect(statusBarItem?.command).toBe("growi.startEdit");
 
     registryMock.setEditSession("/team/dev/page-2", createSession());
-    expect(statusBarItem?.text).toBe("$(unlock) 編集中");
+    expect(statusBarItem?.text).toBe("$(unlock) Editing");
     expect(statusBarItem?.command).toBe("growi.endEdit");
 
     const nonGrowiEditor = {
@@ -635,11 +635,11 @@ describe("edit session dirty tracking", () => {
     const page1Editor = { document: page1 };
     setActiveTextEditor(page1Editor);
     listenerStore.onDidChangeActiveTextEditor?.(page1Editor);
-    expect(statusBarItem?.text).toBe("$(unlock) 編集中");
+    expect(statusBarItem?.text).toBe("$(unlock) Editing");
     expect(statusBarItem?.command).toBe("growi.endEdit");
 
     registryMock.closeEditSession("/team/dev/page-1");
-    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.text).toBe("$(lock) Read-only");
     expect(statusBarItem?.command).toBe("growi.startEdit");
   });
 

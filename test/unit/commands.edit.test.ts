@@ -45,7 +45,7 @@ describe("createRefreshCurrentPageCommand", () => {
     expect(deps.invalidateReadFileCache).not.toHaveBeenCalled();
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Refresh Current Page は growi: ページでのみ実行できます。",
+      "Refresh Current Page can only run on growi: pages.",
     );
   });
 
@@ -67,24 +67,24 @@ describe("createRefreshCurrentPageCommand", () => {
     expect(deps.invalidateReadFileCache).not.toHaveBeenCalled();
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "未保存の変更があるため Refresh Current Page を実行できません。先に保存または End Edit を実行してください。",
+      "Cannot run Refresh Current Page because there are unsaved changes. Save or run End Edit first.",
     );
   });
 
   it.each([
     [
       new Error("FileNotFound"),
-      "対象ページが見つからないため Refresh Current Page を実行できませんでした。",
+      "Cannot run Refresh Current Page because the target page was not found.",
     ],
     [
       new Error("read page API is not supported"),
-      "本文取得 API が未対応のため Refresh Current Page を実行できませんでした。",
+      "Cannot run Refresh Current Page because the body fetch API is not supported.",
     ],
     [
       new Error("failed to connect to GROWI"),
-      "GROWI への接続に失敗したため Refresh Current Page を実行できませんでした。",
+      "Cannot run Refresh Current Page because the connection to GROWI failed.",
     ],
-    [new Error("unexpected"), "Refresh Current Page の再読込に失敗しました。"],
+    [new Error("unexpected"), "Refresh Current Page reload failed."],
   ])("maps refresh current page failure to message", async (error, message) => {
     const deps = createDeps();
     deps.openUri.mockRejectedValue(error);
@@ -152,46 +152,46 @@ describe("createStartEditCommand", () => {
     expect(deps.showErrorMessage).toHaveBeenCalledTimes(3);
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       1,
-      "Start Edit は growi: ページでのみ実行できます。",
+      "Start Edit can only run on growi: pages.",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       2,
-      "Start Edit は growi: ページでのみ実行できます。",
+      "Start Edit can only run on growi: pages.",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       3,
-      "Start Edit は growi: ページでのみ実行できます。",
+      "Start Edit can only run on growi: pages.",
     );
   });
 
   it.each([
     [
       "BaseUrlNotConfigured",
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     ],
     [
       "ApiTokenNotConfigured",
-      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+      "GROWI API token is not configured. Run Configure API Token first.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効です。Configure API Token を確認してください。",
+      "GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+      "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "編集開始 API が未対応のため Start Edit を実行できません。",
+      "Cannot run Start Edit because the edit start API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Start Edit を実行できませんでした。",
+      "Cannot run Start Edit because the connection to GROWI failed.",
     ],
     [
       "NotFound",
-      "対象ページが見つからないため Start Edit を実行できませんでした。",
+      "Cannot run Start Edit because the target page was not found.",
     ],
   ] as const)("maps %s bootstrap failure to Japanese message", async (reason, message) => {
     const deps = createDeps();
@@ -300,15 +300,15 @@ describe("createEndEditCommand", () => {
     expect(deps.showErrorMessage).toHaveBeenCalledTimes(3);
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       1,
-      "End Edit は growi: ページでのみ実行できます。",
+      "End Edit can only run on growi: pages.",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       2,
-      "End Edit は growi: ページでのみ実行できます。",
+      "End Edit can only run on growi: pages.",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       3,
-      "End Edit は growi: ページでのみ実行できます。",
+      "End Edit can only run on growi: pages.",
     );
   });
 });
@@ -363,20 +363,20 @@ describe("createRefreshListingCommand", () => {
     expect(deps.readDirectory).not.toHaveBeenCalled();
     expect(deps.refreshPrefixTree).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Refresh Listing は growi: ディレクトリでのみ実行できます。",
+      "Refresh Listing can only run on growi: directories.",
     );
   });
 
   it.each([
     [
       new Error("list pages API is not supported"),
-      "一覧取得 API が未対応のため Refresh Listing を実行できませんでした。",
+      "Cannot run Refresh Listing because the list API is not supported.",
     ],
     [
       new Error("failed to connect to GROWI"),
-      "GROWI への接続に失敗したため Refresh Listing を実行できませんでした。",
+      "Cannot run Refresh Listing because the connection to GROWI failed.",
     ],
-    [new Error("unexpected"), "Refresh Listing の再読込に失敗しました。"],
+    [new Error("unexpected"), "Refresh Listing reload failed."],
   ])("maps refresh listing failure to message", async (error, message) => {
     const deps = createDeps();
     deps.readDirectory.mockRejectedValue(error);

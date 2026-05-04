@@ -319,156 +319,156 @@
         "contextValue": "growi.pageBookmarked"
       },
       {
-        "label": "さらに読み込む",
+        "label": "Load More",
         "kind": "loadMore",
         "canonicalPath": "/team/dev/many",
         "contextValue": "growi.loadMore",
-        "description": "部分表示: /team/dev/many・取得済み 100 件"
+        "description": "Partial: /team/dev/many / fetched 100"
       }
     ],
     "requiredQuickPickItems": [
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "ブラウザで表示"
+          "label": "Open in Browser"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "ページを更新"
+          "label": "Refresh Page"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "ページ詳細を開く"
+          "label": "Open Page Details"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "ブックマークから削除"
+          "label": "Remove Bookmark"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "このページをローカルに同期"
+          "label": "Sync This Page Locally"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "このページの差分を確認"
+          "label": "Compare This Page with GROWI"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "ページを削除"
+          "label": "Delete Page"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "ブラウザで表示"
+          "label": "Open in Browser"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "ページ詳細を開く"
+          "label": "Open Page Details"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "ここに作成"
+          "label": "Create Here"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "ページ名を変更"
+          "label": "Rename Page"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "ブックマークに追加"
+          "label": "Add Bookmark"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "このページをローカルに同期"
+          "label": "Sync This Page Locally"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "配下ページをローカルに同期"
+          "label": "Sync Subtree Locally"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "このページの差分を確認"
+          "label": "Compare This Page with GROWI"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "ページを削除"
+          "label": "Delete Page"
         }
       },
       {
         "name": "treeItemActions.directory",
         "item": {
-          "label": "ここに作成"
+          "label": "Create Here"
         }
       },
       {
         "name": "treeItemActions.directory",
         "item": {
-          "label": "配下ページの差分を確認"
+          "label": "Compare Subtree with GROWI"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "Prefix ページを開く"
+          "label": "Open Prefix Page"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "ブラウザで表示"
+          "label": "Open in Browser"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "ここに作成"
+          "label": "Create Here"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "配下ページをローカルに同期"
+          "label": "Sync Subtree Locally"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "配下ページの差分を確認"
+          "label": "Compare Subtree with GROWI"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "プレフィックスを削除"
+          "label": "Delete Prefix"
         }
       }
     ],
@@ -476,67 +476,67 @@
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "Prefix ページを開く"
+          "label": "Open Prefix Page"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "配下ページをローカルに同期"
+          "label": "Sync Subtree Locally"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "被リンクを表示"
+          "label": "Show Backlinks"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "添付一覧を表示"
+          "label": "Show Attachments"
         }
       },
       {
         "name": "treeItemActions.pageBookmarked",
         "item": {
-          "label": "履歴差分を表示"
+          "label": "Show Revision Diff"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "被リンクを表示"
+          "label": "Show Backlinks"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "添付一覧を表示"
+          "label": "Show Attachments"
         }
       },
       {
         "name": "treeItemActions.directoryPage",
         "item": {
-          "label": "履歴差分を表示"
+          "label": "Show Revision Diff"
         }
       },
       {
         "name": "treeItemActions.directory",
         "item": {
-          "label": "ブラウザで表示"
+          "label": "Open in Browser"
         }
       },
       {
         "name": "treeItemActions.directory",
         "item": {
-          "label": "ページを削除"
+          "label": "Delete Page"
         }
       },
       {
         "name": "treeItemActions.prefixRoot",
         "item": {
-          "label": "ページを削除"
+          "label": "Delete Page"
         }
       }
     ],
@@ -760,6 +760,7 @@
       "workbench.view.explorer",
       "growi.addPrefix",
       "growi.showExplorerItemActions"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { normalizeCanonicalPath } from "../core/uri";
+import { localize } from "./l10n";
 
 export type GrowiAccessFailureReason =
   | "BaseUrlNotConfigured"
@@ -186,14 +187,17 @@ type FailureKind =
   | "RenameNotSupported";
 
 const FAILURE_MESSAGES: Record<FailureKind, string> = {
-  ReadFileUnimplemented: "readFile is not implemented",
-  ReadDirectoryUnimplemented: "readDirectory is not implemented",
-  WriteFileNotSupported: "writeFile requires an edit session",
-  WriteFileUnimplemented: "writeFile save path is not implemented yet",
-  CreateDirectoryNotSupported:
+  ReadFileUnimplemented: localize("readFile is not implemented"),
+  ReadDirectoryUnimplemented: localize("readDirectory is not implemented"),
+  WriteFileNotSupported: localize("writeFile requires an edit session"),
+  WriteFileUnimplemented: localize(
+    "writeFile save path is not implemented yet",
+  ),
+  CreateDirectoryNotSupported: localize(
     "createDirectory is not supported in initial version",
-  DeleteNotSupported: "delete is not supported in initial version",
-  RenameNotSupported: "rename is not supported in initial version",
+  ),
+  DeleteNotSupported: localize("delete is not supported in initial version"),
+  RenameNotSupported: localize("rename is not supported in initial version"),
 };
 
 function createUnavailableError(kind: FailureKind): vscode.FileSystemError {
@@ -259,13 +263,13 @@ function createWriteWriterError(
 
 function createCurrentRevisionError(): vscode.FileSystemError {
   return vscode.FileSystemError.Unavailable(
-    "growi: failed to fetch current revision",
+    localize("growi: failed to fetch current revision"),
   );
 }
 
 function createConflictError(): vscode.FileSystemError {
   return vscode.FileSystemError.Unavailable(
-    "growi: revision conflict detected",
+    localize("growi: revision conflict detected"),
   );
 }
 
@@ -281,23 +285,31 @@ type SaveFailureKind =
   | "Other";
 
 const SAVE_FAILURE_MESSAGES: Record<SaveFailureKind, string> = {
-  Conflict:
-    "保存できません: 他の更新が先に保存されました。ページを再読込して内容を確認してください。",
-  BaseUrlNotConfigured:
-    "保存できません: GROWI base URL が未設定です。Configure Base URL を実行してください。",
-  ApiTokenNotConfigured:
-    "保存できません: GROWI API token が未設定です。Configure API Token を実行してください。",
-  InvalidApiToken:
-    "保存できません: GROWI API token が無効です。Configure API Token を確認してください。",
-  PermissionDenied:
-    "保存できません: 更新権限がありません。GROWI の権限設定を確認してください。",
-  ApiNotSupported:
-    "保存できません: 更新 API が未対応です。接続先の GROWI 環境を確認してください。",
-  ConnectionFailed:
-    "保存できません: GROWI への接続に失敗しました。接続先と認証情報を確認してください。",
-  CurrentRevisionFailed:
-    "保存できません: 最新 revision の確認に失敗しました。接続状態を確認して再試行してください。",
-  Other: "保存できません: 保存処理に失敗しました。",
+  Conflict: localize(
+    "Cannot save: another update was saved first. Reload the page and check the content.",
+  ),
+  BaseUrlNotConfigured: localize(
+    "Cannot save: GROWI base URL is not configured. Run Configure Base URL.",
+  ),
+  ApiTokenNotConfigured: localize(
+    "Cannot save: GROWI API token is not configured. Run Configure API Token.",
+  ),
+  InvalidApiToken: localize(
+    "Cannot save: GROWI API token is invalid. Check Configure API Token.",
+  ),
+  PermissionDenied: localize(
+    "Cannot save: no update permission. Check GROWI permissions.",
+  ),
+  ApiNotSupported: localize(
+    "Cannot save: update API is not supported. Check the target GROWI environment.",
+  ),
+  ConnectionFailed: localize(
+    "Cannot save: connection to GROWI failed. Check the target server and credentials.",
+  ),
+  CurrentRevisionFailed: localize(
+    "Cannot save: failed to check the latest revision. Check the connection and try again.",
+  ),
+  Other: localize("Cannot save: save failed."),
 };
 
 export class GrowiFileSystemProvider implements vscode.FileSystemProvider {

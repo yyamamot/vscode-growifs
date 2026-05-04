@@ -1,10 +1,16 @@
 # vscode-growifs
 
-`vscode-growifs` は、GROWI のページを VS Code から閲覧、編集、探索するための Desktop 向け VS Code 拡張です。
+[日本語](https://github.com/yyamamot/vscode-growifs/blob/main/README.ja.md) | English
 
-GROWI を OS のファイルシステムとして mount するのではなく、`growi:` スキームの仮想 Markdown ファイルとして扱います。ページツリーは VS Code のワークスペースへ追加せず、Explorer 配下の専用 `GROWI` view と Command Palette から操作します。
+## Overview
 
-加えて、ローカルミラー機能により GROWI ページを Markdown ファイルとして書き出せます。Codex などの LLM がローカル Markdown を直接参照しやすくなり、VS Code の diff や Source Control view と組み合わせて、GROWI 側との差分確認や反映まで進められます。
+`vscode-growifs` is a desktop VS Code extension for browsing, editing, and exploring [GROWI](https://growi.org/) pages from VS Code.
+
+It does not mount GROWI as an operating system filesystem. Instead, it exposes pages as virtual Markdown documents through the `growi:` scheme. The page tree is not added to the VS Code workspace; use the dedicated `GROWI` view under Explorer and the Command Palette.
+
+When needed, you can also use a local mirror to export GROWI pages as local Markdown files. This makes GROWI content easier to inspect with local tools or an LLM, while keeping diff review and apply operations in VS Code Source Control.
+
+The experimental LLM Assist Kit prepares Skills and prompts for local mirror editing and SCM diff review. It scopes which files an LLM may read or edit and keeps the final GROWI apply decision in Source Control View.
 
 <!-- screenshot: overview-explorer / GROWI Explorer overview with hybrid directory pages / dark theme -->
 <p align="center">
@@ -13,238 +19,269 @@ GROWI を OS のファイルシステムとして mount するのではなく、
   </a>
 </p>
 
-## Features
+## What You Can Do
 
-| 機能 | 内容 |
-| --- | --- |
-| ページ閲覧 | GROWI ページを VS Code 上の Markdown として開きます |
-| Explorer 探索 | 登録した prefix 配下を専用 `GROWI` view で辿れます |
-| ページ作成 | GROWI の階層テンプレートがあれば本文へ適用して新規ページを作成します |
-| 編集 | `Start Edit` / `End Edit` または status bar から編集状態を切り替えます |
-| ページ名変更 / ページ削除 | 現在ページや Explorer item からページ名変更、ゴミ箱への削除を実行できます |
-| 添付参照 | 現在ページの添付一覧を Quick Pick で表示し、GROWI Web で開けます |
-| 履歴差分 | 現在本文と過去 revision の diff を開けます |
-| 被リンク表示 | 追加済み prefix 範囲で現在ページへの参照元を探します |
-| ローカルミラー | GROWI ページをローカル Markdown として同期し、LLM から参照しやすくしながら差分確認と反映を行えます |
+- Open GROWI pages as Markdown in VS Code
+- Browse registered prefixes in the dedicated `GROWI` view under Explorer
+- Create pages with GROWI hierarchy templates when available
+- Switch page edit state with `Start Edit` / `End Edit` or the status bar
+- Rename and delete pages from the current page or Explorer items
+- Inspect attachments from the current page and open them in GROWI Web
+- Open diffs between the current body and past revisions
+- Find backlinks inside registered prefix ranges
+- Use a local mirror for local Markdown editing, Source Control diff review, and GROWI apply
+- Use experimental LLM Assist Kit to prepare Skills and prompts for local mirror editing and SCM diff review
 
 ## Installation
 
-VS Code Marketplace からインストールする場合:
+To install from the VS Code Marketplace:
 
-1. Extensions ビューで `growifs` を検索する
-2. `yyamamot.growifs` を選ぶ
-3. `Install` をクリックする
-4. 接続先の GROWI base URL と API token を設定する
+1. Open the Extensions view
+2. Search for `growifs`
+3. Select `yyamamot.growifs`
+4. Press `Install`
+5. Configure the GROWI base URL and API token
 
 ## Quick Start
 
-### 1. Base URL を設定する
+### 1. Configure Base URL
 
-Command Palette で `GROWI: Configure Base URL` を実行し、接続先の GROWI URL を入力します。
+Run `GROWI: Configure Base URL` from the Command Palette and enter the target GROWI URL.
 
-| 項目 | 内容 |
+| Item | Details |
 | --- | --- |
-| 入力例 | `https://growi.example.com/`, `http://localhost:3000/` |
-| 注意点 | `http://` または `https://` が必要です |
+| Examples | `https://growi.example.com/`, `http://localhost:3000/` |
+| Requirement | The URL must start with `http://` or `https://` |
 
-### 2. API token を設定する
+### 2. Configure API Token
 
-Command Palette で `GROWI: Configure API Token` を実行し、GROWI の API token を入力します。token は VS Code の Secret Storage に保存され、設定ファイルには書き込まれません。
+Run `GROWI: Configure API Token` from the Command Palette and enter a GROWI API token. The token is stored in VS Code Secret Storage and is not written to settings.
 
-### 3. ページを開く
+### 3. Open a Page
 
-まずは `GROWI: Open Page` を実行します。次の形式を受け付けます。
+Run `GROWI: Open Page`. It accepts:
 
-- ページパス: `/team/dev` のような GROWI 内のページ位置
-- GROWI のページ URL: ブラウザで開いているページの URL
-- GROWI の固定リンク URL: ページ ID を含む共有用 URL
+- Page paths such as `/team/dev`
+- GROWI page URLs copied from the browser
+- GROWI permalink URLs that include a page ID
 
-`Open Page` は登録済み prefix 配下の page path / basename 候補も表示します。接続先全体を対象にした全文検索は行いません。
+`Open Page` also shows page path and basename candidates under registered prefixes. It does not perform full-text search across the entire GROWI instance.
 
-### 4. prefix を追加して Explorer で辿る
+### 4. Add Prefixes and Browse in Explorer
 
-`GROWI: Add Prefix` を実行し、探索したい prefix を登録します。
+Run `GROWI: Add Prefix` to register the prefix you want to browse.
 
-| 項目 | 内容 |
+| Item | Details |
 | --- | --- |
-| 入力例 | `/team`, `/team/dev`, `https://growi.example.com/67ca...` |
-| 表示先 | Explorer 配下の `GROWI` view |
+| Examples | `/team`, `/team/dev`, `https://growi.example.com/67ca...` |
+| Location | Dedicated `GROWI` view under Explorer |
 
-Explorer の `GROWI` view では、view title actions から `Open Page`、`Add Prefix`、`Refresh Listing`、`Show Bookmarks`、`Clear Prefixes` を実行できます。右クリックからは `ページを開く`、`ブラウザで表示`、`ここに作成`、`ページ名を変更`、`ページを削除`、`被リンクを表示`、ローカルミラー操作などを実行できます。
+The `GROWI` view title actions provide `Open Page`, `Add Prefix`, `Refresh Listing`, `Show Bookmarks`, and `Clear Prefixes`. Context menus provide page open, browser open, create here, rename, delete, backlinks, and local mirror actions.
 
 <!-- screenshot: explorer-prefix-root / Prefix root and context actions in growi explorer / dark theme -->
 <p align="center">
   <a href="#commands">
-    <img src="assets/readme2.png" alt="Prefix root synthetic page and Japanese context actions" width="520">
+    <img src="assets/readme2.png" alt="Prefix root synthetic page and context actions" width="520">
   </a>
 </p>
 
-GROWI では directory と同じ名前のページが存在できます。この拡張では directory 行とは別に、同名の実ページを `__<name>__.md` として表示します。
+GROWI can have a page with the same name as a directory. This extension shows that real page separately as `__<name>__.md` next to the directory row.
 
-### 5. 編集する
+### 5. Edit a Page
 
-既存ページを編集するときは、対象ページを開いてから `GROWI: Start Edit` を実行します。status bar の `$(lock) 閲覧中` からも切り替えできます。
+Open the target page and run `GROWI: Start Edit`. You can also switch from the `$(lock) Read-only` status bar item.
 
-編集中は status bar が `$(unlock) 編集中` になります。保存後は `GROWI: End Edit` で閲覧状態へ戻します。
+During editing, the status bar changes to `$(unlock) Editing`. After saving, run `GROWI: End Edit` to return to read-only mode.
 
-保存できるのは編集状態のページだけです。通常の閲覧状態では誤って保存しないように保護されます。
+Only pages in edit mode can be saved. Read-only pages are protected from accidental saves.
 
 <!-- screenshot: edit-mode / Status bar edit mode toggle and protected save state / dark theme -->
 <p align="center">
   <a href="#commands">
-    <img src="assets/readme-edit-mode.png" alt="編集状態の status bar と保存保護" width="960">
+    <img src="assets/readme-edit-mode.png" alt="Edit mode status bar and save protection" width="960">
   </a>
 </p>
 
-## ローカルミラーと Source Control
+## Local Mirror and Source Control
 
-ローカルミラーは、GROWI ページをローカル Markdown として扱いたいときの補助機能です。通常の閲覧や編集に必須ではありません。
+Local mirror is optional. Use it when you want to handle GROWI pages as local Markdown files.
 
-基本の流れは次の 3 段階です。
+The basic flow has three steps:
 
-1. `このページをローカルに同期` または `配下ページをローカルに同期` でローカルへ同期する
-2. `このページの差分を確認` または `配下ページの差分を確認` で差分を確認する
-3. Source Control view の `GROWIに反映` または `ローカルに取り込む` で必要なページだけ反映する
+1. Run `Sync This Page Locally` or `Sync Child Pages Locally`
+2. Run `Check This Page Diff` or `Check Child Page Diffs`
+3. Use `Apply to GROWI` or `Take Remote Changes` from Source Control View for selected resources
 
 <!-- screenshot: local-mirror / Local mirror layout and compare workflow / dark theme -->
 <p align="center">
-  <a href="#ローカルミラーと-source-control">
+  <a href="#local-mirror-and-source-control">
     <img src="assets/readme3.png" alt="Local mirror layout with __sample__.md and local files" width="260">
   </a>
 </p>
 
 <p align="center">
-  <a href="#ローカルミラーと-source-control">
-    <img src="assets/readme4.png" alt="ローカルミラーの差分確認 workflow" width="960">
+  <a href="#local-mirror-and-source-control">
+    <img src="assets/readme4.png" alt="Local mirror diff workflow" width="960">
   </a>
 </p>
 
-ミラーは workspace 内の `.growi-mirrors/<instanceKey>/<rootCanonicalPath>/` 配下に作成されます。`instanceKey` は `host + port + basePath` を filesystem-safe に変換した識別子で、`http://localhost:3000/` は `localhost_3000` のように保存されます。通常の Markdown ファイルとして開けるため、VS Code の検索、diff、編集機能をそのまま使えます。
+Mirrors are created under `.growi-mirrors/<instanceKey>/<rootCanonicalPath>/` inside the workspace. `instanceKey` is a filesystem-safe identifier derived from `host + port + basePath`; for example, `http://localhost:3000/` becomes `localhost_3000`.
 
-配下ページをまとめて同期する場合の既定上限は 50 pages です。VS Code 設定 `growi.localMirror.maxPrefixPages` で変更できますが、200 pages を超える値は 200 に丸められます。巨大な subtree を同期したい場合は、prefix を分ける運用を推奨します。
+The default subtree sync limit is 50 pages. You can change it with `growi.localMirror.maxPrefixPages`; values above 200 are clamped to 200. For large subtrees, split the target into smaller prefixes.
 
-Source Control view には、最後に成功した compare 結果が `GROWI Mirror Compare` として表示されます。
+Source Control View shows the latest successful compare result as `GROWI Mirror Compare`.
 
-| 表示 | 意味 |
+| Group | Meaning |
 | --- | --- |
-| `ローカルの変更` | ローカルミラー側に未反映の変更があります |
-| `GROWI側の変更` | GROWI 側の revision が mirror 作成時から進んでいます |
-| `競合` | ローカルミラーと GROWI 側の両方に変更があります |
+| `Local Changes` | The local mirror has changes that are not applied to GROWI |
+| `GROWI Changes` | The GROWI revision has advanced since the mirror was created |
+| `Conflicts` | Both the local mirror and GROWI have changes |
 
-ローカルミラー配下の Markdown を保存すると、Source Control view の `ローカルの変更` に反映されます。GROWI 側の差分や競合の詳細は、`このページの差分を確認`、`配下ページの差分を確認`、または Source Control view の `再比較` で確認してください。
+Saving Markdown under the local mirror updates `Local Changes` in Source Control View. To confirm GROWI-side changes or conflicts, run `Check This Page Diff`, `Check Child Page Diffs`, or `Compare Again` from Source Control View.
+
+### LLM Assist Kit (Experimental)
+
+LLM Assist Kit prepares prompt and diff review context files for giving local mirror work to an LLM. The generated artifacts state which files may be read, which Markdown files may be edited, and which GROWI / SCM operations must not be run.
+
+The main flow is:
+
+1. Run `GROWI: Install LLM Local Mirror Skills` to generate `.agents/skills/growi-local-mirror-prompt/` and `.agents/skills/growi-local-mirror-diff/`
+2. Sync the local mirror, then run `GROWI: Prepare LLM Local Mirror Prompt` and give `.growi-agent/prompt/current/` to the LLM
+3. After compare, run `GROWI: Prepare LLM Local Mirror Diff` from Source Control View and give `.growi-agent/diff/current/` to the LLM for diff review
+
+In Codex, you may use `$growi-local-mirror-prompt` or `$growi-local-mirror-diff` when useful. For LLMs with different Skill syntax, explicitly provide the generated files instead.
+
+| Purpose | Files to provide to the LLM |
+| --- | --- |
+| Local mirror editing | `.agents/skills/growi-local-mirror-prompt/SKILL.md`, `.agents/skills/growi-local-mirror-prompt/agents/generic.md`, `.growi-agent/prompt/current/prompt.md` |
+| SCM diff review | `.agents/skills/growi-local-mirror-diff/SKILL.md`, `.agents/skills/growi-local-mirror-diff/agents/generic.md`, `.growi-agent/diff/current/prompt.md` |
+
+| Generated path | Purpose |
+| --- | --- |
+| `.agents/skills/growi-local-mirror-prompt/` | Skill for editing local mirror Markdown |
+| `.agents/skills/growi-local-mirror-diff/` | Skill for reading SCM diff evidence |
+| `.growi-agent/prompt/current/` | Prompt and editable file list for an editing request |
+| `.growi-agent/diff/current/` | Prompt and patches for SCM diff review |
+
+`.growi-agent/` is generated output. The extension may ask whether to add `.growi-mirrors/` and `.growi-agent/` to `.gitignore`, but it does not ignore `.agents/skills/**`.
+
+LLM Assist Kit does not call GROWI APIs, run SCM commands, or apply changes to GROWI. The final review and apply operation stays in Source Control View.
 
 ## Commands
 
-主な操作は Explorer の `GROWI` TreeView で対象ページや directory を右クリックして実行できます。同じ操作の多くは Command Palette からも実行できます。以下は Command Palette で使える主なコマンド一覧です。
+Most operations are available from the `GROWI` TreeView context menu. Many are also available from the Command Palette.
 
-### 接続と探索
+### Connection and Browse
 
-| コマンド | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `GROWI: Configure Base URL` | 接続先 GROWI URL を設定する |
-| `GROWI: Configure API Token` | API token を Secret Storage に保存する |
-| `GROWI: Open README` | この README を開く |
-| `GROWI: Open Page` | path / URL / permalink からページを開く |
-| `GROWI: Add Prefix` | Explorer の `GROWI` view に探索 prefix を追加する |
-| `GROWI: Refresh Listing` | prefix 配下の一覧を更新する |
-| `GROWI: Clear Prefixes` | 現在接続先の prefix 登録を削除する |
-| `GROWI: Show Bookmarks` | GROWI root bookmarks を再訪候補として表示する |
+| `GROWI: Configure Base URL` | Configure the target GROWI URL |
+| `GROWI: Configure API Token` | Save the API token in Secret Storage |
+| `GROWI: Open README` | Open this README |
+| `GROWI: Open Page` | Open a page from a path, URL, or permalink |
+| `GROWI: Add Prefix` | Add a browse prefix to the `GROWI` view |
+| `GROWI: Refresh Listing` | Refresh pages under registered prefixes |
+| `GROWI: Clear Prefixes` | Clear prefixes for the current base URL |
+| `GROWI: Show Bookmarks` | Show GROWI root bookmarks as open candidates |
 
-### ページ操作
+### Page Operations
 
-| コマンド | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `GROWI: Create Page` | 新規ページを作成する |
-| `GROWI: Start Edit` | 既存ページの編集を開始する |
-| `GROWI: End Edit` | 編集状態を終了する |
-| `GROWI: Refresh Current Page` | 現在ページを再取得する |
-| `GROWI: Rename Page` | 現在ページの canonical path を変更する |
-| `GROWI: Delete Page` | 現在ページをゴミ箱へ移動する |
-| `GROWI: Show Current Page Actions` | 現在ページで使える操作を Quick Pick で表示する |
+| `GROWI: Create Page` | Create a new page |
+| `GROWI: Start Edit` | Start editing the current page |
+| `GROWI: End Edit` | End edit mode |
+| `GROWI: Refresh Current Page` | Reload the current page |
+| `GROWI: Rename Page` | Rename the current page canonical path |
+| `GROWI: Delete Page` | Move the current page to trash |
+| `GROWI: Show Current Page Actions` | Show available current-page actions in Quick Pick |
 
-### 補助情報
+### Reference Information
 
-| コマンド | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `GROWI: Show Current Page Info` | 現在ページの URL、path、更新者などを表示する |
-| `GROWI: Show Current Page Attachments` | 現在ページの添付一覧を表示する |
-| `GROWI: Show Backlinks` | 追加済み prefix 範囲で被リンクを探す |
-| `GROWI: Show Revision History Diff` | 過去 revision と現在本文の diff を開く |
+| `GROWI: Show Current Page Info` | Show URL, path, updater, and related page metadata |
+| `GROWI: Show Current Page Attachments` | Show attachments for the current page |
+| `GROWI: Show Backlinks` | Search backlinks inside registered prefixes |
+| `GROWI: Show Revision History Diff` | Open a diff between a past revision and the current body |
 
-### ローカルミラー
+### Local Mirror
 
-| コマンド | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `GROWI: Sync Local Mirror for Current Page` | 現在ページをローカルミラーへ同期する |
-| `GROWI: Sync Local Mirror for Current Prefix` | 現在ページ配下をローカルミラーへ同期する |
-| `GROWI: Compare Local Mirror with GROWI` | ローカルミラーと GROWI 側を比較する |
-| `GROWI: Upload Local Mirror to GROWI` | ローカルミラーの変更を GROWI へ反映する |
-| `再比較` | Source Control view の compare 結果を再取得する |
-| `GROWI側の更新を確認` | Source Control view から GROWI 側の更新有無を確認する |
-| `GROWIに反映` | Source Control view の選択 resource を GROWI へ反映する |
-| `ローカルに取り込む` | GROWI 側で更新された resource をローカルミラーへ取り込む |
+| `GROWI: Sync Local Mirror for Current Page` | Sync the current page to the local mirror |
+| `GROWI: Sync Local Mirror for Current Prefix` | Sync the current subtree to the local mirror |
+| `GROWI: Compare Local Mirror with GROWI` | Compare the local mirror with GROWI |
+| `GROWI: Upload Local Mirror to GROWI` | Apply local mirror changes to GROWI |
+| `GROWI: Install LLM Local Mirror Skills` | Generate the LLM Assist Kit Skills |
+| `GROWI: Prepare LLM Local Mirror Prompt` | Generate edit prompt artifacts under `.growi-agent/prompt/current/` |
+| `GROWI: Prepare LLM Local Mirror Diff` | Generate diff review artifacts under `.growi-agent/diff/current/` from the SCM snapshot |
+| `Compare Again` | Refresh the Source Control View compare result |
+| `Check GROWI Updates` | Check GROWI-side updates from Source Control View |
+| `Apply to GROWI` | Apply selected Source Control resources to GROWI |
+| `Take Remote Changes` | Take selected GROWI-side changes into the local mirror |
 
 ## Settings
 
-| 設定 | 既定値 | 内容 |
+| Setting | Default | Details |
 | --- | --- | --- |
-| `growi.baseUrl` | `""` | 接続先 GROWI URL |
-| `growi.pageListing.initialPageSize` | `100` | prefix 一覧の初回取得件数 |
-| `growi.pageListing.maxAutoPagesPerPrefix` | `300` | `Open Page` の入力後に prefix ごとに自動探索する最大件数 |
-| `growi.localMirror.maxPrefixPages` | `50` | 配下ページをローカルに同期するときの最大 page 数。最大 200 まで |
+| `growi.baseUrl` | `""` | Target GROWI URL |
+| `growi.pageListing.initialPageSize` | `100` | Initial page count fetched for prefix listing |
+| `growi.pageListing.maxAutoPagesPerPrefix` | `300` | Maximum pages searched per prefix after `Open Page` input |
+| `growi.localMirror.maxPrefixPages` | `50` | Maximum pages to sync for subtree local mirror; clamped to 200 |
 
-API token は VS Code Secret Storage に保存するため、設定項目には含まれません。
+The API token is stored in VS Code Secret Storage, not in settings.
 
 ## Requirements / Compatibility
 
-| 項目 | 内容 |
+| Item | Requirement |
 | --- | --- |
-| VS Code | Desktop 版 VS Code `1.105+` |
+| VS Code | Desktop VS Code `1.105+` |
 | GROWI | GROWI `7.x` |
-| 認証 | GROWI API token |
-| API | GROWI 7.x のページ取得、一覧取得、保存、作成、ページ名変更、削除、revision、bookmark、attachment 関連機能 |
+| Authentication | GROWI API token |
+| API | GROWI 7.x APIs for page read, listing, save, create, rename, delete, revisions, bookmarks, and attachments |
 
-一部 API が使えない GROWI 環境では、対応する機能だけが利用できない場合があります。
+If some APIs are not available in your GROWI environment, only the corresponding features may be unavailable.
 
 ## Limitations
 
-| 対象外 | 補足 |
+| Limitation | Details |
 | --- | --- |
-| OS レベルの mount | FUSE のようなローカルドライブ化はしません |
-| VS Code 以外の汎用クライアント利用 | Desktop 版 VS Code 拡張として使う前提です |
-| 複数 GROWI 接続の同時表示 | 一度に扱える接続先は現在設定中の base URL です |
-| 接続先全体の全文検索 | `Open Page` は登録済み prefix 配下の候補検索が主経路です |
-| 完全削除 / 復元 | `GROWI: Delete Page` はゴミ箱への移動です |
-| 添付のアップロード / 削除 / 本文挿入 | 現行版対象外です |
-| 画像以外の添付 preview | 添付一覧から GROWI Web で開く導線に留めます |
-| `FILE_UPLOAD=local` の `/attachment/{attachmentId}` Preview | login session / cookie 依存のため token-only preview 対象外です |
-| 相対リンクや外部 URL の汎用解決 | wiki 内リンク移動は same-instance 前提です |
-| draw.io / diagrams.net / PlantUML / Mermaid の図描画 | 現行版では図レンダリングしません |
-| 自動 merge | ローカルミラー反映時も曖昧な場合は conflict / skip に倒します |
+| OS-level mount | This is not a FUSE-like local drive |
+| Generic non-VS Code client support | The extension is designed for VS Code Desktop |
+| Multiple simultaneous GROWI connections | The active base URL is the only visible connection |
+| Full-text search across the whole instance | `Open Page` focuses on candidates under registered prefixes |
+| Permanent delete and restore | `GROWI: Delete Page` moves pages to trash |
+| Attachment upload, delete, and body insertion | Not supported in the current version |
+| Non-image attachment preview | Use the attachment list and open the item in GROWI Web |
+| `FILE_UPLOAD=local` `/attachment/{attachmentId}` preview | Token-only preview does not cover login-session or cookie-dependent assets |
+| Generic relative/external URL resolution | Wiki link navigation assumes the same GROWI instance |
+| draw.io / diagrams.net / PlantUML / Mermaid rendering | Diagrams are not rendered in the current version |
+| Automatic merge | Ambiguous local mirror apply cases fall back to conflict or skip |
 
 ## Troubleshooting
 
-| 症状 | 確認ポイント |
+| Symptom | Check |
 | --- | --- |
-| Base URL が通らない | `http://` または `https://` を付けているか確認してください |
-| API token で失敗する | GROWI 7.x の API token が有効か、token に余分な空白がないか確認してください |
-| prefix を追加しても何も見えない | prefix が `/` で始まるか、対象配下に実ページがあるか、Base URL / API token が正しいか確認してください |
-| ページを保存できない | `GROWI: Start Edit` で編集状態に入っているか確認してください |
-| 添付画像が Preview に出ない | token-only で取得できる same-host URL か確認してください |
-| 被リンクが少ない | 追加済み prefix 範囲だけが対象です。対象 prefix が登録されているか確認してください |
-| ローカルミラーが同期できない | workspace が開かれているか、既存ミラーにローカル変更が残っていないか確認してください |
-| `GROWIに反映` が失敗する | 先に compare を実行し、conflict や missing remote が残っていないか確認してください |
-| Source Control view に何も出ない | ローカルミラーが workspace 配下にあり、差分確認が成功しているか確認してください |
-| 履歴差分が開けない | GROWI 側で revision 取得機能を利用できるか確認してください |
+| Base URL is rejected | Confirm it starts with `http://` or `https://` |
+| API token fails | Confirm the GROWI 7.x API token is valid and has no extra whitespace |
+| Added prefixes show nothing | Confirm the prefix starts with `/`, target pages exist, and Base URL / API token are correct |
+| Page cannot be saved | Confirm `GROWI: Start Edit` is active |
+| Attachment images do not show in Preview | Confirm the image uses a token-readable same-host URL |
+| Backlinks are incomplete | Only registered prefix ranges are searched |
+| Local mirror cannot sync | Confirm a file workspace is open and existing mirror files do not have local changes |
+| `Apply to GROWI` fails | Run compare first and resolve conflicts or missing remote pages |
+| Source Control View is empty | Confirm the local mirror is under the workspace and compare succeeded |
+| Revision diff cannot open | Confirm revision APIs are available on the GROWI side |
 
 ## Development
 
-開発時の前提は次のとおりです。
+Requirements:
 
 - Node.js `22+`
-- `pnpm`
+- pnpm
 
-主なコマンド:
+Main commands:
 
 ```bash
 pnpm run build
@@ -253,7 +290,7 @@ pnpm run test:integration
 pnpm run lint
 ```
 
-F5 の debug 実行では、`GROWI_RUNTIME_MODE=debug-f5` を前提に runtime JSONL ログを有効化できます。出力先は `GROWI_JSONL_PATH` を優先し、未指定時は `.growi-logs/runtime/*.jsonl` です。`GROWI` view title の icon action または Command Palette から `GROWI: Reveal Runtime Logs` で保存先を開き、`GROWI: Clear Runtime Logs` で `.jsonl` を削除できます。
+During F5 debug runs, runtime JSONL logs can be enabled with `GROWI_RUNTIME_MODE=debug-f5`. `GROWI_JSONL_PATH` takes precedence for the output path; otherwise logs are written under `.growi-logs/runtime/*.jsonl`. Use the `GROWI` view title action or `GROWI: Reveal Runtime Logs` to open the log location, and `GROWI: Clear Runtime Logs` to delete `.jsonl` files.
 
 ## License
 

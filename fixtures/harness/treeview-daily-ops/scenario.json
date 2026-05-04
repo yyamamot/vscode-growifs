@@ -1,8 +1,17 @@
 {
   "id": "treeview-daily-ops",
   "title": "TreeView-first daily operations UX evidence review",
-  "aliases": ["treeview-ux", "daily-ops"],
-  "uiAreas": ["explorer", "menus", "quickPick", "localMirror", "currentPage"],
+  "aliases": [
+    "treeview-ux",
+    "daily-ops"
+  ],
+  "uiAreas": [
+    "explorer",
+    "menus",
+    "quickPick",
+    "localMirror",
+    "currentPage"
+  ],
   "changedFileGlobs": [
     "package.json",
     "src/extension.ts",
@@ -82,7 +91,9 @@
     },
     {
       "id": "growi.addPrefix",
-      "args": ["/team/dev"]
+      "args": [
+        "/team/dev"
+      ]
     },
     {
       "id": "growi.explorer.focus"
@@ -95,7 +106,9 @@
     },
     {
       "id": "growi.openPage",
-      "args": ["/team/dev/alpha"]
+      "args": [
+        "/team/dev/alpha"
+      ]
     },
     {
       "id": "growi.showCurrentPageActions",
@@ -103,7 +116,7 @@
         "kind": "currentPageActions",
         "action": "collectOnly",
         "select": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       }
     },
@@ -113,7 +126,7 @@
         "kind": "localMirrorActions",
         "action": "collectOnly",
         "select": {
-          "label": "GROWIとの差分を確認"
+          "label": "Compare with GROWI"
         }
       }
     },
@@ -160,74 +173,74 @@
         "contextValue": "growi.pageBookmarked"
       },
       {
-        "label": "さらに読み込む",
+        "label": "Load More",
         "kind": "loadMore",
         "canonicalPath": "/team/dev/many",
         "contextValue": "growi.loadMore",
-        "description": "部分表示: /team/dev/many・取得済み 100 件"
+        "description": "Partial: /team/dev/many / fetched 100"
       }
     ],
     "requiredQuickPickItems": [
       {
         "name": "currentPageActions",
-        "placeholder": "現在ページに対して実行する操作を選択してください。",
+        "placeholder": "Select an action for the current page.",
         "item": {
-          "label": "ページを更新"
+          "label": "Refresh Page"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "被リンクを表示"
+          "label": "Show Backlinks"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "添付一覧を表示"
+          "label": "Show Attachments"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "履歴差分を表示"
+          "label": "Show Revision Diff"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "現在ページをローカルに同期",
-          "description": "__<page>__.md と .growi-mirror.json を作成または更新"
+          "label": "Sync Current Page Locally",
+          "description": "Create or update __<page>__.md and .growi-mirror.json"
         }
       },
       {
         "name": "localMirrorActions",
-        "placeholder": "ローカルミラーに対して実行する操作を選択してください。",
+        "placeholder": "Select an action for the local mirror.",
         "item": {
-          "label": "現在ページをローカルに同期"
-        }
-      },
-      {
-        "name": "localMirrorActions",
-        "item": {
-          "label": "GROWIとの差分を確認"
+          "label": "Sync Current Page Locally"
         }
       },
       {
         "name": "localMirrorActions",
         "item": {
-          "label": "SCMで確認してGROWIに反映"
+          "label": "Compare with GROWI"
+        }
+      },
+      {
+        "name": "localMirrorActions",
+        "item": {
+          "label": "Review in SCM and apply to GROWI"
         }
       },
       {
         "name": "bookmarks",
-        "placeholder": "ブックマークからページを選択してください。",
+        "placeholder": "Select a page from bookmarks.",
         "item": {
           "label": "alpha",
           "description": "/team/dev/alpha",
@@ -239,13 +252,13 @@
       {
         "name": "currentPageActions",
         "item": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       },
       {
         "name": "localMirrorActions",
         "item": {
-          "label": "GROWIとの差分を確認"
+          "label": "Compare with GROWI"
         }
       },
       {
@@ -262,7 +275,7 @@
           "canonicalPath": "/team/dev/alpha"
         },
         "button": {
-          "tooltip": "ブックマークから削除"
+          "tooltip": "Remove Bookmark"
         }
       }
     ],
@@ -295,22 +308,8 @@
       },
       {
         "menu": "view/item/context",
-        "command": "growi.explorerShowBacklinks"
-      },
-      {
-        "menu": "view/item/context",
-        "command": "growi.explorerShowCurrentPageAttachments",
-        "group": "02_inspect@3"
-      },
-      {
-        "menu": "view/item/context",
-        "command": "growi.explorerShowRevisionHistoryDiff",
-        "group": "02_inspect@4"
-      },
-      {
-        "menu": "view/item/context",
         "command": "growi.openCurrentPageHub",
-        "group": "02_inspect@5"
+        "group": "02_inspect@2"
       },
       {
         "menu": "view/title",
@@ -367,6 +366,7 @@
       "growi.showCurrentPageActions",
       "growi.showLocalMirrorActions",
       "growi.showBookmarks"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

@@ -1,8 +1,10 @@
 .github/**
+archive/**
 docs/**
 test/**
 src/**
 scripts/**
+fixtures/**
 node_modules/**
 .agents/**
 .ai/**
@@ -17,6 +19,7 @@ AGENTS.md
 DEVELOPMENT.md
 coverage/**
 out/**
+dist/harness/**
 dist/**/*.map
 assets/icon.svg
 assets/icon.svg.png

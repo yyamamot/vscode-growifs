@@ -7,7 +7,7 @@
   "categories": [
     "Other"
   ],
-  "version": "0.0.7",
+  "version": "0.0.8",
   "license": "MIT",
   "icon": "assets/icon.png",
   "repository": {
@@ -64,6 +64,9 @@
     "onCommand:growi.refreshLocalMirror",
     "onCommand:growi.compareLocalMirrorWithGrowi",
     "onCommand:growi.uploadLocalMirrorToGrowi",
+    "onCommand:growi.installLlmSkillPack",
+    "onCommand:growi.startLlmEditSession",
+    "onCommand:growi.createLlmLocalMirrorDiffContext",
     "onCommand:growi.scmUploadMirrorResources",
     "onCommand:growi.scmTakeRemoteMirrorResources",
     "onCommand:growi.showCurrentPageInfo",
@@ -76,250 +79,264 @@
     "commands": [
       {
         "command": "growi.configureBaseUrl",
-        "title": "GROWI: Configure Base URL"
+        "title": "%command.growi.configureBaseUrl.title%"
       },
       {
         "command": "growi.configureApiToken",
-        "title": "GROWI: Configure API Token"
+        "title": "%command.growi.configureApiToken.title%"
       },
       {
         "command": "growi.openReadme",
-        "title": "GROWI: Open README"
+        "title": "%command.growi.openReadme.title%"
       },
       {
         "command": "growi.createPage",
-        "title": "GROWI: Create Page",
-        "shortTitle": "Create Page"
+        "title": "%command.growi.createPage.title%",
+        "shortTitle": "%command.growi.createPage.shortTitle%"
       },
       {
         "command": "growi.addCurrentPageBookmark",
-        "title": "ブックマークに追加"
+        "title": "%command.growi.addCurrentPageBookmark.title%"
       },
       {
         "command": "growi.deletePage",
-        "title": "GROWI: Delete Page"
+        "title": "%command.growi.deletePage.title%"
       },
       {
         "command": "growi.removeCurrentPageBookmark",
-        "title": "ブックマークから削除"
+        "title": "%command.growi.removeCurrentPageBookmark.title%"
       },
       {
         "command": "growi.renamePage",
-        "title": "GROWI: Rename Page"
+        "title": "%command.growi.renamePage.title%"
       },
       {
         "command": "growi.addPrefix",
-        "title": "GROWI: Add Prefix",
-        "shortTitle": "Add Prefix",
+        "title": "%command.growi.addPrefix.title%",
+        "shortTitle": "%command.growi.addPrefix.shortTitle%",
         "icon": "$(add)"
       },
       {
         "command": "growi.openPrefixRootPage",
-        "title": "Prefix ページを開く"
+        "title": "%command.growi.openPrefixRootPage.title%"
       },
       {
         "command": "growi.openDirectoryPage",
-        "title": "GROWI: Open Directory Page"
+        "title": "%command.growi.openDirectoryPage.title%"
       },
       {
         "command": "growi.showExplorerItemActions",
-        "title": "GROWI: Show Tree Item Actions"
+        "title": "%command.growi.showExplorerItemActions.title%"
       },
       {
         "command": "growi.explorerOpenPageItem",
-        "title": "ページを開く"
+        "title": "%command.growi.explorerOpenPageItem.title%"
       },
       {
         "command": "growi.explorerOpenPageInBrowser",
-        "title": "ブラウザで表示"
+        "title": "%command.growi.explorerOpenPageInBrowser.title%"
       },
       {
         "command": "growi.explorerCreatePageHere",
-        "title": "ここに作成"
+        "title": "%command.growi.explorerCreatePageHere.title%"
       },
       {
         "command": "growi.explorerRenamePage",
-        "title": "ページ名を変更"
+        "title": "%command.growi.explorerRenamePage.title%"
       },
       {
         "command": "growi.explorerDeletePage",
-        "title": "ページを削除"
+        "title": "%command.growi.explorerDeletePage.title%"
       },
       {
         "command": "growi.explorerRefreshCurrentPage",
-        "title": "ページを更新"
+        "title": "%command.growi.explorerRefreshCurrentPage.title%"
       },
       {
         "command": "growi.explorerShowBacklinks",
-        "title": "被リンクを表示"
+        "title": "%command.growi.explorerShowBacklinks.title%"
       },
       {
         "command": "growi.explorerShowCurrentPageInfo",
-        "title": "ページ情報を表示"
+        "title": "%command.growi.explorerShowCurrentPageInfo.title%"
       },
       {
         "command": "growi.explorerShowCurrentPageAttachments",
-        "title": "添付一覧を表示"
+        "title": "%command.growi.explorerShowCurrentPageAttachments.title%"
       },
       {
         "command": "growi.explorerShowRevisionHistoryDiff",
-        "title": "履歴差分を表示"
+        "title": "%command.growi.explorerShowRevisionHistoryDiff.title%"
       },
       {
         "command": "growi.explorerCompareLocalMirrorWithGrowi",
-        "title": "このページの差分を確認"
+        "title": "%command.growi.explorerCompareLocalMirrorWithGrowi.title%"
       },
       {
         "command": "growi.explorerUploadLocalMirrorToGrowi",
-        "title": "ローカルミラーを反映"
+        "title": "%command.growi.explorerUploadLocalMirrorToGrowi.title%"
       },
       {
         "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
-        "title": "配下ページの差分を確認"
+        "title": "%command.growi.explorerCompareLocalMirrorSubtreeWithGrowi.title%"
       },
       {
         "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi",
-        "title": "配下のローカルミラーを反映"
+        "title": "%command.growi.explorerUploadLocalMirrorSubtreeToGrowi.title%"
       },
       {
         "command": "growi.clearPrefixes",
-        "title": "GROWI: Clear Prefixes",
-        "shortTitle": "Clear Prefixes",
+        "title": "%command.growi.clearPrefixes.title%",
+        "shortTitle": "%command.growi.clearPrefixes.shortTitle%",
         "icon": "$(clear-all)"
       },
       {
         "command": "growi.deletePrefix",
-        "title": "Prefix を削除",
-        "shortTitle": "Delete Prefix",
+        "title": "%command.growi.deletePrefix.title%",
+        "shortTitle": "%command.growi.deletePrefix.shortTitle%",
         "icon": "$(trash)"
       },
       {
         "command": "growi.openPage",
-        "title": "GROWI: Open Page",
-        "shortTitle": "Open Page",
+        "title": "%command.growi.openPage.title%",
+        "shortTitle": "%command.growi.openPage.shortTitle%",
         "icon": "$(search)"
       },
       {
         "command": "growi.startEdit",
-        "title": "GROWI: Start Edit"
+        "title": "%command.growi.startEdit.title%"
       },
       {
         "command": "growi.endEdit",
-        "title": "GROWI: End Edit"
+        "title": "%command.growi.endEdit.title%"
       },
       {
         "command": "growi.showCurrentPageActions",
-        "title": "GROWI: Show Current Page Actions"
+        "title": "%command.growi.showCurrentPageActions.title%"
       },
       {
         "command": "growi.openCurrentPageHub",
-        "title": "ページ詳細を開く",
+        "title": "%command.growi.openCurrentPageHub.title%",
         "category": "GROWI"
       },
       {
         "command": "growi.showBookmarks",
-        "title": "GROWI: Show Bookmarks",
+        "title": "%command.growi.showBookmarks.title%",
         "icon": "$(bookmark)"
       },
       {
         "command": "growi.showLocalMirrorActions",
-        "title": "GROWI: Show Local Mirror Actions"
+        "title": "%command.growi.showLocalMirrorActions.title%"
       },
       {
         "command": "growi.refreshCurrentPage",
-        "title": "GROWI: Refresh Current Page"
+        "title": "%command.growi.refreshCurrentPage.title%"
       },
       {
         "command": "growi.refreshListing",
-        "title": "GROWI: Refresh Listing",
-        "shortTitle": "Refresh Listing",
+        "title": "%command.growi.refreshListing.title%",
+        "shortTitle": "%command.growi.refreshListing.shortTitle%",
         "icon": "$(refresh)"
       },
       {
         "command": "growi.clearRuntimeLogs",
-        "title": "GROWI: Clear Runtime Logs",
+        "title": "%command.growi.clearRuntimeLogs.title%",
         "icon": "$(trash)"
       },
       {
         "command": "growi.revealRuntimeLogs",
-        "title": "GROWI: Reveal Runtime Logs",
+        "title": "%command.growi.revealRuntimeLogs.title%",
         "icon": "$(folder-opened)"
       },
       {
         "command": "growi.explorerCreateLocalMirrorForCurrentPage",
-        "title": "このページをローカルに同期"
+        "title": "%command.growi.explorerCreateLocalMirrorForCurrentPage.title%"
       },
       {
         "command": "growi.explorerCreateLocalMirrorForCurrentPrefix",
-        "title": "配下ページをローカルに同期"
+        "title": "%command.growi.explorerCreateLocalMirrorForCurrentPrefix.title%"
       },
       {
         "command": "growi.explorerCompareLocalMirrorWithGrowi",
-        "title": "このページの差分を確認"
+        "title": "%command.growi.explorerCompareLocalMirrorWithGrowi.title%"
       },
       {
         "command": "growi.explorerUploadLocalMirrorToGrowi",
-        "title": "ローカルミラーを反映"
+        "title": "%command.growi.explorerUploadLocalMirrorToGrowi.title%"
       },
       {
         "command": "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
-        "title": "配下ページの差分を確認"
+        "title": "%command.growi.explorerCompareLocalMirrorSubtreeWithGrowi.title%"
       },
       {
         "command": "growi.explorerUploadLocalMirrorSubtreeToGrowi",
-        "title": "配下のローカルミラーを反映"
+        "title": "%command.growi.explorerUploadLocalMirrorSubtreeToGrowi.title%"
       },
       {
         "command": "growi.createLocalMirrorForCurrentPage",
-        "title": "GROWI: Sync Local Mirror for Current Page"
+        "title": "%command.growi.createLocalMirrorForCurrentPage.title%"
       },
       {
         "command": "growi.createLocalMirrorForCurrentPrefix",
-        "title": "GROWI: Sync Local Mirror for Current Prefix"
+        "title": "%command.growi.createLocalMirrorForCurrentPrefix.title%"
       },
       {
         "command": "growi.compareLocalMirrorWithGrowi",
-        "title": "GROWI: Compare Local Mirror with GROWI"
+        "title": "%command.growi.compareLocalMirrorWithGrowi.title%"
       },
       {
         "command": "growi.uploadLocalMirrorToGrowi",
-        "title": "GROWI: Upload Local Mirror to GROWI"
+        "title": "%command.growi.uploadLocalMirrorToGrowi.title%"
+      },
+      {
+        "command": "growi.installLlmSkillPack",
+        "title": "%command.growi.installLlmSkillPack.title%"
+      },
+      {
+        "command": "growi.startLlmEditSession",
+        "title": "%command.growi.startLlmEditSession.title%",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "growi.createLlmLocalMirrorDiffContext",
+        "title": "%command.growi.createLlmLocalMirrorDiffContext.title%",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "growi.scmUploadMirrorResources",
-        "title": "GROWIに反映",
+        "title": "%command.growi.scmUploadMirrorResources.title%",
         "icon": "$(cloud-upload)"
       },
       {
         "command": "growi.scmCompareMirrorAgain",
-        "title": "再比較",
+        "title": "%command.growi.scmCompareMirrorAgain.title%",
         "icon": "$(refresh)"
       },
       {
         "command": "growi.scmCheckRemoteMetadata",
-        "title": "GROWI側の更新を確認",
+        "title": "%command.growi.scmCheckRemoteMetadata.title%",
         "icon": "$(sync)"
       },
       {
         "command": "growi.scmTakeRemoteMirrorResources",
-        "title": "ローカルに取り込む",
+        "title": "%command.growi.scmTakeRemoteMirrorResources.title%",
         "icon": "$(cloud-download)"
       },
       {
         "command": "growi.showCurrentPageInfo",
-        "title": "GROWI: Show Current Page Info"
+        "title": "%command.growi.showCurrentPageInfo.title%"
       },
       {
         "command": "growi.showCurrentPageAttachments",
-        "title": "GROWI: Show Current Page Attachments"
+        "title": "%command.growi.showCurrentPageAttachments.title%"
       },
       {
         "command": "growi.showBacklinks",
-        "title": "GROWI: Show Backlinks"
+        "title": "%command.growi.showBacklinks.title%"
       },
       {
         "command": "growi.showRevisionHistoryDiff",
-        "title": "GROWI: Show Revision History Diff"
+        "title": "%command.growi.showRevisionHistoryDiff.title%"
       }
     ],
     "keybindings": [
@@ -341,12 +358,12 @@
     "viewsWelcome": [
       {
         "view": "growi.explorer",
-        "contents": "GROWI への接続を設定します。\n[Configure Base URL](command:growi.configureBaseUrl)",
+        "contents": "%viewsWelcome.growi.explorer.noBaseUrl%",
         "when": "config.growi.baseUrl == ''"
       },
       {
         "view": "growi.explorer",
-        "contents": "最初のページ探索を始めます。\n[Open Page](command:growi.openPage)\n[Add Prefix](command:growi.addPrefix)\n接続先 URL と API token を設定してから利用してください。\n[Configure Base URL](command:growi.configureBaseUrl)\n[Configure API Token](command:growi.configureApiToken)\n[Open README](command:growi.openReadme)",
+        "contents": "%viewsWelcome.growi.explorer.configured%",
         "when": "config.growi.baseUrl != ''"
       }
     ],
@@ -449,6 +466,16 @@
           "command": "growi.scmTakeRemoteMirrorResources",
           "when": "scmProvider == growifs-mirror-compare",
           "group": "inline@4"
+        },
+        {
+          "command": "growi.startLlmEditSession",
+          "when": "scmProvider == growifs-mirror-compare",
+          "group": "inline@5"
+        },
+        {
+          "command": "growi.createLlmLocalMirrorDiffContext",
+          "when": "scmProvider == growifs-mirror-compare",
+          "group": "inline@6"
         }
       ],
       "scm/resourceGroup/context": [
@@ -629,31 +656,31 @@
       ]
     },
     "configuration": {
-      "title": "GROWI",
+      "title": "%configuration.title%",
       "properties": {
         "growi.baseUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Base URL for the target GROWI instance."
+          "markdownDescription": "%configuration.growi.baseUrl.markdownDescription%"
         },
         "growi.pageListing.initialPageSize": {
           "type": "number",
           "default": 100,
           "minimum": 1,
-          "markdownDescription": "Number of pages to fetch for the first page listing request."
+          "markdownDescription": "%configuration.growi.pageListing.initialPageSize.markdownDescription%"
         },
         "growi.pageListing.maxAutoPagesPerPrefix": {
           "type": "number",
           "default": 300,
           "minimum": 1,
-          "markdownDescription": "Maximum number of pages to fetch per registered prefix when Open Page searches after user input."
+          "markdownDescription": "%configuration.growi.pageListing.maxAutoPagesPerPrefix.markdownDescription%"
         },
         "growi.localMirror.maxPrefixPages": {
           "type": "number",
           "default": 50,
           "minimum": 1,
           "maximum": 200,
-          "markdownDescription": "Maximum number of pages allowed in a prefix local mirror export. Values above 200 are clamped to 200."
+          "markdownDescription": "%configuration.growi.localMirror.maxPrefixPages.markdownDescription%"
         }
       }
     }
@@ -669,8 +696,8 @@
     "deps:update:latest": "pnpm update --latest",
     "deps:verify": "pnpm run build && pnpm run test:unit && pnpm run test:integration && pnpm run lint",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check package.json tsconfig.json biome.json README.md AGENTS.md src scripts test",
-    "format": "biome format --write package.json tsconfig.json biome.json README.md AGENTS.md src scripts test",
+    "lint": "biome check package.json tsconfig.json biome.json README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md AGENTS.md src scripts test",
+    "format": "biome format --write package.json tsconfig.json biome.json README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md AGENTS.md src scripts test",
     "build": "esbuild src/extension.ts src/harness/uiReview.ts --bundle --platform=node --format=cjs --outdir=dist --external:vscode",
     "package:vsix": "node ./scripts/vsix.mjs package",
     "install:vsix": "node ./scripts/vsix.mjs install",
@@ -681,7 +708,8 @@
     "check:system-events": "node ./scripts/check-system-events-shift-f10.mjs",
     "review:ui:scenario": "pnpm run build && node ./scripts/review-ui-scenario.mjs",
     "review:ui:feature": "pnpm run build && node ./scripts/review-ui-feature.mjs",
-    "verify:ui-change": "node ./scripts/verify-ui-change.mjs"
+    "verify:ui-change": "node ./scripts/verify-ui-change.mjs",
+    "check:l10n": "node ./scripts/check-l10n.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.6",
@@ -693,5 +721,6 @@
     "esbuild": "^0.27.3",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
-  }
+  },
+  "l10n": "./l10n"
 }

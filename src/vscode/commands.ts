@@ -192,6 +192,7 @@ import type {
   GrowiReadFailureReason,
 } from "./fsProvider";
 import type { GrowiAttachmentSummary } from "./growiApi";
+import { localize } from "./l10n";
 import { findBacklinks } from "./pageSearch";
 import {
   buildGrowiRevisionUri,
@@ -314,7 +315,7 @@ function mapDeletePageFailureReasonToMessage(
   if (reason === "Rejected") {
     return (
       result.message ??
-      "Delete Page のリクエストが接続先 GROWI に拒否されました。"
+      localize("The connected GROWI rejected the Delete Page request.")
     );
   }
   if (reason === "ApiNotSupported") {
@@ -351,7 +352,7 @@ function mapRenamePageFailureReasonToMessage(
   if (reason === "Rejected") {
     return (
       result.message ??
-      "Rename Page のリクエストが接続先 GROWI に拒否されました。"
+      localize("The connected GROWI rejected the Rename Page request.")
     );
   }
   if (reason === "ApiNotSupported") {
@@ -784,8 +785,8 @@ export function createConfigureBaseUrlCommand(deps: DialogCommandDeps) {
       inputFromCommand ??
       (await deps.showInputBox({
         placeHolder: "https://growi.example.com/",
-        prompt: "接続先の GROWI base URL を入力してください",
-        title: "GROWI: Configure Base URL",
+        prompt: localize("Enter the target GROWI base URL"),
+        title: localize("GROWI: Configure Base URL"),
         value: deps.getBaseUrl() ?? "",
       }));
 
@@ -796,13 +797,13 @@ export function createConfigureBaseUrlCommand(deps: DialogCommandDeps) {
     const normalized = normalizeBaseUrl(input);
     if (!normalized.ok) {
       deps.showErrorMessage(
-        "GROWI base URL には http:// または https:// の URL を入力してください。",
+        localize("Enter an http:// or https:// URL for the GROWI base URL."),
       );
       return;
     }
 
     await deps.updateBaseUrl(normalized.value);
-    deps.showInformationMessage("GROWI base URL を更新しました。");
+    deps.showInformationMessage(localize("Updated the GROWI base URL."));
   };
 }
 
@@ -820,8 +821,8 @@ export function createConfigureApiTokenCommand(deps: DialogCommandDeps) {
       (await deps.showInputBox({
         password: true,
         placeHolder: "Paste API token",
-        prompt: "GROWI API token を入力してください",
-        title: "GROWI: Configure API Token",
+        prompt: localize("Enter the GROWI API token"),
+        title: localize("GROWI: Configure API Token"),
       }));
 
     if (input === undefined) {
@@ -830,12 +831,12 @@ export function createConfigureApiTokenCommand(deps: DialogCommandDeps) {
 
     const token = input.trim();
     if (token.length === 0) {
-      deps.showErrorMessage("GROWI API token は空にできません。");
+      deps.showErrorMessage(localize("GROWI API token cannot be empty."));
       return;
     }
 
     await deps.storeSecret(GROWI_SECRET_KEYS.apiToken, token);
-    deps.showInformationMessage("GROWI API token を保存しました。");
+    deps.showInformationMessage(localize("Saved the GROWI API token."));
   };
 }
 
@@ -860,8 +861,8 @@ export function createAddPrefixCommand(deps: PrefixCommandDeps) {
       inputFromCommand ??
       (await deps.showInputBox({
         placeHolder: "https://growi.example.com/67ca... or /team/dev",
-        prompt: "登録する Prefix または same-instance idurl を入力してください",
-        title: "GROWI: Add Prefix",
+        prompt: localize("Enter the prefix or same-instance idurl to register"),
+        title: localize("GROWI: Add Prefix"),
       }));
 
     if (input === undefined) {
@@ -900,7 +901,7 @@ export function createAddPrefixCommand(deps: PrefixCommandDeps) {
     if (result.ok) {
       deps.showInformationMessage(
         result.added
-          ? "GROWI Prefix を追加しました。"
+          ? localize("Added the GROWI prefix.")
           : ADD_PREFIX_DUPLICATE_MESSAGE,
       );
       return;
@@ -1041,7 +1042,9 @@ export function createOpenPageCommand(deps: NavigationCommandDeps) {
     });
     if (!parsed.ok) {
       deps.showErrorMessage(
-        "GROWI の URL、same-instance permalink、または先頭 / 付きのページパスを入力してください。",
+        localize(
+          "Enter a GROWI URL, same-instance permalink, or page path starting with /.",
+        ),
       );
       return;
     }
@@ -1264,8 +1267,8 @@ async function promptOpenPageInput(
   return await deps.showInputBox({
     placeHolder:
       "https://growi.example.com/67ca... or /team/dev/spec or /67ca...",
-    prompt: "GROWI の URL、permalink、またはページパスを入力してください",
-    title: "GROWI: Open Page",
+    prompt: localize("Enter a GROWI URL, permalink, or page path"),
+    title: localize("GROWI: Open Page"),
   });
 }
 
@@ -1284,8 +1287,8 @@ export function createCreatePageCommand(deps: CommandDeps) {
       inputFromCommand ??
       (await deps.showInputBox({
         placeHolder: "/team/dev/new-page",
-        prompt: "作成する GROWI ページパスを入力してください",
-        title: "GROWI: Create Page",
+        prompt: localize("Enter the GROWI page path to create"),
+        title: localize("GROWI: Create Page"),
         value: initialValue,
       }));
 
@@ -1516,8 +1519,8 @@ export function createRenamePageCommand(deps: CommandDeps) {
       injectedInput ??
       (await deps.showInputBox({
         placeHolder: "/team/dev/renamed-page",
-        prompt: "変更後の GROWI ページパスを入力してください",
-        title: "GROWI: Rename Page",
+        prompt: localize("Enter the new GROWI page path"),
+        title: localize("GROWI: Rename Page"),
         value: canonicalPath,
       }));
     if (input === undefined) {
@@ -2101,10 +2104,10 @@ export function createShowCurrentPageInfoCommand(
 
     deps.showInformationMessage(
       [
-        `URL: ${info.url}`,
-        `Path: ${info.path}`,
-        `Last Updated By: ${info.lastUpdatedBy}`,
-        `Last Updated At: ${info.lastUpdatedAt}`,
+        localize("URL: {0}", info.url),
+        localize("Path: {0}", info.path),
+        localize("Last Updated By: {0}", info.lastUpdatedBy),
+        localize("Last Updated At: {0}", info.lastUpdatedAt),
       ].join("\n"),
     );
   };
@@ -2371,47 +2374,51 @@ export function createShowCurrentPageActionsCommand(
     const selected = (await deps.showQuickPick(
       [
         {
-          label: "ページを更新",
+          label: localize("Refresh Page"),
           command: GROWI_COMMANDS.refreshCurrentPage,
         },
         {
-          label: "ページ名を変更",
+          label: localize("Rename Page"),
           command: GROWI_COMMANDS.renamePage,
         },
         {
-          label: "ページを削除",
+          label: localize("Delete Page"),
           command: GROWI_COMMANDS.deletePage,
         },
         {
-          label: "被リンクを表示",
+          label: localize("Show Backlinks"),
           command: GROWI_COMMANDS.showBacklinks,
         },
         {
-          label: "ページ情報を表示",
+          label: localize("Show Page Info"),
           command: GROWI_COMMANDS.showCurrentPageInfo,
         },
         {
-          label: "添付一覧を表示",
+          label: localize("Show Attachments"),
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
-          label: isBookmarked ? "ブックマークから削除" : "ブックマークに追加",
+          label: isBookmarked
+            ? localize("Remove Bookmark")
+            : localize("Add Bookmark"),
           command: isBookmarked
             ? GROWI_COMMANDS.removeCurrentPageBookmark
             : GROWI_COMMANDS.addCurrentPageBookmark,
         },
         {
-          label: "履歴差分を表示",
+          label: localize("Show Revision Diff"),
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
         {
-          label: "現在ページをローカルに同期",
-          description: "__<page>__.md と .growi-mirror.json を作成または更新",
+          label: localize("Sync Current Page Locally"),
+          description: localize(
+            "Create or update __<page>__.md and .growi-mirror.json",
+          ),
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "現在ページ配下をローカルに同期",
-          description: "prefix mirror を作成または更新",
+          label: localize("Sync Current Page Subtree Locally"),
+          description: localize("Create or update the prefix mirror"),
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
         },
       ] as readonly CurrentPageActionQuickPickItem[],
@@ -2629,23 +2636,23 @@ export function createOpenCurrentPageHubCommand(
 export function buildCurrentPageDetailActions(): readonly CurrentPageDetailAction[] {
   return [
     {
-      label: "ページ情報を表示",
-      description: "URL、pageId、revision、更新情報",
+      label: localize("Show Page Info"),
+      description: localize("URL, pageId, revision, and updates"),
       command: GROWI_COMMANDS.showCurrentPageInfo,
     },
     {
-      label: "被リンクを表示",
-      description: "現在ページへの参照元",
+      label: localize("Show Backlinks"),
+      description: localize("Pages linking to the current page"),
       command: GROWI_COMMANDS.showBacklinks,
     },
     {
-      label: "添付一覧を表示",
-      description: "現在ページに紐づく添付",
+      label: localize("Show Attachments"),
+      description: localize("Attachments for the current page"),
       command: GROWI_COMMANDS.showCurrentPageAttachments,
     },
     {
-      label: "履歴差分を表示",
-      description: "revision を選択して VS Code diff で比較",
+      label: localize("Show Revision Diff"),
+      description: localize("Select a revision and compare it in VS Code diff"),
       command: GROWI_COMMANDS.showRevisionHistoryDiff,
     },
   ];
@@ -2655,21 +2662,21 @@ function mapPageDetailAccessFailureReason(
   reason: GrowiAccessFailureReason,
 ): string {
   if (reason === "BaseUrlNotConfigured") {
-    return "Base URL 未設定";
+    return localize("Base URL not configured");
   }
   if (reason === "ApiTokenNotConfigured") {
-    return "API token 未設定";
+    return localize("API token not configured");
   }
   if (reason === "InvalidApiToken") {
-    return "API token が無効";
+    return localize("Invalid API token");
   }
   if (reason === "PermissionDenied") {
-    return "権限不足";
+    return localize("Permission denied");
   }
   if (reason === "ApiNotSupported") {
-    return "API 未対応";
+    return localize("API not supported");
   }
-  return "接続失敗";
+  return localize("Connection failed");
 }
 
 export async function loadCurrentPageDetailSummary(
@@ -2746,8 +2753,8 @@ export async function loadCurrentPageDetailSummary(
         unavailableReason:
           backlinks.reason === "ListPagesApiNotSupported" ||
           backlinks.reason === "ReadPageApiNotSupported"
-            ? "API 未対応"
-            : "取得できませんでした",
+            ? localize("API not supported")
+            : localize("Could not retrieve"),
       };
 
   return summary;
@@ -2757,15 +2764,15 @@ function mapBacklinksPlaceholder(input: {
   timedOut: boolean;
   scannedCount: number;
 }): string {
-  const scannedSuffix = `走査済み: ${input.scannedCount}件。`;
+  const scannedSuffix = localize("Scanned: {0} items.", input.scannedCount);
   if (input.truncatedByLimit && input.timedOut) {
-    return `${SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX}${scannedSuffix}結果は最大100件と5秒で打ち切られています。`;
+    return `${SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX}${scannedSuffix}${localize("Results are limited to 100 items and 5 seconds.")}`;
   }
   if (input.truncatedByLimit) {
-    return `${SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX}${scannedSuffix}結果は最大100件で打ち切られています。`;
+    return `${SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX}${scannedSuffix}${localize("Results are limited to 100 items.")}`;
   }
   if (input.timedOut) {
-    return `${SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX}${scannedSuffix}結果は5秒で打ち切られています。`;
+    return `${SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX}${scannedSuffix}${localize("Results are limited to 5 seconds.")}`;
   }
   return SHOW_BACKLINKS_PLACEHOLDER_NORMAL;
 }
@@ -2776,7 +2783,7 @@ function mapBacklinksEmptyResultMessage(input: {
   scannedCount: number;
 }): string {
   if (input.truncatedByLimit || input.timedOut) {
-    return `${SHOW_BACKLINKS_PARTIAL_EMPTY_RESULT_PREFIX}走査済み: ${input.scannedCount}件。`;
+    return `${SHOW_BACKLINKS_PARTIAL_EMPTY_RESULT_PREFIX}${localize("Scanned: {0} items.", input.scannedCount)}`;
   }
   return SHOW_BACKLINKS_EMPTY_RESULT_MESSAGE;
 }

@@ -1,12 +1,15 @@
 import * as vscode from "vscode";
 import type { UriLike } from "../commands";
+import { localize } from "../l10n";
 import type {
   MirrorCompareScmResource,
   MirrorCompareScmState,
 } from "./mirrorCompareScm";
 
 export const GROWI_MIRROR_COMPARE_SOURCE_CONTROL_ID = "growifs-mirror-compare";
-export const GROWI_MIRROR_COMPARE_SOURCE_CONTROL_LABEL = "GROWI Mirror Compare";
+export const GROWI_MIRROR_COMPARE_SOURCE_CONTROL_LABEL = localize(
+  "GROWI Mirror Compare",
+);
 export const GROWI_MIRROR_COMPARE_LOCAL_CHANGES_CONTEXT =
   "growifs.localChanged";
 export const GROWI_MIRROR_COMPARE_REMOTE_CHANGES_CONTEXT =
@@ -80,7 +83,7 @@ function toVscodeUri(uri: UriLike): vscode.Uri {
 }
 
 function buildMirrorCompareDiffTitle(canonicalPath: string): string {
-  return `GROWI Mirror Diff: ${canonicalPath}`;
+  return localize("GROWI Mirror Diff: {0}", canonicalPath);
 }
 
 function buildResourceState(
@@ -90,10 +93,10 @@ function buildResourceState(
   const localFileUri = toVscodeUri(resource.localFileUri);
   const statusLabel =
     resource.status === "LocalChanged"
-      ? "modified locally"
+      ? localize("modified locally")
       : resource.status === "RemoteChanged"
-        ? "remote changed"
-        : "conflict";
+        ? localize("remote changed")
+        : localize("conflict");
 
   return {
     resourceUri: localFileUri,
@@ -114,7 +117,7 @@ function buildResourceState(
       ],
     },
     decorations: {
-      tooltip: `${statusLabel}: ${resource.canonicalPath}`,
+      tooltip: localize("{0}: {1}", statusLabel, resource.canonicalPath),
     },
   };
 }
@@ -137,13 +140,16 @@ export function createGrowiMirrorCompareSourceControl(
 
   const changesGroup = sourceControl.createResourceGroup(
     "changes",
-    "ローカルの変更",
+    localize("Local Changes"),
   );
   const remoteChangedGroup = sourceControl.createResourceGroup(
     "remoteChanged",
-    "GROWI側の変更",
+    localize("GROWI Changes"),
   );
-  const conflictsGroup = sourceControl.createResourceGroup("conflicts", "競合");
+  const conflictsGroup = sourceControl.createResourceGroup(
+    "conflicts",
+    localize("Conflicts"),
+  );
 
   const getResourcesForGroup = (
     groupId: MirrorCompareScmGroupId,

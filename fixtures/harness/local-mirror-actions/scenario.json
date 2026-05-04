@@ -5,6 +5,9 @@
   "uiAreas": ["quickPick", "localMirror"],
   "changedFileGlobs": [
     "src/vscode/commands.ts",
+    "src/vscode/llmSkillPackCommands.ts",
+    "src/vscode/llmSkillPackService.ts",
+    "src/vscode/llmDiffContextService.ts",
     "src/vscode/mirrorLocalChangeMonitor.ts",
     "src/vscode/mirrorRemoteMetadataCheck.ts",
     "src/extension.ts",
@@ -18,19 +21,19 @@
   "target": "Local mirror actions, SCM local-only and metadata-only remote update expectations, and evidence limits",
   "reviewFocus": [
     "Confirm the Local Mirror Actions QuickPick still exposes sync, compare, and SCM handoff without a direct upload action.",
-    "Review SCM local-only update expectations: after a saved local mirror .md/.growi-mirror.json edit, Source Control can show ローカルの変更 without pressing compare and without calling the GROWI API.",
+    "Review SCM local-only update expectations: after a saved local mirror .md/.growi-mirror.json edit, Source Control can show Local Changes without pressing compare and without calling the GROWI API.",
     "Review activation/startup scan expectations: pre-existing local mirror edits under .growi-mirrors are detected from .growi-mirror.json without requiring a new save event.",
-    "Review metadata-only remote check expectations: GROWI側の更新を確認 is an SCM repository action that checks page metadata only, while 再比較 remains the full compare path that may fetch body and open diff evidence.",
-    "Review TreeView-triggered remote check expectations: opening a page, directory page, or prefix root page from TreeView can check that single page metadata only and may create GROWI側の変更 / 競合 even when SCM was empty.",
+    "Review metadata-only remote check expectations: Check GROWI Updates is an SCM repository action that checks page metadata only, while Compare Again remains the full compare path that may fetch body and open diff evidence.",
+    "Review TreeView-triggered remote check expectations: opening a page, directory page, or prefix root page from TreeView can check that single page metadata only and may create GROWI Changes / Conflicts even when SCM was empty.",
     "Review automatic remote access limits: local-only LocalChanged pages and TreeView page-open operations can trigger metadata-only checks, but there is no interval polling, no prefix-wide automatic scan, max 25 pages per automatic run, one page per TreeView operation, concurrency 2, and 10 minute per-page cooldown.",
     "This harness does not directly trigger VS Code file watcher, activation scan, focus events, or native SCM menu rendering; use the scenario metadata together with mirrorLocalChangeMonitor, mirrorRemoteMetadataCheck, package config, and bootstrap unit evidence."
   ],
   "uxReviewQuestions": [
-    "Does the captured QuickPick make it clear that GROWIとの差分を確認 / 再比較 remains the path for accurate GROWI-side changes and conflicts?",
-    "Is the evidence pack explicit that automatic ローカルの変更 can come from either save-event watcher behavior or activation/startup scan behavior?",
+    "Does the captured QuickPick make it clear that Compare with GROWI / Compare Again remains the path for accurate GROWI-side changes and conflicts?",
+    "Is the evidence pack explicit that automatic Local Changes can come from either save-event watcher behavior or activation/startup scan behavior?",
     "Is the evidence pack explicit that TreeView page-open metadata checks are one-page, metadata-only, and user-operation-triggered?",
-    "Is the evidence pack explicit that GROWI側の更新を確認 is metadata-only and does not replace full compare for body diff review?",
-    "Is the SCM action set coherent: 再比較, GROWI側の更新を確認, GROWIに反映, ローカルに取り込む?"
+    "Is the evidence pack explicit that Check GROWI Updates is metadata-only and does not replace full compare for body diff review?",
+    "Is the SCM action set coherent: Compare Again, Check GROWI Updates, Apply to GROWI, Take into Local, Prepare LLM Local Mirror Prompt, Prepare LLM Local Mirror Diff?"
   ],
   "fixture": {
     "pages": [
@@ -57,7 +60,7 @@
         "kind": "localMirrorActions",
         "action": "collectOnly",
         "select": {
-          "label": "GROWIとの差分を確認"
+          "label": "Compare with GROWI"
         }
       }
     }
@@ -66,21 +69,21 @@
     "requiredQuickPickItems": [
       {
         "name": "localMirrorActions",
-        "placeholder": "ローカルミラーに対して実行する操作を選択してください。",
+        "placeholder": "Select an action for the local mirror.",
         "item": {
-          "label": "現在ページをローカルに同期"
+          "label": "Sync Current Page Locally"
         }
       },
       {
         "name": "localMirrorActions",
         "item": {
-          "label": "GROWIとの差分を確認"
+          "label": "Compare with GROWI"
         }
       },
       {
         "name": "localMirrorActions",
         "item": {
-          "label": "SCMで確認してGROWIに反映"
+          "label": "Review in SCM and apply to GROWI"
         }
       }
     ],
@@ -89,13 +92,13 @@
         "name": "localMirrorActions",
         "items": [
           {
-            "label": "現在ページをローカルに同期"
+            "label": "Sync Current Page Locally"
           },
           {
-            "label": "GROWIとの差分を確認"
+            "label": "Compare with GROWI"
           },
           {
-            "label": "SCMで確認してGROWIに反映"
+            "label": "Review in SCM and apply to GROWI"
           }
         ]
       }
@@ -104,7 +107,7 @@
       {
         "name": "localMirrorActions",
         "item": {
-          "label": "ページを削除"
+          "label": "Delete Page"
         }
       }
     ],
@@ -112,7 +115,7 @@
       {
         "name": "localMirrorActions",
         "item": {
-          "label": "GROWIとの差分を確認"
+          "label": "Compare with GROWI"
         }
       }
     ],
@@ -120,6 +123,21 @@
       "growi.addPrefix",
       "growi.openPage",
       "growi.showLocalMirrorActions"
-    ]
+    ],
+    "requiredMenuItems": [
+      {
+        "menu": "scm/repository",
+        "command": "growi.startLlmEditSession",
+        "when": "scmProvider == growifs-mirror-compare",
+        "group": "inline@5"
+      },
+      {
+        "menu": "scm/repository",
+        "command": "growi.createLlmLocalMirrorDiffContext",
+        "when": "scmProvider == growifs-mirror-compare",
+        "group": "inline@6"
+      }
+    ],
+    "forbiddenJapaneseText": true
   }
 }

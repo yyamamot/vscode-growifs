@@ -115,9 +115,9 @@ describe("mirror compare source control", () => {
     );
     expect(sourceControl.inputBox.visible).toBe(false);
     expect(sourceControl.count).toBe(3);
-    expect(groups.get("changes")?.label).toBe("ローカルの変更");
-    expect(groups.get("remoteChanged")?.label).toBe("GROWI側の変更");
-    expect(groups.get("conflicts")?.label).toBe("競合");
+    expect(groups.get("changes")?.label).toBe("Local Changes");
+    expect(groups.get("remoteChanged")?.label).toBe("GROWI Changes");
+    expect(groups.get("conflicts")?.label).toBe("Conflicts");
     expect(groups.get("changes")?.resourceStates).toHaveLength(1);
     expect(groups.get("remoteChanged")?.resourceStates).toHaveLength(1);
     expect(groups.get("conflicts")?.resourceStates).toHaveLength(1);

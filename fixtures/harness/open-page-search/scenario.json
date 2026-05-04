@@ -70,7 +70,7 @@
     "requiredQuickPickItems": [
       {
         "name": "openPage",
-        "placeholder": "登録済み Prefix 配下からページを絞り込んで選択してください。",
+        "placeholder": "Filter and select a page under a registered prefix.",
         "value": "spec",
         "item": {
           "label": "spec",
@@ -82,7 +82,7 @@
         "name": "openPage",
         "value": "spec",
         "item": {
-          "label": "URL / path を直接入力",
+          "label": "Enter URL / path directly",
           "action": "directInput"
         }
       },
@@ -90,7 +90,7 @@
         "name": "openPage",
         "value": "zzz",
         "item": {
-          "label": "URL / path を直接入力",
+          "label": "Enter URL / path directly",
           "action": "directInput"
         }
       }
@@ -151,7 +151,7 @@
         "name": "openPage",
         "value": "spec",
         "item": {
-          "label": "URL / path を直接入力"
+          "label": "Enter URL / path directly"
         },
         "action": "directInput"
       }
@@ -160,6 +160,7 @@
       "growi.addPrefix",
       "growi.openPage",
       "growi.openPage"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

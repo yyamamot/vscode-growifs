@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { normalizeCanonicalPath } from "../core/uri";
+import { localize } from "./l10n";
 import type { MirrorCompareScmState } from "./mirror/mirrorCompareScm";
 import type { OpenedPageDecorationStatus } from "./pageFreshnessService";
 
@@ -43,24 +44,28 @@ const PAGE_DECORATION_PRESENTATIONS: Record<
   { description: string; tooltip: string }
 > = {
   remoteNewer: {
-    description: "remote newer",
-    tooltip:
-      "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
+    description: localize("remote newer"),
+    tooltip: localize(
+      "GROWI has a newer version. Reload with Refresh Current Page.",
+    ),
   },
   localChanges: {
-    description: "ローカルの変更",
-    tooltip:
-      "ローカル側に GROWI へ未反映の変更があります。Compare Local Mirror with GROWI または GROWIに反映で確認してください。",
+    description: localize("Local Changes"),
+    tooltip: localize(
+      "Local changes have not been applied to GROWI. Check with Compare Local Mirror with GROWI or Apply to GROWI.",
+    ),
   },
   remoteChanges: {
-    description: "GROWI側の変更",
-    tooltip:
-      "GROWI側の変更がローカルに未取り込みです。Compare Local Mirror with GROWI または ローカルに取り込むで確認してください。",
+    description: localize("GROWI Changes"),
+    tooltip: localize(
+      "GROWI changes have not been taken into local files. Check with Compare Local Mirror with GROWI or Take into Local.",
+    ),
   },
   conflicts: {
-    description: "競合",
-    tooltip:
-      "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+    description: localize("Conflicts"),
+    tooltip: localize(
+      "Both local and GROWI have changes. Check diffs with Compare Local Mirror with GROWI.",
+    ),
   },
 };
 
@@ -155,7 +160,7 @@ function createLoadMoreItem(
   const normalizedPath = normalizeCanonicalPath(parentUri.path);
   const targetPath = normalizedPath.ok ? normalizedPath.value : parentUri.path;
   const item = new vscode.TreeItem(
-    "さらに読み込む",
+    localize("Load More"),
     vscode.TreeItemCollapsibleState.None,
   ) as PrefixTreeItem;
   item.kind = "loadMore";
@@ -163,11 +168,19 @@ function createLoadMoreItem(
   item.parentUri = parentUri;
   item.contextValue = "growi.loadMore";
   item.iconPath = new vscode.ThemeIcon("cloud-download");
-  item.description = `部分表示: ${targetPath}・取得済み ${state.fetchedCount} 件`;
-  item.tooltip = `${targetPath} 配下の一部のみ表示しています。取得済み: ${state.fetchedCount} 件。選択するとこの階層の続きを取得します。`;
+  item.description = localize(
+    "Partial: {0} / fetched {1}",
+    targetPath,
+    state.fetchedCount,
+  );
+  item.tooltip = localize(
+    "Only part of {0} is shown. Fetched: {1}. Select this item to fetch more in this hierarchy.",
+    targetPath,
+    state.fetchedCount,
+  );
   item.command = {
     command: GROWI_LOAD_MORE_LISTING_COMMAND,
-    title: "Load More GROWI Pages",
+    title: localize("Load More GROWI Pages"),
     arguments: [parentUri],
   };
   return item;

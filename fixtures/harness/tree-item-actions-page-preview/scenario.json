@@ -68,18 +68,8 @@
       },
       {
         "menu": "view/item/context",
-        "command": "growi.explorerShowCurrentPageAttachments",
-        "group": "02_inspect@3"
-      },
-      {
-        "menu": "view/item/context",
-        "command": "growi.explorerShowRevisionHistoryDiff",
-        "group": "02_inspect@4"
-      },
-      {
-        "menu": "view/item/context",
         "command": "growi.openCurrentPageHub",
-        "group": "02_inspect@5"
+        "group": "02_inspect@2"
       },
       {
         "menu": "view/item/context",
@@ -96,6 +86,7 @@
         "menu": "view/item/context",
         "command": "growi.explorerUploadLocalMirrorToGrowi"
       }
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

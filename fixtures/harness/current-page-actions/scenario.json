@@ -44,7 +44,7 @@
         "kind": "currentPageActions",
         "action": "collectOnly",
         "select": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       }
     }
@@ -53,22 +53,22 @@
     "requiredQuickPickItems": [
       {
         "name": "currentPageActions",
-        "placeholder": "現在ページに対して実行する操作を選択してください。",
+        "placeholder": "Select an action for the current page.",
         "item": {
-          "label": "ページを更新"
+          "label": "Refresh Page"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       },
       {
         "name": "currentPageActions",
         "item": {
-          "label": "現在ページをローカルに同期",
-          "description": "__<page>__.md と .growi-mirror.json を作成または更新"
+          "label": "Sync Current Page Locally",
+          "description": "Create or update __<page>__.md and .growi-mirror.json"
         }
       }
     ],
@@ -77,19 +77,19 @@
         "name": "currentPageActions",
         "items": [
           {
-            "label": "ページを更新"
+            "label": "Refresh Page"
           },
           {
-            "label": "ページ名を変更"
+            "label": "Rename Page"
           },
           {
-            "label": "ページを削除"
+            "label": "Delete Page"
           },
           {
-            "label": "被リンクを表示"
+            "label": "Show Backlinks"
           },
           {
-            "label": "ページ情報を表示"
+            "label": "Show Page Info"
           }
         ]
       }
@@ -98,7 +98,7 @@
       {
         "name": "currentPageActions",
         "item": {
-          "label": "URL / path を直接入力",
+          "label": "Enter URL / path directly",
           "action": "directInput"
         }
       }
@@ -107,7 +107,7 @@
       {
         "name": "currentPageActions",
         "item": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       }
     ],
@@ -115,6 +115,7 @@
       "growi.addPrefix",
       "growi.openPage",
       "growi.showCurrentPageActions"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

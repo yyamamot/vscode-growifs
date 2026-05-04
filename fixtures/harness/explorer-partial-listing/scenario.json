@@ -47,7 +47,9 @@
     },
     {
       "id": "growi.addPrefix",
-      "args": ["/team/dev"]
+      "args": [
+        "/team/dev"
+      ]
     },
     {
       "id": "growi.explorer.focus"
@@ -74,15 +76,16 @@
         "contextValue": "growi.directoryPage"
       },
       {
-        "label": "さらに読み込む",
+        "label": "Load More",
         "kind": "loadMore",
         "canonicalPath": "/team/dev",
         "contextValue": "growi.loadMore",
-        "description": "部分表示: /team/dev・取得済み 100 件"
+        "description": "Partial: /team/dev / fetched 100"
       }
     ],
     "requiredCommandSequence": [
       "growi.addPrefix"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

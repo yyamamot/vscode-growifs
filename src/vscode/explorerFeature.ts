@@ -26,6 +26,7 @@ import {
 } from "./commands";
 import { GROWI_COMMANDS } from "./commandsConstants";
 import type { CommandDeps } from "./commandsTypes";
+import { localize } from "./l10n";
 import {
   createGrowiPrefixTreeDataProvider,
   GROWI_EXPLORER_VIEW_ID,
@@ -230,11 +231,11 @@ function buildExplorerItemActionItems(
   if (contextValue === "growi.directory") {
     return [
       createExplorerActionItem(
-        "ここに作成",
+        localize("Create Here"),
         GROWI_COMMANDS.explorerCreatePageHere,
       ),
       createExplorerActionItem(
-        "配下ページの差分を確認",
+        localize("Compare Subtree with GROWI"),
         GROWI_COMMANDS.explorerCompareLocalMirrorSubtreeWithGrowi,
       ),
     ];
@@ -243,27 +244,27 @@ function buildExplorerItemActionItems(
   if (contextValue === "growi.prefixRoot") {
     return [
       createExplorerActionItem(
-        "Prefix ページを開く",
+        localize("Open Prefix Page"),
         GROWI_COMMANDS.openPrefixRootPage,
       ),
       createExplorerActionItem(
-        "ブラウザで表示",
+        localize("Open in Browser"),
         GROWI_COMMANDS.explorerOpenPageInBrowser,
       ),
       createExplorerActionItem(
-        "ここに作成",
+        localize("Create Here"),
         GROWI_COMMANDS.explorerCreatePageHere,
       ),
       createExplorerActionItem(
-        "配下ページをローカルに同期",
+        localize("Sync Subtree Locally"),
         GROWI_COMMANDS.explorerCreateLocalMirrorForCurrentPrefix,
       ),
       createExplorerActionItem(
-        "配下ページの差分を確認",
+        localize("Compare Subtree with GROWI"),
         GROWI_COMMANDS.explorerCompareLocalMirrorSubtreeWithGrowi,
       ),
       createExplorerActionItem(
-        "プレフィックスを削除",
+        localize("Delete Prefix"),
         GROWI_COMMANDS.deletePrefix,
       ),
     ];
@@ -271,40 +272,43 @@ function buildExplorerItemActionItems(
 
   const pageActions = [
     createExplorerActionItem(
-      "ブラウザで表示",
+      localize("Open in Browser"),
       GROWI_COMMANDS.explorerOpenPageInBrowser,
     ),
     createExplorerActionItem(
-      "ページを更新",
+      localize("Refresh Page"),
       GROWI_COMMANDS.explorerRefreshCurrentPage,
     ),
     createExplorerActionItem(
-      "ページ詳細を開く",
+      localize("Open Page Details"),
       GROWI_COMMANDS.openCurrentPageHub,
     ),
     createExplorerActionItem(
-      "ここに作成",
+      localize("Create Here"),
       GROWI_COMMANDS.explorerCreatePageHere,
     ),
     createExplorerActionItem(
-      "ページ名を変更",
+      localize("Rename Page"),
       GROWI_COMMANDS.explorerRenamePage,
     ),
     createExplorerActionItem(
-      isBookmarked ? "ブックマークから削除" : "ブックマークに追加",
+      isBookmarked ? localize("Remove Bookmark") : localize("Add Bookmark"),
       isBookmarked
         ? GROWI_COMMANDS.removeCurrentPageBookmark
         : GROWI_COMMANDS.addCurrentPageBookmark,
     ),
     createExplorerActionItem(
-      "このページをローカルに同期",
+      localize("Sync This Page Locally"),
       GROWI_COMMANDS.explorerCreateLocalMirrorForCurrentPage,
     ),
     createExplorerActionItem(
-      "このページの差分を確認",
+      localize("Compare This Page with GROWI"),
       GROWI_COMMANDS.explorerCompareLocalMirrorWithGrowi,
     ),
-    createExplorerActionItem("ページを削除", GROWI_COMMANDS.explorerDeletePage),
+    createExplorerActionItem(
+      localize("Delete Page"),
+      GROWI_COMMANDS.explorerDeletePage,
+    ),
   ];
 
   if (
@@ -315,7 +319,7 @@ function buildExplorerItemActionItems(
       10,
       0,
       createExplorerActionItem(
-        "配下ページをローカルに同期",
+        localize("Sync Subtree Locally"),
         GROWI_COMMANDS.explorerCreateLocalMirrorForCurrentPrefix,
       ),
     );
@@ -343,7 +347,9 @@ function showExplorerItemActionsQuickPick(
 
   if (!targetUri || items.length === 0) {
     options.showErrorMessage(
-      "Tree item actions は GROWI Explorer の操作可能な item でのみ表示できます。",
+      localize(
+        "Tree item actions are only available for actionable GROWI Explorer items.",
+      ),
     );
     return;
   }
@@ -352,8 +358,8 @@ function showExplorerItemActionsQuickPick(
     vscode.window.createQuickPick<ExplorerItemActionQuickPickItem>();
   quickPick.ignoreFocusOut = true;
   quickPick.placeholder = canonicalPath
-    ? `Tree item action を選択してください: ${canonicalPath}`
-    : "Tree item action を選択してください。";
+    ? localize("Select a tree item action: {0}", canonicalPath)
+    : localize("Select a tree item action.");
   quickPick.items = items;
   quickPick.onDidAccept(() => {
     const selected = quickPick.selectedItems[0];
@@ -586,7 +592,7 @@ export function createGrowiExplorerFeature(
             const message =
               error instanceof Error && error.message.length > 0
                 ? error.message
-                : "一覧の追加取得に失敗しました。";
+                : localize("Could not load more items.");
             showErrorMessage(message);
           }
         },
@@ -650,8 +656,8 @@ export function createGrowiExplorerFeature(
             return {
               name: "treeItemActions",
               placeholder: canonicalPath
-                ? `Tree item action を選択してください: ${canonicalPath}`
-                : "Tree item action を選択してください。",
+                ? localize("Select a tree item action: {0}", canonicalPath)
+                : localize("Select a tree item action."),
               items: items.map((item) => ({
                 label: item.label,
                 description: item.description,

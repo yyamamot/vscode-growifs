@@ -6,6 +6,28 @@ import type {
   CurrentPageDetailWebviewInput,
   UriLike,
 } from "./commands";
+import { localize } from "./l10n";
+
+interface CurrentPageDetailWebviewLabels {
+  pageDetail: string;
+  pageInfo: string;
+  pageInfoDescription: string;
+  backlinks: string;
+  backlinksDescription: string;
+  attachments: string;
+  attachmentsDescription: string;
+  revisions: string;
+  revisionsDescription: string;
+  unavailable: string;
+  status: string;
+  pageInfoUnavailable: string;
+  unknown: string;
+  lastUpdatedBy: string;
+  lastUpdatedAt: string;
+  partial: string;
+  count: string;
+  empty: string;
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -41,35 +63,44 @@ function renderAction(action: CurrentPageDetailAction): string {
   </button>`;
 }
 
-function renderCount(input: CurrentPageDetailPreviewList): string {
+function renderCount(
+  input: CurrentPageDetailPreviewList,
+  labels: CurrentPageDetailWebviewLabels,
+): string {
   if (input.unavailableReason) {
     return `<span class="count">${escapeHtml(input.unavailableReason)}</span>`;
   }
   if (input.totalCount === undefined) {
     return "";
   }
-  const suffix = input.partial ? "一部表示" : "件";
+  const suffix = input.partial ? labels.partial : labels.count;
   return `<span class="count">${input.totalCount}${suffix}</span>`;
 }
 
-function renderPreviewItems(input: CurrentPageDetailPreviewList): string {
+function renderPreviewItems(
+  input: CurrentPageDetailPreviewList,
+  labels: CurrentPageDetailWebviewLabels,
+): string {
   if (input.items.length === 0) {
-    return `<li class="empty">表示できる項目はありません</li>`;
+    return `<li class="empty">${escapeHtml(labels.empty)}</li>`;
   }
   return input.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("\n");
 }
 
-function renderPageInfo(summary?: CurrentPageDetailSummary): string {
+function renderPageInfo(
+  summary: CurrentPageDetailSummary | undefined,
+  labels: CurrentPageDetailWebviewLabels,
+): string {
   const info = summary?.pageInfo;
   if (!info) {
-    return `<dl class="metadata"><div><dt>状態</dt><dd>ページ情報を取得できません</dd></div></dl>`;
+    return `<dl class="metadata"><div><dt>${escapeHtml(labels.status)}</dt><dd>${escapeHtml(labels.pageInfoUnavailable)}</dd></div></dl>`;
   }
   const rows = [
     ["URL", info.url],
     ["pageId", info.pageId],
-    ["revision", info.revisionId ?? "不明"],
-    ["更新者", info.lastUpdatedBy],
-    ["更新日時", info.lastUpdatedAt],
+    ["revision", info.revisionId ?? labels.unknown],
+    [labels.lastUpdatedBy, info.lastUpdatedBy],
+    [labels.lastUpdatedAt, info.lastUpdatedAt],
   ];
   return `<dl class="metadata">${rows
     .map(
@@ -91,30 +122,32 @@ function renderPreviewSection(input: {
   description: string;
   preview?: CurrentPageDetailPreviewList;
   action?: CurrentPageDetailAction;
+  labels: CurrentPageDetailWebviewLabels;
 }): string {
   const action = input.action ? renderAction(input.action) : "";
   const preview = input.preview ?? {
     items: [],
-    unavailableReason: "未取得",
+    unavailableReason: input.labels.unavailable,
   };
   return `<section class="section">
     <div class="section-header">
       <div>
-        <h2>${escapeHtml(input.title)} ${renderCount(preview)}</h2>
+        <h2>${escapeHtml(input.title)} ${renderCount(preview, input.labels)}</h2>
         <p>${escapeHtml(input.description)}</p>
       </div>
       ${action}
     </div>
-    <ol class="preview-list">${renderPreviewItems(preview)}</ol>
+    <ol class="preview-list">${renderPreviewItems(preview, input.labels)}</ol>
   </section>`;
 }
 
-function renderPageDetailHtml(input: {
+export function renderPageDetailHtml(input: {
   canonicalPath: string;
   actions: readonly CurrentPageDetailAction[];
   summary?: CurrentPageDetailSummary;
   cspSource: string;
   nonce: string;
+  labels: CurrentPageDetailWebviewLabels;
 }): string {
   const pageInfoAction = findAction(input.actions, "growi.showCurrentPageInfo");
   const backlinkAction = findAction(input.actions, "growi.showBacklinks");
@@ -126,13 +159,14 @@ function renderPageDetailHtml(input: {
     input.actions,
     "growi.showRevisionHistoryDiff",
   );
+  const language = escapeHtml(vscode.env.language || "en");
   return `<!DOCTYPE html>
-<html lang="ja">
+<html lang="${language}">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${input.cspSource} 'unsafe-inline'; script-src 'nonce-${input.nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ページ詳細</title>
+  <title>${escapeHtml(input.labels.pageDetail)}</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -254,37 +288,40 @@ function renderPageDetailHtml(input: {
 </head>
 <body>
   <header class="header">
-    <h1>ページ詳細</h1>
+    <h1>${escapeHtml(input.labels.pageDetail)}</h1>
     <div class="path">${escapeHtml(input.canonicalPath)}</div>
   </header>
   <main class="summary">
     <section class="section">
       <div class="section-header">
         <div>
-          <h2>ページ情報</h2>
-          <p>URL、pageId、revision、更新情報</p>
+          <h2>${escapeHtml(input.labels.pageInfo)}</h2>
+          <p>${escapeHtml(input.labels.pageInfoDescription)}</p>
         </div>
         ${pageInfoAction ? renderAction(pageInfoAction) : ""}
       </div>
-      ${renderPageInfo(input.summary)}
+      ${renderPageInfo(input.summary, input.labels)}
     </section>
     ${renderPreviewSection({
-      title: "被リンク",
-      description: "現在ページへの参照元 top 5",
+      title: input.labels.backlinks,
+      description: input.labels.backlinksDescription,
       preview: input.summary?.backlinks,
       action: backlinkAction,
+      labels: input.labels,
     })}
     ${renderPreviewSection({
-      title: "添付",
-      description: "現在ページに紐づく添付 top 5",
+      title: input.labels.attachments,
+      description: input.labels.attachmentsDescription,
       preview: input.summary?.attachments,
       action: attachmentAction,
+      labels: input.labels,
     })}
     ${renderPreviewSection({
-      title: "履歴",
-      description: "最近の revision top 5",
+      title: input.labels.revisions,
+      description: input.labels.revisionsDescription,
       preview: input.summary?.revisions,
       action: revisionAction,
+      labels: input.labels,
     })}
   </main>
   <script nonce="${input.nonce}">
@@ -311,7 +348,7 @@ export function createCurrentPageDetailWebviewController(context: {
 
   return {
     open(input: CurrentPageDetailWebviewInput): void {
-      const title = `ページ詳細: ${input.canonicalPath}`;
+      const title = localize("Page Details: {0}", input.canonicalPath);
       if (panel) {
         panel.title = title;
         panel.reveal(vscode.ViewColumn.Beside);
@@ -360,6 +397,30 @@ export function createCurrentPageDetailWebviewController(context: {
         summary: input.summary,
         cspSource: panel.webview.cspSource,
         nonce: createNonce(),
+        labels: {
+          pageDetail: localize("Page Details"),
+          pageInfo: localize("Page Info"),
+          pageInfoDescription: localize("URL, pageId, revision, and updates"),
+          backlinks: localize("Backlinks"),
+          backlinksDescription: localize(
+            "Top 5 pages linking to the current page",
+          ),
+          attachments: localize("Attachments"),
+          attachmentsDescription: localize(
+            "Top 5 attachments for the current page",
+          ),
+          revisions: localize("History"),
+          revisionsDescription: localize("Top 5 recent revisions"),
+          unavailable: localize("Not loaded"),
+          status: localize("Status"),
+          pageInfoUnavailable: localize("Could not retrieve page info"),
+          unknown: localize("Unknown"),
+          lastUpdatedBy: localize("Updated by"),
+          lastUpdatedAt: localize("Updated at"),
+          partial: localize("partial"),
+          count: localize(" items"),
+          empty: localize("No displayable items"),
+        },
       });
     },
     dispose(): void {

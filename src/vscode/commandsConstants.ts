@@ -1,3 +1,5 @@
+import { localize } from "./l10n";
+
 export const GROWI_COMMANDS = {
   configureBaseUrl: "growi.configureBaseUrl",
   configureApiToken: "growi.configureApiToken",
@@ -50,6 +52,9 @@ export const GROWI_COMMANDS = {
   refreshLocalMirror: "growi.refreshLocalMirror",
   compareLocalMirrorWithGrowi: "growi.compareLocalMirrorWithGrowi",
   uploadLocalMirrorToGrowi: "growi.uploadLocalMirrorToGrowi",
+  installLlmSkillPack: "growi.installLlmSkillPack",
+  startLlmEditSession: "growi.startLlmEditSession",
+  createLlmLocalMirrorDiffContext: "growi.createLlmLocalMirrorDiffContext",
   scmCompareMirrorAgain: "growi.scmCompareMirrorAgain",
   scmCheckRemoteMetadata: "growi.scmCheckRemoteMetadata",
   scmUploadMirrorResources: "growi.scmUploadMirrorResources",
@@ -66,32 +71,50 @@ export const GROWI_SECRET_KEYS = {
 
 export const GROWI_README_URI = "growi-readme:/README.md";
 
-export const OPEN_CURRENT_PAGE_HUB_PLACEHOLDER =
-  "ページ詳細で確認する項目を選択してください。";
-export const SHOW_CURRENT_PAGE_ATTACHMENTS_PLACEHOLDER =
-  "添付一覧からブラウザで表示する添付を選択してください。";
-export const SHOW_CURRENT_PAGE_ACTIONS_PLACEHOLDER =
-  "現在ページに対して実行する操作を選択してください。";
-export const SHOW_REVISION_HISTORY_DIFF_REVISION_PLACEHOLDER =
-  "比較したい revision を選択してください。";
-export const OPEN_PAGE_QUICK_PICK_PLACEHOLDER =
-  "登録済み Prefix 配下からページを絞り込んで選択してください。";
-export const OPEN_PAGE_DIRECT_INPUT_LABEL = "URL / path を直接入力";
-export const OPEN_PAGE_DIRECT_INPUT_DESCRIPTION =
-  "候補に無いページは直接入力で開きます。";
-export const OPEN_PAGE_BOUNDED_SEARCH_DETAIL =
-  "登録済み Prefix 配下の一部候補です。";
-export const SHOW_BOOKMARKS_PLACEHOLDER =
-  "ブックマークからページを選択してください。";
-export const SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX = "追加日時:";
-export const SHOW_BOOKMARKS_STATUS_OUTSIDE_PREFIX = "状態: prefix未登録";
-export const SHOW_BOOKMARKS_STATUS_UNRESOLVABLE = "状態: 開けない";
-export const SHOW_LOCAL_ROUND_TRIP_ACTIONS_PLACEHOLDER =
-  "ローカルミラーに対して実行する操作を選択してください。";
-export const SHOW_BACKLINKS_PLACEHOLDER_NORMAL =
-  "登録済み Prefix 配下を検索しました。";
-export const SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX =
-  "登録済み Prefix 配下の一部のみ走査済みです。";
-export const SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION =
-  "mirror が無ければ作成、あれば更新";
-export const COMPARE_LOCAL_MIRROR_DESCRIPTION = "mirror manifest を使用";
+export const OPEN_CURRENT_PAGE_HUB_PLACEHOLDER = localize(
+  "Select an item to inspect in Page Details.",
+);
+export const SHOW_CURRENT_PAGE_ATTACHMENTS_PLACEHOLDER = localize(
+  "Select an attachment to open in the browser.",
+);
+export const SHOW_CURRENT_PAGE_ACTIONS_PLACEHOLDER = localize(
+  "Select an action for the current page.",
+);
+export const SHOW_REVISION_HISTORY_DIFF_REVISION_PLACEHOLDER = localize(
+  "Select a revision to compare.",
+);
+export const OPEN_PAGE_QUICK_PICK_PLACEHOLDER = localize(
+  "Filter and select a page under a registered prefix.",
+);
+export const OPEN_PAGE_DIRECT_INPUT_LABEL = localize(
+  "Enter URL / path directly",
+);
+export const OPEN_PAGE_DIRECT_INPUT_DESCRIPTION = localize(
+  "Open a page not shown in the candidates by direct input.",
+);
+export const OPEN_PAGE_BOUNDED_SEARCH_DETAIL = localize(
+  "Partial candidates under registered prefixes.",
+);
+export const SHOW_BOOKMARKS_PLACEHOLDER = localize(
+  "Select a page from bookmarks.",
+);
+export const SHOW_BOOKMARKS_OPEN_DETAIL_PREFIX = localize("Added:");
+export const SHOW_BOOKMARKS_STATUS_OUTSIDE_PREFIX = localize(
+  "Status: prefix not registered",
+);
+export const SHOW_BOOKMARKS_STATUS_UNRESOLVABLE = localize(
+  "Status: cannot open",
+);
+export const SHOW_LOCAL_ROUND_TRIP_ACTIONS_PLACEHOLDER = localize(
+  "Select an action for the local mirror.",
+);
+export const SHOW_BACKLINKS_PLACEHOLDER_NORMAL = localize(
+  "Searched under registered prefixes.",
+);
+export const SHOW_BACKLINKS_PLACEHOLDER_PARTIAL_PREFIX = localize(
+  "Only part of the registered prefixes has been scanned.",
+);
+export const SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION = localize(
+  "Create the mirror if missing, otherwise update it",
+);
+export const COMPARE_LOCAL_MIRROR_DESCRIPTION = localize("Use mirror manifest");

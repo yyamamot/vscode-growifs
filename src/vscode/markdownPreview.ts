@@ -1,9 +1,12 @@
 import * as vscode from "vscode";
 
 import { normalizeGrowiAssetTarget } from "./growiAsset";
+import { localize } from "./l10n";
 import { isKnownDrawioEmbedTarget } from "./linkNavigation";
 
-export const DRAWIO_DIAGRAM_HIDDEN_PLACEHOLDER = "[draw.io diagram hidden]";
+export const DRAWIO_DIAGRAM_HIDDEN_PLACEHOLDER = localize(
+  "[draw.io diagram hidden]",
+);
 
 interface MarkdownImageTokenLike {
   attrGet(name: string): string | null;

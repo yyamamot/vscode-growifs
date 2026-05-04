@@ -48,7 +48,7 @@
         "kind": "pageDetailActions",
         "action": "collectOnly",
         "select": {
-          "label": "添付一覧を表示"
+          "label": "Show Attachments"
         }
       }
     }
@@ -57,27 +57,27 @@
     "requiredQuickPickItems": [
       {
         "name": "pageDetailActions",
-        "placeholder": "ページ詳細で確認する項目を選択してください。",
+        "placeholder": "Select an item to inspect in Page Details.",
         "item": {
-          "label": "ページ情報を表示"
+          "label": "Show Page Info"
         }
       },
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "被リンクを表示"
+          "label": "Show Backlinks"
         }
       },
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "添付一覧を表示"
+          "label": "Show Attachments"
         }
       },
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "履歴差分を表示"
+          "label": "Show Revision Diff"
         }
       }
     ],
@@ -86,16 +86,16 @@
         "name": "pageDetailActions",
         "items": [
           {
-            "label": "ページ情報を表示"
+            "label": "Show Page Info"
           },
           {
-            "label": "被リンクを表示"
+            "label": "Show Backlinks"
           },
           {
-            "label": "添付一覧を表示"
+            "label": "Show Attachments"
           },
           {
-            "label": "履歴差分を表示"
+            "label": "Show Revision Diff"
           }
         ]
       }
@@ -104,19 +104,19 @@
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "現在ページをローカルに同期"
+          "label": "Sync Current Page Locally"
         }
       },
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "現在ページ配下をローカルに同期"
+          "label": "Sync Current Page Subtree Locally"
         }
       },
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "SCMで確認してGROWIに反映"
+          "label": "Review in SCM and apply to GROWI"
         }
       }
     ],
@@ -124,7 +124,7 @@
       {
         "name": "pageDetailActions",
         "item": {
-          "label": "添付一覧を表示"
+          "label": "Show Attachments"
         }
       }
     ],
@@ -132,6 +132,7 @@
       "growi.addPrefix",
       "growi.openPage",
       "growi.openCurrentPageHub"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

@@ -1567,6 +1567,9 @@ export async function run() {
       "growi.createLocalMirrorForCurrentPrefix",
       "growi.compareLocalMirrorWithGrowi",
       "growi.uploadLocalMirrorToGrowi",
+      "growi.installLlmSkillPack",
+      "growi.startLlmEditSession",
+      "growi.createLlmLocalMirrorDiffContext",
       "growi.showCurrentPageInfo",
       "growi.showCurrentPageAttachments",
       "growi.showBacklinks",
@@ -1590,6 +1593,134 @@ export async function run() {
       "growi.explorerUploadLocalMirrorSubtreeToGrowi",
     ]);
   });
+
+  await runCase(
+    "LLM Assist Kit commands generate workspace artifacts",
+    async () => {
+      const workspaceRoot = getLocalWorkspaceRoot();
+      await fs.rm(path.join(workspaceRoot, ".agents", "skills"), {
+        recursive: true,
+        force: true,
+      });
+      await fs.rm(path.join(workspaceRoot, ".growi-agent"), {
+        recursive: true,
+        force: true,
+      });
+      await fs.rm(getWorkspaceMirrorRootPath(baseUrl, "/sample"), {
+        recursive: true,
+        force: true,
+      });
+      await updateFixture(adminUrl, [
+        {
+          path: "/sample",
+          body: "# sample page",
+          updatedAt: "2026-03-08T01:00:00.000Z",
+          updatedBy: "system",
+        },
+      ]);
+
+      const installResult = await vscode.commands.executeCommand(
+        "growi.installLlmSkillPack",
+        workspaceRoot,
+      );
+      assert(
+        installResult?.files?.includes(
+          ".agents/skills/growi-local-mirror-prompt/SKILL.md",
+        ),
+        `Expected skill pack install result: ${toJsonString(installResult)}`,
+      );
+      const menus = await collectPackageMenus();
+      const repositoryMenus = menus["scm/repository"] ?? [];
+      assert(
+        repositoryMenus.some(
+          (item) =>
+            item.command === "growi.startLlmEditSession" &&
+            item.when === "scmProvider == growifs-mirror-compare" &&
+            item.group === "inline@5",
+        ),
+        `Expected LLM prompt SCM action at inline@5: ${toJsonString(repositoryMenus)}`,
+      );
+      assert(
+        repositoryMenus.some(
+          (item) =>
+            item.command === "growi.createLlmLocalMirrorDiffContext" &&
+            item.when === "scmProvider == growifs-mirror-compare" &&
+            item.group === "inline@6",
+        ),
+        `Expected LLM diff SCM action at inline@6: ${toJsonString(repositoryMenus)}`,
+      );
+
+      await vscode.commands.executeCommand("growi.openPage", "/sample");
+      await vscode.commands.executeCommand(
+        "growi.createLocalMirrorForCurrentPage",
+      );
+      const promptResult = await vscode.commands.executeCommand(
+        "growi.startLlmEditSession",
+        workspaceRoot,
+        {
+          updateGitignore: false,
+          taskText: "Host smoke for LLM Assist Kit.",
+        },
+      );
+      assert(
+        promptResult?.editableFiles?.some((file) =>
+          file.endsWith("__root__.md"),
+        ),
+        `Expected editable mirror Markdown in prompt result: ${toJsonString(promptResult)}`,
+      );
+      const prompt = await fs.readFile(
+        path.join(
+          workspaceRoot,
+          ".growi-agent",
+          "prompt",
+          "current",
+          "prompt.md",
+        ),
+        "utf8",
+      );
+      assert(
+        prompt.includes("$growi-local-mirror-prompt") &&
+          prompt.includes("Do not call GROWI APIs"),
+        `Expected prompt artifact with LLM boundaries: ${prompt}`,
+      );
+
+      await fs.writeFile(
+        path.join(
+          getWorkspaceMirrorRootPath(baseUrl, "/sample"),
+          "__root__.md",
+        ),
+        "# sample page updated for LLM smoke\n",
+        "utf8",
+      );
+      await vscode.commands.executeCommand("growi.compareLocalMirrorWithGrowi");
+      const scmState = await vscode.commands.executeCommand(
+        "growi.__test.getMirrorCompareSourceControlState",
+      );
+      const diffResult = await vscode.commands.executeCommand(
+        "growi.createLlmLocalMirrorDiffContext",
+        workspaceRoot,
+        scmState,
+      );
+      assert(
+        diffResult?.resourceCount === 1,
+        `Expected one LLM diff resource: ${toJsonString(diffResult)}`,
+      );
+      const changedFiles = await fs.readFile(
+        path.join(
+          workspaceRoot,
+          ".growi-agent",
+          "diff",
+          "current",
+          "changed-files.txt",
+        ),
+        "utf8",
+      );
+      assert(
+        changedFiles.includes("__root__.md"),
+        `Expected changed-files.txt to list local mirror Markdown: ${changedFiles}`,
+      );
+    },
+  );
 
   await runCase(
     "runtime log directory command resolves and attachment logs are written",

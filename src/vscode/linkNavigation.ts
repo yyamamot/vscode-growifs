@@ -5,6 +5,7 @@ import {
   parseGrowiLinkReference,
 } from "../core/uri";
 import type { GrowiReadFailureReason } from "./fsProvider";
+import { localize } from "./l10n";
 import { collectMarkdownLinkCandidates as collectMarkdownLinks } from "./markdownLinks";
 
 export interface GrowiLinkNavigationDeps {
@@ -214,7 +215,10 @@ export function collectUnresolvableGrowiLinkDiagnostics(
       diagnostics.push(
         new vscode.Diagnostic(
           candidate.range,
-          `Could not resolve GROWI internal link target: ${candidate.normalizedTarget}`,
+          localize(
+            "Could not resolve GROWI internal link target: {0}",
+            candidate.normalizedTarget,
+          ),
           vscode.DiagnosticSeverity.Warning,
         ),
       );
@@ -242,7 +246,10 @@ function collectUnfetchedGrowiImageDiagnostics(
 
       return new vscode.Diagnostic(
         candidate.range,
-        `Could not fetch image asset: ${candidate.normalizedTarget}`,
+        localize(
+          "Could not fetch image asset: {0}",
+          candidate.normalizedTarget,
+        ),
         vscode.DiagnosticSeverity.Warning,
       );
     })
@@ -266,7 +273,10 @@ function collectDrawioEmbedDiagnostics(
 
       return new vscode.Diagnostic(
         candidate.range,
-        `draw.io embed is not supported: ${candidate.normalizedTarget}`,
+        localize(
+          "draw.io embed is not supported: {0}",
+          candidate.normalizedTarget,
+        ),
         vscode.DiagnosticSeverity.Information,
       );
     })

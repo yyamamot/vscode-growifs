@@ -9,6 +9,7 @@ import {
   createDrawioFoldingRangeProvider,
 } from "./drawioFolding";
 import type { GrowiEditSessionRegistry } from "./editSessionRegistry";
+import { localize } from "./l10n";
 import {
   collectGrowiLinkDiagnostics,
   createGrowiDefinitionProvider,
@@ -231,7 +232,9 @@ export function registerDocumentProviderFeature(
     const isEditing = Boolean(
       deps.editSessionRegistry.getEditSession(document.uri.path),
     );
-    editStatusBarItem.text = isEditing ? "$(unlock) 編集中" : "$(lock) 閲覧中";
+    editStatusBarItem.text = isEditing
+      ? localize("$(unlock) Editing")
+      : localize("$(lock) Read-only");
     editStatusBarItem.command = isEditing
       ? GROWI_COMMANDS.endEdit
       : GROWI_COMMANDS.startEdit;

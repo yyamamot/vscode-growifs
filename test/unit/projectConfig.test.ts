@@ -9,8 +9,40 @@ function readText(relativePath: string) {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 }
 
+function resolvePackageNlsPlaceholder(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const key = /^%(.+)%$/.exec(value)?.[1];
+  if (!key) {
+    return value;
+  }
+  const nls = JSON.parse(readText("package.nls.json")) as Record<
+    string,
+    string
+  >;
+  return nls[key] ?? value;
+}
+
+function resolvePackageNlsPlaceholders(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(resolvePackageNlsPlaceholders);
+  }
+  if (!value || typeof value !== "object") {
+    return resolvePackageNlsPlaceholder(value);
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      resolvePackageNlsPlaceholders(entry),
+    ]),
+  );
+}
+
 function readPackageJson() {
-  return JSON.parse(readText("package.json")) as {
+  return resolvePackageNlsPlaceholders(
+    JSON.parse(readText("package.json")),
+  ) as {
     activationEvents?: string[];
     contributes?: {
       commands?: Array<{
@@ -96,6 +128,20 @@ describe("project configuration", () => {
         "pnpm run build && node ./scripts/review-ui-feature.mjs",
       "verify:ui-change": "node ./scripts/verify-ui-change.mjs",
     });
+    expect(packageJson).not.toHaveProperty("files");
+    const vscodeignore = readText(".vscodeignore");
+    expect(vscodeignore).not.toContain("README.md");
+    expect(vscodeignore).not.toContain("README.ja.md");
+    expect(vscodeignore).not.toContain("CHANGELOG.md");
+    expect(vscodeignore).not.toContain("CHANGELOG.ja.md");
+    expect(vscodeignore).not.toContain("l10n/**");
+    expect(vscodeignore).not.toContain("package.nls.json");
+    expect(vscodeignore).not.toContain("package.nls.ja.json");
+    expect(vscodeignore).toContain("archive/**");
+    expect(vscodeignore).toContain("docs/**");
+    expect(vscodeignore).toContain("dist/harness/**");
+    expect(vscodeignore).toContain("fixtures/**");
+    expect(vscodeignore).toContain("test/**");
   });
 
   it("exposes bounded GROWI listing and local mirror settings", () => {
@@ -320,13 +366,13 @@ describe("project configuration", () => {
       {
         view: "growi.explorer",
         contents:
-          "GROWI への接続を設定します。\n[Configure Base URL](command:growi.configureBaseUrl)",
+          "Configure the connection to GROWI.\n[Configure Base URL](command:growi.configureBaseUrl)",
         when: "config.growi.baseUrl == ''",
       },
       {
         view: "growi.explorer",
         contents:
-          "最初のページ探索を始めます。\n[Open Page](command:growi.openPage)\n[Add Prefix](command:growi.addPrefix)\n接続先 URL と API token を設定してから利用してください。\n[Configure Base URL](command:growi.configureBaseUrl)\n[Configure API Token](command:growi.configureApiToken)\n[Open README](command:growi.openReadme)",
+          "Start exploring pages.\n[Open Page](command:growi.openPage)\n[Add Prefix](command:growi.addPrefix)\nSet the target URL and API token before use.\n[Configure Base URL](command:growi.configureBaseUrl)\n[Configure API Token](command:growi.configureApiToken)\n[Open README](command:growi.openReadme)",
         when: "config.growi.baseUrl != ''",
       },
     ]);
@@ -345,7 +391,7 @@ describe("project configuration", () => {
       "[Open Page](command:growi.openPage)",
     );
     expect(viewsWelcome[1]?.contents).toContain(
-      "[Add Prefix](command:growi.addPrefix)\n接続先 URL と API token を設定してから利用してください。",
+      "[Add Prefix](command:growi.addPrefix)\nSet the target URL and API token before use.",
     );
     expect(viewsWelcome[1]?.contents).toContain(
       "[Configure Base URL](command:growi.configureBaseUrl)",
@@ -378,7 +424,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.openPrefixRootPage",
-      title: "Prefix ページを開く",
+      title: "Open Prefix Page",
     });
     expect(
       commands.find((command) => command.command === "growi.openDirectoryPage"),
@@ -406,7 +452,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerOpenPageItem",
-      title: "ページを開く",
+      title: "Open Page",
     });
     expect(
       commands.find(
@@ -414,7 +460,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerOpenPageInBrowser",
-      title: "ブラウザで表示",
+      title: "Open in Browser",
     });
     expect(
       commands.find(
@@ -422,7 +468,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCreatePageHere",
-      title: "ここに作成",
+      title: "Create Here",
     });
     expect(
       commands.find(
@@ -430,7 +476,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerRenamePage",
-      title: "ページ名を変更",
+      title: "Rename Page",
     });
     expect(
       commands.find(
@@ -438,7 +484,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerDeletePage",
-      title: "ページを削除",
+      title: "Delete Page",
     });
     expect(
       commands.find(
@@ -446,7 +492,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerRefreshCurrentPage",
-      title: "ページを更新",
+      title: "Refresh Page",
     });
     expect(
       commands.find(
@@ -454,7 +500,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerShowBacklinks",
-      title: "被リンクを表示",
+      title: "Show Backlinks",
     });
     expect(
       commands.find(
@@ -462,7 +508,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerShowCurrentPageInfo",
-      title: "ページ情報を表示",
+      title: "Show Page Info",
     });
     expect(
       commands.find(
@@ -471,7 +517,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerShowCurrentPageAttachments",
-      title: "添付一覧を表示",
+      title: "Show Attachments",
     });
     expect(
       commands.find(
@@ -480,7 +526,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerShowRevisionHistoryDiff",
-      title: "履歴差分を表示",
+      title: "Show Revision Diff",
     });
     expect(
       commands.find(
@@ -496,7 +542,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCreateLocalMirrorForCurrentPage",
-      title: "このページをローカルに同期",
+      title: "Sync This Page Locally",
     });
     expect(
       commands.find(
@@ -505,7 +551,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCreateLocalMirrorForCurrentPrefix",
-      title: "配下ページをローカルに同期",
+      title: "Sync Child Pages Locally",
     });
     expect(
       commands.find(
@@ -514,7 +560,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCompareLocalMirrorWithGrowi",
-      title: "このページの差分を確認",
+      title: "Check This Page Diff",
     });
     expect(
       commands.find(
@@ -523,7 +569,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerUploadLocalMirrorToGrowi",
-      title: "ローカルミラーを反映",
+      title: "Apply Local Mirror",
     });
     expect(
       commands.find(
@@ -533,7 +579,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerCompareLocalMirrorSubtreeWithGrowi",
-      title: "配下ページの差分を確認",
+      title: "Check Child Page Diffs",
     });
     expect(
       commands.find(
@@ -542,7 +588,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.explorerUploadLocalMirrorSubtreeToGrowi",
-      title: "配下のローカルミラーを反映",
+      title: "Apply Child Local Mirrors",
     });
     expect(
       commands.find(
@@ -550,7 +596,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.addCurrentPageBookmark",
-      title: "ブックマークに追加",
+      title: "Add Bookmark",
     });
     expect(
       commands.find(
@@ -566,7 +612,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.openCurrentPageHub",
-      title: "ページ詳細を開く",
+      title: "Open Page Details",
       category: "GROWI",
     });
     expect(
@@ -599,7 +645,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.removeCurrentPageBookmark",
-      title: "ブックマークから削除",
+      title: "Remove Bookmark",
     });
     expect(
       commands.find(
@@ -699,11 +745,38 @@ describe("project configuration", () => {
     });
     expect(
       commands.find(
+        (command) => command.command === "growi.installLlmSkillPack",
+      ),
+    ).toEqual({
+      command: "growi.installLlmSkillPack",
+      title: "GROWI: Install LLM Local Mirror Skills",
+    });
+    expect(
+      commands.find(
+        (command) => command.command === "growi.startLlmEditSession",
+      ),
+    ).toEqual({
+      command: "growi.startLlmEditSession",
+      title: "GROWI: Prepare LLM Local Mirror Prompt",
+      icon: "$(sparkle)",
+    });
+    expect(
+      commands.find(
+        (command) =>
+          command.command === "growi.createLlmLocalMirrorDiffContext",
+      ),
+    ).toEqual({
+      command: "growi.createLlmLocalMirrorDiffContext",
+      title: "GROWI: Prepare LLM Local Mirror Diff",
+      icon: "$(comment-discussion)",
+    });
+    expect(
+      commands.find(
         (command) => command.command === "growi.scmCompareMirrorAgain",
       ),
     ).toEqual({
       command: "growi.scmCompareMirrorAgain",
-      title: "再比較",
+      title: "Compare Again",
       icon: "$(refresh)",
     });
     expect(
@@ -712,7 +785,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.scmCheckRemoteMetadata",
-      title: "GROWI側の更新を確認",
+      title: "Check GROWI Updates",
       icon: "$(sync)",
     });
     expect(
@@ -721,7 +794,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.scmUploadMirrorResources",
-      title: "GROWIに反映",
+      title: "Apply to GROWI",
       icon: "$(cloud-upload)",
     });
     expect(
@@ -730,7 +803,7 @@ describe("project configuration", () => {
       ),
     ).toEqual({
       command: "growi.scmTakeRemoteMirrorResources",
-      title: "ローカルに取り込む",
+      title: "Take Remote Changes",
       icon: "$(cloud-download)",
     });
 
@@ -832,6 +905,16 @@ describe("project configuration", () => {
         command: "growi.scmTakeRemoteMirrorResources",
         when: "scmProvider == growifs-mirror-compare",
         group: "inline@4",
+      },
+      {
+        command: "growi.startLlmEditSession",
+        when: "scmProvider == growifs-mirror-compare",
+        group: "inline@5",
+      },
+      {
+        command: "growi.createLlmLocalMirrorDiffContext",
+        when: "scmProvider == growifs-mirror-compare",
+        group: "inline@6",
       },
     ]);
     expect(viewItemContextMenu).toEqual([
@@ -1038,7 +1121,7 @@ describe("project configuration", () => {
       },
       {
         command: "growi.deletePrefix",
-        title: "Prefix を削除",
+        title: "Delete Prefix",
         shortTitle: "Delete Prefix",
         icon: "$(trash)",
       },
@@ -1059,7 +1142,7 @@ describe("project configuration", () => {
       "GROWI: Create Page",
       "GROWI: Add Prefix",
       "GROWI: Clear Prefixes",
-      "Prefix を削除",
+      "Delete Prefix",
       "GROWI: Open Page",
       "GROWI: Refresh Listing",
     ]);
@@ -1156,6 +1239,15 @@ describe("project configuration", () => {
       "onCommand:growi.showLocalMirrorActions",
     );
     expect(packageJson.activationEvents).toContain(
+      "onCommand:growi.installLlmSkillPack",
+    );
+    expect(packageJson.activationEvents).toContain(
+      "onCommand:growi.startLlmEditSession",
+    );
+    expect(packageJson.activationEvents).toContain(
+      "onCommand:growi.createLlmLocalMirrorDiffContext",
+    );
+    expect(packageJson.activationEvents).toContain(
       "onCommand:growi.showRevisionHistoryDiff",
     );
     expect(packageJson.activationEvents).toContain(
@@ -1168,24 +1260,27 @@ describe("project configuration", () => {
 
   it("documents desktop target and integration bootstrap prerequisites", () => {
     const readme = readText("README.md");
+    const japaneseReadme = readText("README.ja.md");
     const envExample = readText(".env.example");
 
-    expect(readme).toContain("VS Code 拡張です");
-    expect(readme).toContain("Desktop 版 VS Code 拡張として使う前提です");
-    expect(readme).toContain("GROWI 6 系以下は非サポートです");
-    expect(readme).toContain("| 対象 GROWI | GROWI `7.x` |");
+    expect(readme).toContain("desktop VS Code extension");
+    expect(readme).toContain("designed for VS Code Desktop");
+    expect(japaneseReadme).toContain("VS Code 拡張です");
+    expect(japaneseReadme).toContain(
+      "Desktop 版 VS Code 拡張として使う前提です",
+    );
+    expect(readme).toContain("| GROWI | GROWI `7.x` |");
     expect(readme).toContain("http://localhost:3000/");
-    expect(readme).toContain("GROWI の API token");
-    expect(readme).toContain("VS Code の Secret Storage");
-    expect(readme).toContain("Explorer 配下の `GROWI` view");
-    expect(readme).toContain("VS Code のワークスペースへ追加せず");
-    expect(readme).toContain("専用 `GROWI` view と Command Palette");
+    expect(readme).toContain("GROWI API token");
+    expect(readme).toContain("VS Code Secret Storage");
+    expect(readme).toContain("dedicated `GROWI` view under Explorer");
+    expect(readme).toContain("not added to the VS Code workspace");
+    expect(readme).toContain("the Command Palette");
     expect(readme).not.toContain("workspace root");
     expect(readme).not.toContain("workspace folder");
     expect(readme).toContain(
       ".growi-mirrors/<instanceKey>/<rootCanonicalPath>/",
     );
-    expect(readme).toContain(".growi-mirror.json");
     expect(readme).toContain("http://localhost:3000/");
 
     expect(envExample).toContain("GROWI_BASE_URL=http://localhost:3000/");
@@ -1205,13 +1300,13 @@ describe("project configuration", () => {
 
     expect(packageJson.engines?.vscode).toBe("^1.105.0");
     expect(packageJson.engines?.node).toBe(">=22.0.0");
-    expect(readme).toContain("VS Code 拡張です");
+    expect(readme).toContain("desktop VS Code extension");
   });
 
   it("documents the recommended manual test flow", () => {
     const readme = readText("README.md");
 
-    expect(readme).toContain("## Commands / Main Workflows");
+    expect(readme).toContain("## Commands");
     expect(readme).toContain("`GROWI: Configure Base URL`");
     expect(readme).toContain("`GROWI: Configure API Token`");
     expect(readme).toContain("`GROWI: Add Prefix`");
@@ -1226,23 +1321,19 @@ describe("project configuration", () => {
     expect(readme).toContain("`GROWI: Sync Local Mirror for Current Page`");
     expect(readme).toContain("`GROWI: Sync Local Mirror for Current Prefix`");
     expect(readme).toContain("`GROWI: Compare Local Mirror with GROWI`");
-    expect(readme).toContain("Source Control view の `GROWIに反映`");
+    expect(readme).toContain("`Apply to GROWI`");
     expect(readme).toContain("`GROWI: Show Current Page Info`");
     expect(readme).toContain("`GROWI: Show Backlinks`");
-    expect(readme).toContain("保存後は `GROWI: End Edit` で通常状態へ戻します");
-    expect(readme).toContain("wiki 内リンク移動は");
+    expect(readme).toContain("run `GROWI: End Edit`");
+    expect(readme).toContain("Wiki link navigation");
     expect(readme).toContain("<!-- screenshot: overview-explorer");
     expect(readme).toContain("<!-- screenshot: explorer-prefix-root");
     expect(readme).toContain("<!-- screenshot: local-mirror");
-    expect(readme).toContain(
-      "このページをローカルに同期 / このページの差分を確認",
-    );
-    expect(readme).toContain(
-      "配下ページをローカルに同期 / 配下ページの差分を確認",
-    );
-    expect(readme).toContain(
-      "GROWI のページツリーは VS Code のワークスペースへ追加されず",
-    );
+    expect(readme).toContain("`Sync This Page Locally`");
+    expect(readme).toContain("`Check This Page Diff`");
+    expect(readme).toContain("`Sync Child Pages Locally`");
+    expect(readme).toContain("`Check Child Page Diffs`");
+    expect(readme).toContain("page tree is not added to the VS Code workspace");
   });
 
   it("tracks the recommended code-workspace entrypoint", () => {
@@ -1253,46 +1344,45 @@ describe("project configuration", () => {
       folders?: Array<{ path?: string }>;
     };
 
-    expect(readme).toContain("Explorer 配下の `GROWI` view");
+    expect(readme).toContain("dedicated `GROWI` view under Explorer");
     expect(workspaceFile.folders).toEqual([{ path: "." }]);
   });
 
   it("documents provisional API contract and status mapping", () => {
     const readme = readText("README.md");
 
-    expect(readme).toContain("GROWI 6 系以下は非サポートです");
-    expect(readme).toContain("| 対象 GROWI | GROWI `7.x` |");
-    expect(readme).toContain("GROWI API token で接続できること");
+    expect(readme).toContain("| GROWI | GROWI `7.x` |");
+    expect(readme).toContain("| Authentication | GROWI API token |");
     expect(readme).toContain(
-      "GROWI 7.x のページ取得、一覧取得、保存、作成、名前変更、削除 API が利用できること",
+      "GROWI 7.x APIs for page read, listing, save, create, rename, delete, revisions, bookmarks, and attachments",
     );
-    expect(readme).toContain("GROWI API token で接続できること");
     expect(readme).toContain(
-      "一部 API が使えない環境では、対応する機能が利用できません",
+      "If some APIs are not available in your GROWI environment, only the corresponding features may be unavailable.",
     );
   });
 
   it("documents the current attachment scope and draw.io boundary", () => {
     const readme = readText("README.md");
 
-    expect(readme).toContain("Markdown Preview 上で画像添付を表示する");
-    expect(readme).toContain("画像以外の添付は現行版対象外です");
+    expect(readme).toContain("Attachment images do not show in Preview");
+    expect(readme).toContain("Non-image attachment preview");
     expect(readme).toContain(
-      "draw.io / diagrams.net / PlantUML / Mermaid の図描画",
+      "draw.io / diagrams.net / PlantUML / Mermaid rendering",
     );
-    expect(readme).toContain("本文や Preview で図レンダリングは行いません");
-    expect(readme).toContain("same-host absolute URL と root-relative path");
     expect(readme).toContain(
-      "一部の添付 URL はブラウザで GROWI Web を開いて確認してください",
+      "Diagrams are not rendered in the current version",
     );
+    expect(readme).toContain("same-host URL");
+    expect(readme).toContain("open the item in GROWI Web");
   });
 
   it("documents non-image attachments as unsupported without breaking reading", () => {
     const readme = readText("README.md");
 
-    expect(readme).toContain("画像以外の添付は現行版対象外です");
-    expect(readme).toContain("画像以外の添付プレビュー");
-    expect(readme).toContain("高度なプレビューは扱いません");
-    expect(readme).toContain("本文や Preview で図レンダリングは行いません");
+    expect(readme).toContain("Non-image attachment preview");
+    expect(readme).toContain("open the item in GROWI Web");
+    expect(readme).toContain(
+      "Diagrams are not rendered in the current version",
+    );
   });
 });

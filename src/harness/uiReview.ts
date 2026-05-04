@@ -105,6 +105,7 @@ export interface UiReviewScenarioChecks {
   forbiddenMenuItems?: UiReviewMenuItemExpectation[];
   requiredCommandSequence?: string[];
   duplicateQuickPickItems?: "allow" | "forbid";
+  forbiddenJapaneseText?: boolean;
 }
 
 export interface UiReviewScenarioEvidenceLayer {
@@ -183,6 +184,32 @@ function matchesQuickPickItem(
 
 function describeExpectation(value: unknown) {
   return JSON.stringify(value);
+}
+
+function containsJapaneseText(value: string): boolean {
+  return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(value);
+}
+
+function collectUiTextValues(
+  value: unknown,
+  path: string,
+  output: { path: string; value: string }[],
+) {
+  if (typeof value === "string") {
+    output.push({ path, value });
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      collectUiTextValues(item, `${path}[${index}]`, output);
+    });
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      collectUiTextValues(nested, `${path}.${key}`, output);
+    }
+  }
 }
 
 function matchesQuickPickButton(
@@ -449,6 +476,30 @@ function evaluateDuplicateQuickPickItems(
   });
 }
 
+function evaluateForbiddenJapaneseText(
+  uiState: UiReviewState,
+): UiReviewCheckResult {
+  const values: { path: string; value: string }[] = [];
+  collectUiTextValues(
+    {
+      treeItems: uiState.treeItems,
+      quickPicks: uiState.quickPicks,
+      menus: uiState.menus,
+    },
+    "uiState",
+    values,
+  );
+  const matches = values.filter(({ value }) => containsJapaneseText(value));
+  return {
+    name: "forbiddenJapaneseText",
+    pass: matches.length === 0,
+    message:
+      matches.length === 0
+        ? "No Japanese text was found in collected UI evidence."
+        : `Found Japanese text in collected UI evidence: ${describeExpectation(matches)}.`,
+  };
+}
+
 function flattenMenuEvidence(
   menuEvidence: UiReviewMenuEvidence | undefined,
 ): UiReviewMenuItem[] | undefined {
@@ -621,6 +672,9 @@ export function evaluateUiReviewEvidence(
   }
   if (scenarioChecks.duplicateQuickPickItems !== "allow") {
     checks.push(...evaluateDuplicateQuickPickItems(evidence.uiState));
+  }
+  if (scenarioChecks.forbiddenJapaneseText === true) {
+    checks.push(evaluateForbiddenJapaneseText(evidence.uiState));
   }
 
   return {

@@ -76,6 +76,7 @@
         "command": "growi.explorerOpenPageInBrowser",
         "when": "view == growi.explorer && viewItem == growi.directory"
       }
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

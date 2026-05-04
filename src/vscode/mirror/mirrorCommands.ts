@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-
 import { buildGrowiUriFromInput, normalizeCanonicalPath } from "../../core/uri";
 import {
   COMPARE_LOCAL_MIRROR_DESCRIPTION,
@@ -22,6 +21,7 @@ import type {
   GrowiPageWriteResult,
   GrowiReadFailureReason,
 } from "../fsProvider";
+import { localize } from "../l10n";
 import {
   buildInstanceKey,
   buildMirrorManifestPath,
@@ -80,148 +80,223 @@ interface CurrentPageActionsCommandDeps {
   ): Promise<CurrentPageActionQuickPickItem | undefined>;
 }
 
-const ADD_PREFIX_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
-const DOWNLOAD_CURRENT_PAGE_INVALID_TARGET_MESSAGE =
-  "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。";
-const DOWNLOAD_CURRENT_PAGE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル file: workspace/folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace/folder を開いてください。";
-const DOWNLOAD_CURRENT_PAGE_DIRTY_EDIT_SESSION_MESSAGE =
-  "未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存または End Edit を実行してください。";
-const DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE =
-  "本文取得 API が未対応のため Sync Local Mirror for Current Page を実行できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Sync Local Mirror for Current Page を実行できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_NOT_FOUND_MESSAGE =
-  "対象ページが見つからないため Sync Local Mirror for Current Page を実行できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_WRITE_LOCAL_FILE_FAILED_MESSAGE =
-  "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Page を完了できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_SUCCESS_MESSAGE =
-  "現在ページをローカルに同期しました。";
-const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SUCCESS_MESSAGE =
-  "既存 prefix mirror 内の現在ページをローカルに同期しました。";
-const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE =
-  "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存してください。";
-const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SKIPPED_MESSAGE =
-  "既存 prefix mirror で対象ページが衝突により skip されているため Sync Local Mirror for Current Page を実行できません。prefix mirror を見直してください。";
-const DOWNLOAD_CURRENT_PAGE_SET_INVALID_TARGET_MESSAGE =
-  "Sync Local Mirror for Current Prefix は growi: ページでのみ実行できます。";
-const DOWNLOAD_CURRENT_PAGE_SET_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル file: workspace/folder が開かれていないため Sync Local Mirror for Current Prefix を実行できません。先に file: workspace/folder を開いてください。";
-const DOWNLOAD_CURRENT_PAGE_SET_DIRTY_EDIT_SESSION_MESSAGE =
-  "未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存または End Edit を実行してください。";
-const DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE =
-  "一覧取得 API または本文取得 API が未対応のため Sync Local Mirror for Current Prefix を実行できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Sync Local Mirror for Current Prefix を実行できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE =
-  "対象ページ配下の export 中にページが見つからなくなったため Sync Local Mirror for Current Prefix を実行できませんでした。";
+const ADD_PREFIX_INVALID_BASE_URL_MESSAGE = localize(
+  "GROWI base URL is not configured. Run Configure Base URL first.",
+);
+const DOWNLOAD_CURRENT_PAGE_INVALID_TARGET_MESSAGE = localize(
+  "Sync Local Mirror for Current Page can only run on growi: pages.",
+);
+const DOWNLOAD_CURRENT_PAGE_NO_LOCAL_WORKSPACE_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because no local file: workspace/folder is open. Open a file: workspace/folder first.",
+);
+const DOWNLOAD_CURRENT_PAGE_DIRTY_EDIT_SESSION_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because there are unsaved changes. Save or run End Edit first.",
+);
+const DOWNLOAD_CURRENT_PAGE_API_NOT_SUPPORTED_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because the body fetch API is not supported.",
+);
+const DOWNLOAD_CURRENT_PAGE_CONNECTION_FAILED_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because the connection to GROWI failed.",
+);
+const DOWNLOAD_CURRENT_PAGE_NOT_FOUND_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because the target page was not found.",
+);
+const DOWNLOAD_CURRENT_PAGE_WRITE_LOCAL_FILE_FAILED_MESSAGE = localize(
+  "Could not complete Sync Local Mirror for Current Page because local mirror sync failed.",
+);
+const DOWNLOAD_CURRENT_PAGE_SUCCESS_MESSAGE = localize(
+  "Synced the current page to local files.",
+);
+const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SUCCESS_MESSAGE = localize(
+  "Synced the current page in the existing prefix mirror to local files.",
+);
+const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because the existing prefix mirror has unsaved changes. Save first.",
+);
+const DOWNLOAD_CURRENT_PAGE_REUSED_PREFIX_SKIPPED_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Page because the target page is skipped due to a conflict in the existing prefix mirror. Review the prefix mirror.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_INVALID_TARGET_MESSAGE = localize(
+  "Sync Local Mirror for Current Prefix can only run on growi: pages.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_NO_LOCAL_WORKSPACE_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Prefix because no local file: workspace/folder is open. Open a file: workspace/folder first.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_DIRTY_EDIT_SESSION_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Prefix because there are unsaved changes. Save or run End Edit first.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_API_NOT_SUPPORTED_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Prefix because the list API or body fetch API is not supported.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_CONNECTION_FAILED_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Prefix because the connection to GROWI failed.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_NOT_FOUND_MESSAGE = localize(
+  "Cannot run Sync Local Mirror for Current Prefix because a page disappeared during export under the target page.",
+);
 function buildDownloadCurrentPageSetTooManyPagesMessage(maxPages: number) {
-  return `active page 配下が ${maxPages} pages を超えるため Sync Local Mirror for Current Prefix を実行できません。`;
+  return localize(
+    "Cannot run Sync Local Mirror for Current Prefix because the active page subtree exceeds {0} pages.",
+    maxPages,
+  );
 }
-const DOWNLOAD_CURRENT_PAGE_SET_WRITE_FAILED_MESSAGE =
-  "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Prefix を完了できませんでした。";
-const DOWNLOAD_CURRENT_PAGE_SET_SUCCESS_MESSAGE =
-  "現在ページ配下をローカルに同期しました。";
-const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_SUCCESS_MESSAGE =
-  "既存 prefix mirror 内の現在ページ配下をローカルに同期しました。";
+const DOWNLOAD_CURRENT_PAGE_SET_WRITE_FAILED_MESSAGE = localize(
+  "Could not complete Sync Local Mirror for Current Prefix because local mirror sync failed.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_SUCCESS_MESSAGE = localize(
+  "Synced the current page subtree to local files.",
+);
+const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_SUCCESS_MESSAGE = localize(
+  "Synced the current page subtree in the existing prefix mirror to local files.",
+);
 const DOWNLOAD_CURRENT_PAGE_SET_REUSED_PREFIX_DIRTY_LOCAL_FILE_MESSAGE =
-  "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存してください。";
-const COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE =
-  "Compare Local Mirror with GROWI は growi: ページでのみ実行できます。";
-const COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル file: workspace/folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace/folder を開いてください。";
-const COMPARE_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE =
-  ".growi-mirror.json の読み込みに失敗したため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
-const COMPARE_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE =
-  ".growi-mirror.json の GROWI metadata を読み取れないため Compare Local Mirror with GROWI を実行できません。再度 Sync Local Mirror を実行してください。";
-const COMPARE_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定のため Compare Local Mirror with GROWI を実行できません。先に Configure Base URL を実行してください。";
-const COMPARE_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE =
-  "mirror の GROWI base URL が現在設定と一致しないため Compare Local Mirror with GROWI を実行できません。接続先を確認してください。";
-const COMPARE_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE =
-  "対象の local mirror が見つからないため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
-const COMPARE_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE =
-  "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Compare Local Mirror with GROWI を実行できません。prefix mirror を見直してください。";
-const COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE =
-  "Compare Local Mirror with GROWI で changes editor の対象はありませんでした。";
-const COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE =
-  "mirror の差分ビューを開けませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_NOT_FOUND_MESSAGE =
-  "upload 先のページが見つからないため Upload Local Mirror to GROWI を実行できませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE =
-  "更新 API または本文取得 API が未対応のため Upload Local Mirror to GROWI を実行できませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Upload Local Mirror to GROWI を実行できませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_PERMISSION_DENIED_MESSAGE =
-  "更新権限がないため Upload Local Mirror to GROWI を実行できませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE =
-  "GROWI への upload は成功しましたが、表示中の growi: ページは未保存変更があるため自動再読込しませんでした。";
-const UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE =
-  "GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。";
-const UPLOAD_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル file: workspace/folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace/folder を開いてください。";
-const UPLOAD_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE =
-  ".growi-mirror.json の読み込みに失敗したため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
-const UPLOAD_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE =
-  ".growi-mirror.json の GROWI metadata を読み取れませんでした。再度 Sync Local Mirror を実行してください。";
-const UPLOAD_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
-const UPLOAD_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE =
-  "mirror の GROWI base URL が現在設定と一致しません。接続先を確認してください。";
-const UPLOAD_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE =
-  "対象の local mirror が見つからないため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。";
-const UPLOAD_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE =
-  "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Upload Local Mirror to GROWI を実行できません。prefix mirror を見直してください。";
-const UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE =
-  "GROWI への mirror upload は成功しましたが manifest の更新に一部失敗しました。次回 upload 前に再度 Sync Local Mirror を実行してください。";
-const SCM_COMPARE_AGAIN_NO_STATE_MESSAGE =
-  "SCM 上に再比較対象の snapshot はありません。先に Compare Local Mirror with GROWI を実行してください。";
-const SCM_UPLOAD_LOCAL_CHANGES_NO_STATE_MESSAGE =
-  "SCM 上にローカルの変更の compare snapshot はありません。先に Compare Local Mirror with GROWI を実行してください。";
-const SCM_UPLOAD_LOCAL_CHANGES_EMPTY_MESSAGE =
-  "SCM 上に反映対象のローカルの変更はありません。";
-const SCM_TAKE_REMOTE_CHANGES_NO_STATE_MESSAGE =
-  "SCM 上に GROWI側の変更の compare snapshot はありません。先に Compare Local Mirror with GROWI を実行してください。";
-const SCM_TAKE_REMOTE_CHANGES_EMPTY_MESSAGE =
-  "SCM 上に取り込み対象の GROWI側の変更はありません。";
-const TAKE_REMOTE_CHANGES_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル file: workspace/folder が開かれていないため、ローカルへの取り込みを実行できません。先に file: workspace/folder を開いてください。";
-const TAKE_REMOTE_CHANGES_READ_MANIFEST_FAILED_MESSAGE =
-  ".growi-mirror.json の読み込みに失敗したため、ローカルに取り込めませんでした。先に Sync Local Mirror を実行してください。";
-const TAKE_REMOTE_CHANGES_INVALID_MANIFEST_MESSAGE =
-  ".growi-mirror.json の GROWI metadata を読み取れないため、ローカルへの取り込みを実行できません。再度 Sync Local Mirror を実行してください。";
-const TAKE_REMOTE_CHANGES_INVALID_BASE_URL_MESSAGE =
-  "GROWI base URL が未設定のため、ローカルへの取り込みを実行できません。先に Configure Base URL を実行してください。";
-const TAKE_REMOTE_CHANGES_BASE_URL_MISMATCH_MESSAGE =
-  "mirror の GROWI base URL が現在設定と一致しないため、ローカルへの取り込みを実行できません。接続先を確認してください。";
-const TAKE_REMOTE_CHANGES_MIRROR_NOT_FOUND_MESSAGE =
-  "対象の local mirror が見つからないため、ローカルに取り込めませんでした。先に Sync Local Mirror を実行してください。";
-const TAKE_REMOTE_CHANGES_REUSED_PREFIX_SKIPPED_MESSAGE =
-  "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため、ローカルへの取り込みを実行できません。prefix mirror を見直してください。";
-const TAKE_REMOTE_CHANGES_NOT_FOUND_MESSAGE =
-  "取り込み対象のページが見つからないため、ローカルに取り込めませんでした。";
-const TAKE_REMOTE_CHANGES_API_NOT_SUPPORTED_MESSAGE =
-  "本文取得 API が未対応のため、ローカルに取り込めませんでした。";
-const TAKE_REMOTE_CHANGES_CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため、ローカルに取り込めませんでした。";
-const TAKE_REMOTE_CHANGES_WRITE_FAILED_MESSAGE =
-  "リモート変更の取り込みに失敗しました。";
-const REFRESH_LOCAL_MIRROR_INVALID_TARGET_MESSAGE =
-  "Refresh Local Mirror は growi: ページでのみ実行できます。";
-const REFRESH_LOCAL_MIRROR_NO_LOCAL_WORKSPACE_MESSAGE =
-  "ローカル file: workspace/folder が開かれていないため Refresh Local Mirror を実行できません。先に file: workspace/folder を開いてください。";
-const REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE =
-  ".growi-mirror.json の読み込みに失敗したため Refresh Local Mirror を実行できませんでした。先に Sync Local Mirror を実行してください。";
-const REFRESH_LOCAL_MIRROR_INVALID_MANIFEST_MESSAGE =
-  ".growi-mirror.json の GROWI metadata を読み取れないため Refresh Local Mirror を実行できません。再度 Sync Local Mirror を実行してください。";
-const REFRESH_LOCAL_MIRROR_BASE_URL_MISMATCH_MESSAGE =
-  "mirror の GROWI base URL が現在設定と一致しないため Refresh Local Mirror を実行できません。接続先を確認してください。";
-const REFRESH_LOCAL_MIRROR_LOCAL_CHANGES_MESSAGE =
-  "local changed があるため Refresh Local Mirror を実行できません。Compare Local Mirror with GROWI または Upload Local Mirror to GROWI を先に実行してください。";
-const REFRESH_LOCAL_MIRROR_SUCCESS_MESSAGE = "Local Mirror を再取得しました。";
-const SHOW_LOCAL_ROUND_TRIP_ACTIONS_INVALID_TARGET_MESSAGE =
-  "ローカル操作メニューは growi: ページでのみ実行できます。";
+  localize(
+    "Cannot run Sync Local Mirror for Current Prefix because the existing prefix mirror has unsaved changes. Save first.",
+  );
+const COMPARE_LOCAL_WORK_FILE_INVALID_TARGET_MESSAGE = localize(
+  "Compare Local Mirror with GROWI can only run on growi: pages.",
+);
+const COMPARE_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because no local file: workspace/folder is open. Open a file: workspace/folder first.",
+);
+const COMPARE_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because .growi-mirror.json could not be loaded. Run Sync Local Mirror first.",
+);
+const COMPARE_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because .growi-mirror.json GROWI metadata could not be read. Run Sync Local Mirror again.",
+);
+const COMPARE_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because the GROWI base URL is not configured. Run Configure Base URL first.",
+);
+const COMPARE_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because the mirror GROWI base URL does not match the current setting. Check the target server.",
+);
+const COMPARE_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because the target local mirror was not found. Run Sync Local Mirror first.",
+);
+const COMPARE_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE = localize(
+  "Cannot run Compare Local Mirror with GROWI because the target page or its subtree is skipped due to a conflict in the existing prefix mirror. Review the prefix mirror.",
+);
+const COMPARE_LOCAL_BUNDLE_NO_DIFF_MESSAGE = localize(
+  "No changes editor targets were found for Compare Local Mirror with GROWI.",
+);
+const COMPARE_LOCAL_BUNDLE_OPEN_DIFF_FAILED_MESSAGE = localize(
+  "Could not open the mirror diff view.",
+);
+const UPLOAD_EXPORTED_LOCAL_FILE_NOT_FOUND_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because the upload target page was not found.",
+);
+const UPLOAD_EXPORTED_LOCAL_FILE_API_NOT_SUPPORTED_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because the update API or body fetch API is not supported.",
+);
+const UPLOAD_EXPORTED_LOCAL_FILE_CONNECTION_FAILED_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because the connection to GROWI failed.",
+);
+const UPLOAD_EXPORTED_LOCAL_FILE_PERMISSION_DENIED_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because you do not have update permission.",
+);
+const UPLOAD_EXPORTED_LOCAL_FILE_DIRTY_GROWI_REOPEN_WARNING_MESSAGE = localize(
+  "Upload to GROWI succeeded, but the displayed growi: page was not reloaded because it has unsaved changes.",
+);
+const UPLOAD_EXPORTED_LOCAL_FILE_REOPEN_FAILED_WARNING_MESSAGE = localize(
+  "Upload to GROWI succeeded, but the displayed growi: page could not be reloaded. Run Refresh Current Page.",
+);
+const UPLOAD_LOCAL_BUNDLE_NO_LOCAL_WORKSPACE_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because no local file: workspace/folder is open. Open a file: workspace/folder first.",
+);
+const UPLOAD_LOCAL_BUNDLE_READ_MANIFEST_FAILED_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because .growi-mirror.json could not be loaded. Run Sync Local Mirror first.",
+);
+const UPLOAD_LOCAL_BUNDLE_INVALID_MANIFEST_MESSAGE = localize(
+  "Could not read .growi-mirror.json GROWI metadata. Run Sync Local Mirror again.",
+);
+const UPLOAD_LOCAL_BUNDLE_INVALID_BASE_URL_MESSAGE = localize(
+  "GROWI base URL is not configured. Run Configure Base URL first.",
+);
+const UPLOAD_LOCAL_BUNDLE_BASE_URL_MISMATCH_MESSAGE = localize(
+  "The mirror GROWI base URL does not match the current setting. Check the target server.",
+);
+const UPLOAD_LOCAL_BUNDLE_MIRROR_NOT_FOUND_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because the target local mirror was not found. Run Sync Local Mirror first.",
+);
+const UPLOAD_LOCAL_BUNDLE_REUSED_PREFIX_SKIPPED_MESSAGE = localize(
+  "Cannot run Upload Local Mirror to GROWI because the target page or its subtree is skipped due to a conflict in the existing prefix mirror. Review the prefix mirror.",
+);
+const UPLOAD_LOCAL_BUNDLE_METADATA_REFRESH_WARNING_MESSAGE = localize(
+  "Mirror upload to GROWI succeeded, but some manifest updates failed. Run Sync Local Mirror again before the next upload.",
+);
+const SCM_COMPARE_AGAIN_NO_STATE_MESSAGE = localize(
+  "No snapshot to compare again exists in SCM. Run Compare Local Mirror with GROWI first.",
+);
+const SCM_UPLOAD_LOCAL_CHANGES_NO_STATE_MESSAGE = localize(
+  "No compare snapshot for local changes exists in SCM. Run Compare Local Mirror with GROWI first.",
+);
+const SCM_UPLOAD_LOCAL_CHANGES_EMPTY_MESSAGE = localize(
+  "No local changes to apply exist in SCM.",
+);
+const SCM_TAKE_REMOTE_CHANGES_NO_STATE_MESSAGE = localize(
+  "No compare snapshot for GROWI changes exists in SCM. Run Compare Local Mirror with GROWI first.",
+);
+const SCM_TAKE_REMOTE_CHANGES_EMPTY_MESSAGE = localize(
+  "No GROWI changes to take exist in SCM.",
+);
+const TAKE_REMOTE_CHANGES_NO_LOCAL_WORKSPACE_MESSAGE = localize(
+  "Cannot take changes into local files because no local file: workspace/folder is open. Open a file: workspace/folder first.",
+);
+const TAKE_REMOTE_CHANGES_READ_MANIFEST_FAILED_MESSAGE = localize(
+  "Cannot take changes into local files because .growi-mirror.json could not be loaded. Run Sync Local Mirror first.",
+);
+const TAKE_REMOTE_CHANGES_INVALID_MANIFEST_MESSAGE = localize(
+  "Cannot take changes into local files because .growi-mirror.json GROWI metadata could not be read. Run Sync Local Mirror again.",
+);
+const TAKE_REMOTE_CHANGES_INVALID_BASE_URL_MESSAGE = localize(
+  "Cannot take changes into local files because the GROWI base URL is not configured. Run Configure Base URL first.",
+);
+const TAKE_REMOTE_CHANGES_BASE_URL_MISMATCH_MESSAGE = localize(
+  "Cannot take changes into local files because the mirror GROWI base URL does not match the current setting. Check the target server.",
+);
+const TAKE_REMOTE_CHANGES_MIRROR_NOT_FOUND_MESSAGE = localize(
+  "Cannot take changes into local files because the target local mirror was not found. Run Sync Local Mirror first.",
+);
+const TAKE_REMOTE_CHANGES_REUSED_PREFIX_SKIPPED_MESSAGE = localize(
+  "Cannot take changes into local files because the target page or its subtree is skipped due to a conflict in the existing prefix mirror. Review the prefix mirror.",
+);
+const TAKE_REMOTE_CHANGES_NOT_FOUND_MESSAGE = localize(
+  "Cannot take changes into local files because the target page was not found.",
+);
+const TAKE_REMOTE_CHANGES_API_NOT_SUPPORTED_MESSAGE = localize(
+  "Cannot take changes into local files because the body fetch API is not supported.",
+);
+const TAKE_REMOTE_CHANGES_CONNECTION_FAILED_MESSAGE = localize(
+  "Cannot take changes into local files because the connection to GROWI failed.",
+);
+const TAKE_REMOTE_CHANGES_WRITE_FAILED_MESSAGE = localize(
+  "Failed to take remote changes.",
+);
+const REFRESH_LOCAL_MIRROR_INVALID_TARGET_MESSAGE = localize(
+  "Refresh Local Mirror can only run on growi: pages.",
+);
+const REFRESH_LOCAL_MIRROR_NO_LOCAL_WORKSPACE_MESSAGE = localize(
+  "Cannot run Refresh Local Mirror because no local file: workspace/folder is open. Open a file: workspace/folder first.",
+);
+const REFRESH_LOCAL_MIRROR_READ_MANIFEST_FAILED_MESSAGE = localize(
+  "Cannot run Refresh Local Mirror because .growi-mirror.json could not be loaded. Run Sync Local Mirror first.",
+);
+const REFRESH_LOCAL_MIRROR_INVALID_MANIFEST_MESSAGE = localize(
+  "Cannot run Refresh Local Mirror because .growi-mirror.json GROWI metadata could not be read. Run Sync Local Mirror again.",
+);
+const REFRESH_LOCAL_MIRROR_BASE_URL_MISMATCH_MESSAGE = localize(
+  "Cannot run Refresh Local Mirror because the mirror GROWI base URL does not match the current setting. Check the target server.",
+);
+const REFRESH_LOCAL_MIRROR_LOCAL_CHANGES_MESSAGE = localize(
+  "Cannot run Refresh Local Mirror because local changed exists. Run Compare Local Mirror with GROWI or Upload Local Mirror to GROWI first.",
+);
+const REFRESH_LOCAL_MIRROR_SUCCESS_MESSAGE = localize(
+  "Refetched Local Mirror.",
+);
+const SHOW_LOCAL_ROUND_TRIP_ACTIONS_INVALID_TARGET_MESSAGE = localize(
+  "The local actions menu can only run on growi: pages.",
+);
 
 function hashBody(body: string): string {
   return createHash("sha256").update(body).digest("hex");
@@ -676,7 +751,9 @@ function formatBundleCompareSkippedSummary(
   results: readonly BundleCompareResult[],
 ): string {
   return [
-    "Compare Local Mirror with GROWI では一部ページを changes editor に含めませんでした。",
+    localize(
+      "Some pages were not included in the changes editor for Compare Local Mirror with GROWI.",
+    ),
     ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
   ].join("\n");
 }
@@ -685,7 +762,7 @@ function formatBundleUploadSummary(
   results: readonly BundleUploadResult[],
 ): string {
   return [
-    "Upload Local Mirror to GROWI を完了しました。",
+    localize("Completed Upload Local Mirror to GROWI."),
     ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
   ].join("\n");
 }
@@ -694,17 +771,17 @@ function formatTakeRemoteSummary(
   results: readonly TakeRemoteMirrorResult[],
 ): string {
   return [
-    "GROWI側の変更をローカルに取り込みました。",
+    localize("Took GROWI changes into local files."),
     ...results.map((result) => `${result.status}: ${result.canonicalPath}`),
   ].join("\n");
 }
 
 function formatScmSelectionSkippedSummary(
-  operation: "ローカルの変更" | "GROWI側の変更",
+  operation: string,
   resources: readonly MirrorCompareScmResource[],
 ): string {
   return [
-    `${operation}では一部選択項目を対象外として skip しました。`,
+    localize("Some selected items were skipped for {0}.", operation),
     ...resources.map(
       (resource) => `${resource.status}: ${resource.canonicalPath}`,
     ),
@@ -715,7 +792,7 @@ function formatSkippedMirrorPagesSummary(
   skippedPages: readonly MirrorManifestSkippedPage[],
 ): string {
   return [
-    "Local Mirror では一部ページを保存しませんでした。",
+    localize("Some pages were not saved in Local Mirror."),
     ...skippedPages.map(
       (page) =>
         `${page.reason}: ${page.canonicalPath} -> ${page.relativeFilePath}`,
@@ -745,15 +822,19 @@ function mapAccessFailureReasonToMessage(
     return messages.baseUrlNotConfigured ?? ADD_PREFIX_INVALID_BASE_URL_MESSAGE;
   }
   if (reason === "ApiTokenNotConfigured") {
-    return "GROWI API token が未設定です。先に Configure API Token を実行してください。";
+    return localize(
+      "GROWI API token is not configured. Run Configure API Token first.",
+    );
   }
   if (reason === "InvalidApiToken") {
-    return "GROWI API token が無効です。Configure API Token を確認してください。";
+    return localize("GROWI API token is invalid. Check Configure API Token.");
   }
   if (reason === "PermissionDenied") {
     return (
       messages.permissionDenied ??
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。"
+      localize(
+        "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
+      )
     );
   }
   if (reason === "ApiNotSupported") {
@@ -956,12 +1037,15 @@ function resolveMirrorTargetUri(
 
 function buildMirrorDiffTitle(loaded: LoadedMirrorSelection): string {
   if (!loaded.reusedAncestorPrefix) {
-    return `GROWI Mirror Diff: ${loaded.manifest.rootCanonicalPath}`;
+    return localize(
+      "GROWI Mirror Diff: {0}",
+      loaded.manifest.rootCanonicalPath,
+    );
   }
   if (loaded.requestedScope === "page") {
-    return `GROWI Mirror Diff: ${loaded.requestedCanonicalPath}`;
+    return localize("GROWI Mirror Diff: {0}", loaded.requestedCanonicalPath);
   }
-  return `GROWI Mirror Diff: ${loaded.requestedCanonicalPath}/*`;
+  return localize("GROWI Mirror Diff: {0}/*", loaded.requestedCanonicalPath);
 }
 
 function createExplorerMirrorDelegatingCommand(
@@ -1092,18 +1176,20 @@ export function createShowLocalMirrorActionsCommand(
     const selected = (await deps.showQuickPick(
       [
         {
-          label: "現在ページをローカルに同期",
+          label: localize("Sync Current Page Locally"),
           description: SYNC_LOCAL_MIRROR_SUCCESS_DESCRIPTION,
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "GROWIとの差分を確認",
+          label: localize("Compare with GROWI"),
           description: COMPARE_LOCAL_MIRROR_DESCRIPTION,
           command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
         {
-          label: "SCMで確認してGROWIに反映",
-          description: "比較結果をSCMで確認してから反映",
+          label: localize("Review in SCM and apply to GROWI"),
+          description: localize(
+            "Review comparison results in SCM before applying",
+          ),
           command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
       ] as readonly CurrentPageActionQuickPickItem[],
@@ -2095,7 +2181,10 @@ export function createScmUploadMirrorResourcesCommand(deps: MirrorCommandDeps) {
     if (targetResources.length === 0) {
       if (skippedResources.length > 0) {
         deps.showWarningMessage(
-          formatScmSelectionSkippedSummary("ローカルの変更", skippedResources),
+          formatScmSelectionSkippedSummary(
+            localize("Local Changes"),
+            skippedResources,
+          ),
         );
       } else {
         deps.showInformationMessage(SCM_UPLOAD_LOCAL_CHANGES_EMPTY_MESSAGE);
@@ -2126,11 +2215,14 @@ export function createScmUploadMirrorResourcesCommand(deps: MirrorCommandDeps) {
     const summaryLines = [formatBundleUploadSummary(results)];
     if (skippedResources.length > 0) {
       summaryLines.push(
-        formatScmSelectionSkippedSummary("ローカルの変更", skippedResources),
+        formatScmSelectionSkippedSummary(
+          localize("Local Changes"),
+          skippedResources,
+        ),
       );
     }
     if (aborted) {
-      summaryLines.unshift("ローカルの変更は途中で中断しました。");
+      summaryLines.unshift(localize("Local Changes were interrupted."));
     }
 
     if (aborted || skippedResources.length > 0) {
@@ -2171,7 +2263,10 @@ export function createScmTakeRemoteMirrorResourcesCommand(
     if (targetResources.length === 0) {
       if (skippedResources.length > 0) {
         deps.showWarningMessage(
-          formatScmSelectionSkippedSummary("GROWI側の変更", skippedResources),
+          formatScmSelectionSkippedSummary(
+            localize("GROWI Changes"),
+            skippedResources,
+          ),
         );
       } else {
         deps.showInformationMessage(SCM_TAKE_REMOTE_CHANGES_EMPTY_MESSAGE);
@@ -2196,11 +2291,14 @@ export function createScmTakeRemoteMirrorResourcesCommand(
     const summaryLines = [formatTakeRemoteSummary(results)];
     if (skippedResources.length > 0) {
       summaryLines.push(
-        formatScmSelectionSkippedSummary("GROWI側の変更", skippedResources),
+        formatScmSelectionSkippedSummary(
+          localize("GROWI Changes"),
+          skippedResources,
+        ),
       );
     }
     if (aborted) {
-      summaryLines.unshift("GROWI側の変更は途中で中断しました。");
+      summaryLines.unshift(localize("GROWI Changes were interrupted."));
     }
 
     if (aborted || skippedResources.length > 0) {

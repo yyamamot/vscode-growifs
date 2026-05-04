@@ -67,7 +67,7 @@ describe("createOpenPageCommand", () => {
 
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI の URL、same-instance permalink、または先頭 / 付きのページパスを入力してください。",
+      "Enter a GROWI URL, same-instance permalink, or page path starting with /.",
     );
   });
 
@@ -83,38 +83,38 @@ describe("createOpenPageCommand", () => {
     expect(deps.resolvePageReference).not.toHaveBeenCalled();
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI の URL、same-instance permalink、または先頭 / 付きのページパスを入力してください。",
+      "Enter a GROWI URL, same-instance permalink, or page path starting with /.",
     );
   });
 
   it.each([
     [
       "NotFound",
-      "対象ページが見つからないため GROWI ページを開けませんでした。",
+      "Could not open the GROWI page because the target page was not found.",
     ],
     [
       "BaseUrlNotConfigured",
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     ],
     [
       "ApiTokenNotConfigured",
-      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+      "GROWI API token is not configured. Run Configure API Token first.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効なため GROWI ページを開けませんでした。Configure API Token を確認してください。",
+      "Could not open the GROWI page because the GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否したため GROWI ページを開けませんでした。権限設定と API Token を確認してください。",
+      "Could not open the GROWI page because GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "本文取得 API が未対応のため GROWI ページを開けませんでした。",
+      "Could not open the GROWI page because the body fetch API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため GROWI ページを開けませんでした。",
+      "Could not open the GROWI page because the connection to GROWI failed.",
     ],
   ] as const)("shows an error when page preflight fails: %s", async (reason, message) => {
     const deps = createDeps();
@@ -159,10 +159,10 @@ describe("createOpenPageCommand", () => {
         },
       ],
       {
-        placeHolder:
-          "登録済み Prefix 配下からページを絞り込んで選択してください。",
-        directInputLabel: "URL / path を直接入力",
-        directInputDescription: "候補に無いページは直接入力で開きます。",
+        placeHolder: "Filter and select a page under a registered prefix.",
+        directInputLabel: "Enter URL / path directly",
+        directInputDescription:
+          "Open a page not shown in the candidates by direct input.",
         search: expect.any(Function),
       },
     );
@@ -184,7 +184,7 @@ describe("createOpenPageCommand", () => {
         {
           label: "guide",
           description: "/team/dev/guide",
-          detail: "登録済み Prefix 配下の一部候補です。",
+          detail: "Partial candidates under registered prefixes.",
           canonicalPath: "/team/dev/guide",
           basenameLower: "guide",
           canonicalPathLower: "/team/dev/guide",
@@ -193,7 +193,7 @@ describe("createOpenPageCommand", () => {
         {
           label: "spec",
           description: "/team/dev/spec",
-          detail: "登録済み Prefix 配下の一部候補です。",
+          detail: "Partial candidates under registered prefixes.",
           canonicalPath: "/team/dev/spec",
           basenameLower: "spec",
           canonicalPathLower: "/team/dev/spec",
@@ -247,7 +247,7 @@ describe("createOpenPageCommand", () => {
     expect(deps.showInputBox).toHaveBeenCalledWith({
       placeHolder:
         "https://growi.example.com/67ca... or /team/dev/spec or /67ca...",
-      prompt: "GROWI の URL、permalink、またはページパスを入力してください",
+      prompt: "Enter a GROWI URL, permalink, or page path",
       title: "GROWI: Open Page",
     });
     expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
@@ -263,10 +263,10 @@ describe("createOpenPageCommand", () => {
 
     expect(deps.listPages).not.toHaveBeenCalled();
     expect(deps.showOpenPageQuickPick).toHaveBeenCalledWith([], {
-      placeHolder:
-        "登録済み Prefix 配下からページを絞り込んで選択してください。",
-      directInputLabel: "URL / path を直接入力",
-      directInputDescription: "候補に無いページは直接入力で開きます。",
+      placeHolder: "Filter and select a page under a registered prefix.",
+      directInputLabel: "Enter URL / path directly",
+      directInputDescription:
+        "Open a page not shown in the candidates by direct input.",
       search: expect.any(Function),
     });
     expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
@@ -398,7 +398,7 @@ describe("createOpenPrefixRootPageCommand", () => {
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.checkRemoteMetadataForPage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "対象ページが見つからないため GROWI ページを開けませんでした。",
+      "Could not open the GROWI page because the target page was not found.",
     );
   });
 
@@ -412,7 +412,7 @@ describe("createOpenPrefixRootPageCommand", () => {
     expect(deps.resolvePageReference).not.toHaveBeenCalled();
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Open Prefix Root Page は登録済み Prefix root でのみ実行できます。",
+      "Open Prefix Root Page can only run on registered prefix roots.",
     );
   });
 });
@@ -451,7 +451,7 @@ describe("createOpenDirectoryPageCommand", () => {
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.checkRemoteMetadataForPage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "対象ページが見つからないため GROWI ページを開けませんでした。",
+      "Could not open the GROWI page because the target page was not found.",
     );
   });
 
@@ -465,7 +465,7 @@ describe("createOpenDirectoryPageCommand", () => {
     expect(deps.resolvePageReference).not.toHaveBeenCalled();
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Open Directory Page は実ページを持つ growi: ディレクトリでのみ実行できます。",
+      "Open Directory Page can only run on growi: directories with an actual page.",
     );
   });
 });
@@ -540,7 +540,7 @@ describe("Explorer navigation wrapper commands", () => {
     expect(result).toBeUndefined();
     expect(deps.openExternalUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ブラウザで表示 は growi: ページ、growi: ディレクトリページ、growi: prefix root でのみ実行できます。",
+      "Open in Browser can only run on growi: pages, growi: directory pages, or growi: prefix roots.",
     );
   });
 
@@ -555,7 +555,7 @@ describe("Explorer navigation wrapper commands", () => {
     expect(result).toBeUndefined();
     expect(deps.openExternalUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     );
   });
 
@@ -596,7 +596,7 @@ describe("createShowBacklinksCommand", () => {
     await createShowBacklinksCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Show Backlinks は growi: ページでのみ実行できます。",
+      "Show Backlinks can only run on growi: pages.",
     );
     expect(deps.listPages).not.toHaveBeenCalled();
     expect(deps.readPageBody).not.toHaveBeenCalled();
@@ -611,7 +611,7 @@ describe("createShowBacklinksCommand", () => {
     );
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Backlinks の対象 Prefix がありません。先に Add Prefix を実行してください。",
+      "No prefix is available for Backlinks. Run Add Prefix first.",
     );
     expect(deps.listPages).not.toHaveBeenCalled();
   });
@@ -627,7 +627,7 @@ describe("createShowBacklinksCommand", () => {
     );
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "Backlinks は見つかりませんでした。",
+      "No backlinks found.",
     );
     expect(deps.showQuickPick).not.toHaveBeenCalled();
   });
@@ -654,7 +654,7 @@ describe("createShowBacklinksCommand", () => {
 
     expect(deps.showQuickPick).toHaveBeenCalledWith(
       [{ label: "/team/dev/backlink", canonicalPath: "/team/dev/backlink" }],
-      { placeHolder: "登録済み Prefix 配下を検索しました。" },
+      { placeHolder: "Searched under registered prefixes." },
     );
     expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/backlink.md");
   });
@@ -681,7 +681,7 @@ describe("createShowBacklinksCommand", () => {
 
     expect(deps.showQuickPick).toHaveBeenCalledWith(expect.any(Array), {
       placeHolder:
-        "登録済み Prefix 配下の一部のみ走査済みです。走査済み: 100件。結果は最大100件で打ち切られています。",
+        "Only part of the registered prefixes has been scanned.Scanned: 100 items.Results are limited to 100 items.",
     });
     expect(deps.showQuickPick.mock.calls[0]?.[0]).toHaveLength(100);
   });
@@ -706,7 +706,7 @@ describe("createShowBacklinksCommand", () => {
       );
 
       expect(deps.showInformationMessage).toHaveBeenCalledWith(
-        "Backlinks は見つかりませんでした。一部のみ走査済みです。走査済み: 1件。",
+        "No backlinks found. Only part has been scanned.Scanned: 1 items.",
       );
       expect(deps.showQuickPick).not.toHaveBeenCalled();
     } finally {
@@ -726,7 +726,7 @@ describe("createShowBacklinksCommand", () => {
       createUri("growi", "/team/dev/current.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "Backlinks の対象一覧 API が未対応のため実行できません。",
+      "Cannot run Backlinks because the list API is not supported.",
     );
 
     deps.listPages.mockResolvedValueOnce({
@@ -741,7 +741,7 @@ describe("createShowBacklinksCommand", () => {
       createUri("growi", "/team/dev/current.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "Backlinks の本文取得 API が未対応のため実行できません。",
+      "Cannot run Backlinks because the body fetch API is not supported.",
     );
 
     deps.listPages.mockResolvedValueOnce({
@@ -752,7 +752,7 @@ describe("createShowBacklinksCommand", () => {
       createUri("growi", "/team/dev/current.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "GROWI への接続に失敗したため Backlinks を実行できませんでした。",
+      "Cannot run Backlinks because the connection to GROWI failed.",
     );
   });
 });

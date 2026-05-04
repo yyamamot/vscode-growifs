@@ -18,7 +18,7 @@ describe("createAddCurrentPageBookmarkCommand", () => {
     expect(deps.addBookmark).toHaveBeenCalledWith("/team/dev/spec", undefined);
     expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページをブックマークに追加しました。",
+      "Added the current page to bookmarks.",
     );
   });
 
@@ -53,7 +53,7 @@ describe("createAddCurrentPageBookmarkCommand", () => {
 
     expect(deps.refreshPrefixTree).not.toHaveBeenCalled();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページは既にブックマーク済みです。",
+      "The current page is already bookmarked.",
     );
   });
 });
@@ -72,7 +72,7 @@ describe("createRemoveCurrentPageBookmarkCommand", () => {
     );
     expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "ブックマークから削除しました。",
+      "Removed from bookmarks.",
     );
   });
 
@@ -104,7 +104,7 @@ describe("createRemoveCurrentPageBookmarkCommand", () => {
 
     expect(deps.refreshPrefixTree).not.toHaveBeenCalled();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "対象ページはブックマークされていません。",
+      "The target page is not bookmarked.",
     );
   });
 });
@@ -135,13 +135,13 @@ describe("createShowBookmarksCommand", () => {
         {
           label: "spec",
           description: "/team/dev/spec",
-          detail: "追加日時: 2026-04-17T00:00:00.000Z",
+          detail: "Added: 2026-04-17T00:00:00.000Z",
           canonicalPath: "/team/dev/spec",
           addedAt: "2026-04-17T00:00:00.000Z",
           pageId: "page-1",
         },
       ],
-      { placeHolder: "ブックマークからページを選択してください。" },
+      { placeHolder: "Select a page from bookmarks." },
     );
     expect(deps.openUri).toHaveBeenCalledWith("growi:/team/dev/spec.md");
   });
@@ -172,7 +172,7 @@ describe("createShowBookmarksCommand", () => {
     );
     expect(deps.refreshPrefixTree).toHaveBeenCalledTimes(1);
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "ブックマークから削除しました。",
+      "Removed from bookmarks.",
     );
     expect(deps.openUri).not.toHaveBeenCalled();
   });
@@ -197,10 +197,11 @@ describe("createShowBookmarksCommand", () => {
     expect(deps.showBookmarkQuickPick).toHaveBeenCalledWith(
       [
         expect.objectContaining({
-          detail: "状態: prefix未登録 ・ 追加日時: 2026-04-17T00:00:00.000Z",
+          detail:
+            "Status: prefix not registered ・ Added: 2026-04-17T00:00:00.000Z",
         }),
       ],
-      { placeHolder: "ブックマークからページを選択してください。" },
+      { placeHolder: "Select a page from bookmarks." },
     );
   });
 
@@ -224,10 +225,10 @@ describe("createShowBookmarksCommand", () => {
     expect(deps.showBookmarkQuickPick).toHaveBeenCalledWith(
       [
         expect.objectContaining({
-          detail: "状態: 開けない ・ 追加日時: 2026-04-17T00:00:00.000Z",
+          detail: "Status: cannot open ・ Added: 2026-04-17T00:00:00.000Z",
         }),
       ],
-      { placeHolder: "ブックマークからページを選択してください。" },
+      { placeHolder: "Select a page from bookmarks." },
     );
   });
 
@@ -238,7 +239,7 @@ describe("createShowBookmarksCommand", () => {
     await createShowBookmarksCommand(deps)();
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "ブックマークはありません。現在ページで Add Current Page to Bookmarks を実行してください。",
+      "No bookmarks. Run Add Current Page to Bookmarks on the current page.",
     );
     expect(deps.showBookmarkQuickPick).not.toHaveBeenCalled();
   });

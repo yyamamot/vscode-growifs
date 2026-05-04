@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("vscode", () => ({
+  env: { language: "en" },
+  Uri: {
+    file: vi.fn((path: string) => ({ scheme: "file", fsPath: path })),
+    parse: vi.fn((value: string) => ({
+      scheme: value.split(":")[0],
+      path: value,
+    })),
+  },
+}));
+
 import {
+  buildCurrentPageDetailActions,
   createOpenCurrentPageHubCommand,
   createShowCurrentPageActionsCommand,
   createShowCurrentPageAttachmentsCommand,
@@ -9,13 +21,14 @@ import {
   GROWI_COMMANDS,
   loadCurrentPageDetailSummary,
 } from "../../src/vscode/commands";
+import { renderPageDetailHtml } from "../../src/vscode/currentPageDetailWebview";
 import { createDeps, createUri } from "./commandsTestUtils";
 
 describe("createShowCurrentPageActionsCommand", () => {
   it("includes bookmark add or remove depending on the current page state", async () => {
     const executeCommand = vi.fn(async () => {});
     const showQuickPick = vi.fn(async () => ({
-      label: "ブックマークに追加",
+      label: "Add Bookmark",
       command: GROWI_COMMANDS.addCurrentPageBookmark,
     }));
 
@@ -34,11 +47,11 @@ describe("createShowCurrentPageActionsCommand", () => {
     expect(showQuickPick).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "ブックマークに追加",
+          label: "Add Bookmark",
           command: GROWI_COMMANDS.addCurrentPageBookmark,
         }),
       ]),
-      { placeHolder: "現在ページに対して実行する操作を選択してください。" },
+      { placeHolder: "Select an action for the current page." },
     );
     expect(executeCommand).toHaveBeenCalledWith(
       GROWI_COMMANDS.addCurrentPageBookmark,
@@ -49,7 +62,7 @@ describe("createShowCurrentPageActionsCommand", () => {
   it("includes delete, rename and revision history diff in current page actions", async () => {
     const executeCommand = vi.fn(async () => {});
     const showQuickPick = vi.fn(async () => ({
-      label: "ページを削除",
+      label: "Delete Page",
       command: GROWI_COMMANDS.deletePage,
     }));
 
@@ -68,27 +81,27 @@ describe("createShowCurrentPageActionsCommand", () => {
     expect(showQuickPick).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "ページ名を変更",
+          label: "Rename Page",
           command: GROWI_COMMANDS.renamePage,
         }),
         expect.objectContaining({
-          label: "ページを削除",
+          label: "Delete Page",
           command: GROWI_COMMANDS.deletePage,
         }),
         expect.objectContaining({
-          label: "履歴差分を表示",
+          label: "Show Revision Diff",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         }),
         expect.objectContaining({
-          label: "添付一覧を表示",
+          label: "Show Attachments",
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         }),
         expect.objectContaining({
-          label: "ブックマークに追加",
+          label: "Add Bookmark",
           command: GROWI_COMMANDS.addCurrentPageBookmark,
         }),
       ]),
-      { placeHolder: "現在ページに対して実行する操作を選択してください。" },
+      { placeHolder: "Select an action for the current page." },
     );
     expect(executeCommand).toHaveBeenCalledWith(
       GROWI_COMMANDS.deletePage,
@@ -172,7 +185,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
         },
       ],
       {
-        placeHolder: "添付一覧からブラウザで表示する添付を選択してください。",
+        placeHolder: "Select an attachment to open in the browser.",
       },
     );
     expect(deps.openExternalUri).toHaveBeenCalledWith(
@@ -199,7 +212,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
 
     expect(result).toBeUndefined();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページに添付はありません。",
+      "No attachments on the current page.",
     );
     expect(deps.openExternalUri).not.toHaveBeenCalled();
   });
@@ -233,7 +246,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
 
     expect(result).toBeUndefined();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "ブラウザで表示できる添付はありません。",
+      "No attachments can be opened in the browser.",
     );
     expect(deps.openExternalUri).not.toHaveBeenCalled();
   });
@@ -250,7 +263,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
     );
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "現在ページメタ情報を取得できないため添付一覧を表示できません。ページを開き直して再実行してください。",
+      "Cannot show attachments because current page metadata could not be retrieved. Reopen the page and try again.",
     );
     expect(deps.openExternalUri).not.toHaveBeenCalled();
   });
@@ -273,7 +286,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
       createUri("growi", "/team/dev/spec.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "添付一覧 API が未対応のため添付一覧を表示できません。",
+      "Cannot show attachments because the attachment list API is not supported.",
     );
 
     deps.listAttachments.mockResolvedValueOnce({
@@ -284,7 +297,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
       createUri("growi", "/team/dev/spec.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "GROWI への接続に失敗したため添付一覧を表示できませんでした。",
+      "Could not show attachments because the connection to GROWI failed.",
     );
   });
 
@@ -318,7 +331,7 @@ describe("createShowCurrentPageAttachmentsCommand", () => {
 
     expect(result).toBeUndefined();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "添付一覧の表示をキャンセルしました。",
+      "Canceled showing attachments.",
     );
     expect(deps.openExternalUri).not.toHaveBeenCalled();
   });
@@ -389,7 +402,7 @@ describe("createShowRevisionHistoryDiffCommand", () => {
     );
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "比較可能な revision が不足しているため履歴差分を表示できません。",
+      "Cannot show revision diff because there are not enough comparable revisions.",
     );
     expect(deps.openDiff).not.toHaveBeenCalled();
   });
@@ -412,7 +425,7 @@ describe("createShowRevisionHistoryDiffCommand", () => {
       createUri("growi", "/team/dev/spec.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "revision 一覧 API が未対応のため履歴差分を実行できません。",
+      "Cannot run revision diff because the revision list API is not supported.",
     );
 
     deps.listRevisions.mockResolvedValueOnce({
@@ -423,7 +436,7 @@ describe("createShowRevisionHistoryDiffCommand", () => {
       createUri("growi", "/team/dev/spec.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "GROWI への接続に失敗したため履歴差分を実行できませんでした。",
+      "Could not run revision diff because the connection to GROWI failed.",
     );
   });
 
@@ -454,7 +467,7 @@ describe("createShowRevisionHistoryDiffCommand", () => {
       createUri("growi", "/team/dev/spec.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "revision 本文取得 API が未対応のため履歴差分を実行できません。",
+      "Cannot run revision diff because the revision body API is not supported.",
     );
 
     deps.showQuickPick.mockResolvedValueOnce({
@@ -475,7 +488,7 @@ describe("createShowRevisionHistoryDiffCommand", () => {
       createUri("growi", "/team/dev/spec.md"),
     );
     expect(deps.showErrorMessage).toHaveBeenLastCalledWith(
-      "GROWI への接続に失敗したため履歴差分を実行できませんでした。",
+      "Could not run revision diff because the connection to GROWI failed.",
     );
   });
 });
@@ -516,7 +529,7 @@ describe("createShowCurrentPageInfoCommand", () => {
 
     expect(deps.showInformationMessage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "現在ページメタ情報を取得できませんでした。ページを開き直して再実行してください。",
+      "Could not retrieve current page metadata. Reopen the page and try again.",
     );
   });
 
@@ -584,16 +597,70 @@ describe("createShowCurrentPageInfoCommand", () => {
     expect(deps.getCurrentPageInfo).not.toHaveBeenCalled();
     expect(deps.showInformationMessage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Show Current Page Info は growi: ページでのみ実行できます。",
+      "Show Current Page Info can only run on growi: pages.",
     );
   });
 });
 
 describe("createOpenCurrentPageHubCommand", () => {
+  it("keeps Page Details webview text free of Japanese source labels", () => {
+    const labels = {
+      pageDetail: "Page Details",
+      pageInfo: "Page Info",
+      pageInfoDescription: "URL, pageId, revision, and updates",
+      backlinks: "Backlinks",
+      backlinksDescription: "Top 5 pages linking to the current page",
+      attachments: "Attachments",
+      attachmentsDescription: "Top 5 attachments for the current page",
+      revisions: "History",
+      revisionsDescription: "Top 5 recent revisions",
+      unavailable: "Not loaded",
+      status: "Status",
+      pageInfoUnavailable: "Could not retrieve page info",
+      unknown: "Unknown",
+      lastUpdatedBy: "Updated by",
+      lastUpdatedAt: "Updated at",
+      partial: "partial",
+      count: " items",
+      empty: "No displayable items",
+    };
+    const html = renderPageDetailHtml({
+      canonicalPath: "/sample",
+      actions: buildCurrentPageDetailActions(),
+      summary: {
+        pageInfo: {
+          pageId: "page-123",
+          revisionId: "revision-002",
+          url: "https://growi.example.com/sample",
+          path: "/sample",
+          lastUpdatedBy: "alice",
+          lastUpdatedAt: "2026-03-08T10:00:00.000Z",
+        },
+        backlinks: { items: [], totalCount: 0 },
+        attachments: { items: ["image.png"], totalCount: 1 },
+        revisions: {
+          items: ["2026-03-08T10:00:00.000Z / alice"],
+          totalCount: 1,
+        },
+      },
+      cspSource: "vscode-resource:",
+      nonce: "test-nonce",
+      labels,
+    });
+
+    expect(html).not.toMatch(
+      /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u,
+    );
+    expect(html).toContain("Show Page Info");
+    expect(html).toContain("Show Backlinks");
+    expect(html).toContain("Show Attachments");
+    expect(html).toContain("Show Revision Diff");
+  });
+
   it("shows page detail reference actions and delegates the selected command", async () => {
     const deps = createDeps();
     deps.showQuickPick.mockResolvedValueOnce({
-      label: "添付一覧を表示",
+      label: "Show Attachments",
       command: GROWI_COMMANDS.showCurrentPageAttachments,
     });
 
@@ -604,28 +671,28 @@ describe("createOpenCurrentPageHubCommand", () => {
     expect(deps.showQuickPick).toHaveBeenCalledWith(
       [
         {
-          label: "ページ情報を表示",
-          description: "URL、pageId、revision、更新情報",
+          label: "Show Page Info",
+          description: "URL, pageId, revision, and updates",
           command: GROWI_COMMANDS.showCurrentPageInfo,
         },
         {
-          label: "被リンクを表示",
-          description: "現在ページへの参照元",
+          label: "Show Backlinks",
+          description: "Pages linking to the current page",
           command: GROWI_COMMANDS.showBacklinks,
         },
         {
-          label: "添付一覧を表示",
-          description: "現在ページに紐づく添付",
+          label: "Show Attachments",
+          description: "Attachments for the current page",
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
-          label: "履歴差分を表示",
-          description: "revision を選択して VS Code diff で比較",
+          label: "Show Revision Diff",
+          description: "Select a revision and compare it in VS Code diff",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
       ],
       {
-        placeHolder: "ページ詳細で確認する項目を選択してください。",
+        placeHolder: "Select an item to inspect in Page Details.",
       },
     );
     expect(deps.executeCommand).toHaveBeenCalledWith(
@@ -637,7 +704,7 @@ describe("createOpenCurrentPageHubCommand", () => {
   it("resolves TreeView command targets for page detail", async () => {
     const deps = createDeps();
     deps.showQuickPick.mockResolvedValueOnce({
-      label: "被リンクを表示",
+      label: "Show Backlinks",
       command: GROWI_COMMANDS.showBacklinks,
     });
 
@@ -687,23 +754,23 @@ describe("createOpenCurrentPageHubCommand", () => {
       },
       actions: [
         {
-          label: "ページ情報を表示",
-          description: "URL、pageId、revision、更新情報",
+          label: "Show Page Info",
+          description: "URL, pageId, revision, and updates",
           command: GROWI_COMMANDS.showCurrentPageInfo,
         },
         {
-          label: "被リンクを表示",
-          description: "現在ページへの参照元",
+          label: "Show Backlinks",
+          description: "Pages linking to the current page",
           command: GROWI_COMMANDS.showBacklinks,
         },
         {
-          label: "添付一覧を表示",
-          description: "現在ページに紐づく添付",
+          label: "Show Attachments",
+          description: "Attachments for the current page",
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
-          label: "履歴差分を表示",
-          description: "revision を選択して VS Code diff で比較",
+          label: "Show Revision Diff",
+          description: "Select a revision and compare it in VS Code diff",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
       ],
@@ -736,7 +803,7 @@ describe("createOpenCurrentPageHubCommand", () => {
     expect(deps.showQuickPick).not.toHaveBeenCalled();
     expect(deps.executeCommand).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ページ詳細は growi: ページでのみ開けます。",
+      "Page Details can only open for growi: pages.",
     );
   });
 });

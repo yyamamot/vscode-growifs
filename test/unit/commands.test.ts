@@ -52,7 +52,7 @@ describe("createConfigureBaseUrlCommand", () => {
       "https://growi.example.com/",
     );
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "GROWI base URL を更新しました。",
+      "Updated the GROWI base URL.",
     );
   });
 
@@ -76,7 +76,7 @@ describe("createConfigureBaseUrlCommand", () => {
 
     expect(deps.updateBaseUrl).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI base URL には http:// または https:// の URL を入力してください。",
+      "Enter an http:// or https:// URL for the GROWI base URL.",
     );
   });
 });
@@ -93,7 +93,7 @@ describe("createConfigureApiTokenCommand", () => {
       "secret-token",
     );
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "GROWI API token を保存しました。",
+      "Saved the GROWI API token.",
     );
   });
 
@@ -118,7 +118,7 @@ describe("createConfigureApiTokenCommand", () => {
 
     expect(deps.storeSecret).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI API token は空にできません。",
+      "GROWI API token cannot be empty.",
     );
   });
 });
@@ -132,7 +132,7 @@ describe("createAddPrefixCommand", () => {
 
     expect(deps.showInputBox).toHaveBeenCalledWith({
       placeHolder: "https://growi.example.com/67ca... or /team/dev",
-      prompt: "登録する Prefix または same-instance idurl を入力してください",
+      prompt: "Enter the prefix or same-instance idurl to register",
       title: "GROWI: Add Prefix",
     });
   });
@@ -156,7 +156,7 @@ describe("createAddPrefixCommand", () => {
       source: "path",
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "GROWI Prefix を追加しました。",
+      "Added the GROWI prefix.",
     );
     expect(deps.showErrorMessage).not.toHaveBeenCalled();
   });
@@ -187,7 +187,7 @@ describe("createAddPrefixCommand", () => {
     });
     expect(deps.addPrefix).toHaveBeenCalledWith("/team/dev/spec");
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "GROWI Prefix を追加しました。",
+      "Added the GROWI prefix.",
     );
   });
 
@@ -199,7 +199,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     );
   });
 
@@ -210,7 +210,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Prefix には先頭 / 付きのページパスを入力してください。",
+      "Enter a page path starting with / for Prefix.",
     );
     expect(deps.resolvePageReference).not.toHaveBeenCalled();
     expect(deps.addPrefix).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Prefix には先頭 / 付き canonical path または same-instance idurl を入力してください。",
+      "Enter a canonical path starting with / or a same-instance idurl for Prefix.",
     );
     expect(deps.resolvePageReference).not.toHaveBeenCalled();
     expect(deps.addPrefix).not.toHaveBeenCalled();
@@ -242,7 +242,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Prefix には先頭 / 付き canonical path または same-instance idurl を入力してください。",
+      "Enter a canonical path starting with / or a same-instance idurl for Prefix.",
     );
     expect(deps.resolvePageReference).not.toHaveBeenCalled();
     expect(deps.addPrefix).not.toHaveBeenCalled();
@@ -262,7 +262,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "指定した idurl に対応するページが見つかりませんでした。",
+      "No page was found for the specified idurl.",
     );
     expect(deps.addPrefix).not.toHaveBeenCalled();
   });
@@ -270,27 +270,27 @@ describe("createAddPrefixCommand", () => {
   it.each([
     [
       "BaseUrlNotConfigured",
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     ],
     [
       "ApiTokenNotConfigured",
-      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+      "GROWI API token is not configured. Run Configure API Token first.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効です。Configure API Token を確認してください。",
+      "GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+      "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "pageId 解決 API が未対応のため Prefix を追加できませんでした。",
+      "Could not add the prefix because the pageId resolution API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Prefix を追加できませんでした。",
+      "Could not add the prefix because the connection to GROWI failed.",
     ],
   ] as const)("shows an error when idurl resolution fails: %s", async (reason, message) => {
     const deps = createDeps();
@@ -321,7 +321,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "指定した Prefix は既に登録済みです。Explorer 表示を再同期しました。",
+      "The specified prefix is already registered. Synced the Explorer view again.",
     );
     expect(deps.addPrefix).toHaveBeenCalledWith("/team/dev");
     expect(deps.showErrorMessage).not.toHaveBeenCalled();
@@ -338,7 +338,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "指定した Prefix は既存 Prefix の祖先です。より具体的な Prefix を指定してください。",
+      "The specified prefix is an ancestor of an existing prefix. Specify a more specific prefix.",
     );
   });
 
@@ -353,7 +353,7 @@ describe("createAddPrefixCommand", () => {
     await createAddPrefixCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "指定した Prefix は既存 Prefix の子孫です。既存 Prefix と重複しない Prefix を指定してください。",
+      "The specified prefix is a descendant of an existing prefix. Specify a prefix that does not overlap existing prefixes.",
     );
   });
 });
@@ -365,7 +365,7 @@ describe("createClearPrefixesCommand", () => {
     await createClearPrefixesCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     );
     expect(deps.clearPrefixes).not.toHaveBeenCalled();
   });
@@ -378,7 +378,7 @@ describe("createClearPrefixesCommand", () => {
     await createClearPrefixesCommand(deps)();
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在の接続先に削除対象の Prefix はありません。",
+      "There are no prefixes to delete on the current target.",
     );
     expect(deps.showClearPrefixesConfirmation).not.toHaveBeenCalled();
   });
@@ -414,7 +414,7 @@ describe("createClearPrefixesCommand", () => {
     );
     expect(deps.clearPrefixes).toHaveBeenCalledTimes(1);
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在の接続先に登録された GROWI Prefix を削除しました。",
+      "Deleted the GROWI prefix registered on the current target.",
     );
   });
 });
@@ -429,7 +429,7 @@ describe("createDeletePrefixCommand", () => {
     });
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "削除対象の Prefix root ではありません。",
+      "This is not the prefix root to delete.",
     );
     expect(deps.deletePrefix).not.toHaveBeenCalled();
   });
@@ -449,7 +449,7 @@ describe("createDeletePrefixCommand", () => {
 
     expect(deps.deletePrefix).toHaveBeenCalledWith("/team/dev");
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "対象 Prefix を削除しました。",
+      "Deleted the target prefix.",
     );
   });
 
@@ -468,7 +468,7 @@ describe("createDeletePrefixCommand", () => {
 
     expect(deps.deletePrefix).toHaveBeenCalledWith("/team/ops");
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "対象 Prefix は登録されていません。",
+      "The target prefix is not registered.",
     );
   });
 });
@@ -542,31 +542,31 @@ describe("createCreatePageCommand", () => {
     expect(deps.createPage).not.toHaveBeenCalled();
     expect(deps.openUri).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Create Page には先頭 / 付きのページパスを入力してください。",
+      "Enter a page path starting with / for Create Page.",
     );
   });
 
   it.each([
-    ["AlreadyExists", "指定した path のページは既に存在します。"],
+    ["AlreadyExists", "A page with the specified path already exists."],
     [
       "NotFound",
-      "指定した親ページが見つからないため Create Page を実行できませんでした。",
+      "Cannot run Create Page because the specified parent page was not found.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効です。Configure API Token を確認してください。",
+      "GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+      "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "ページ作成 API が未対応のため Create Page を実行できませんでした。",
+      "Cannot run Create Page because the page creation API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Create Page を実行できませんでした。",
+      "Cannot run Create Page because the connection to GROWI failed.",
     ],
   ] as const)("maps %s create failure to message", async (reason, message) => {
     const deps = createDeps();
@@ -665,34 +665,34 @@ describe("createDeletePageCommand", () => {
 
     expect(deps.deletePage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "未保存の変更があるため Delete Page を実行できません。先に保存してください。",
+      "Cannot run Delete Page because there are unsaved changes. Save first.",
     );
   });
 
   it.each([
     [
       "HasChildren",
-      "子ページがあるためこのページのみは削除できません。配下も含めて削除してください。",
+      "This page has child pages, so this page alone cannot be deleted. Delete child pages too.",
     ],
     [
       "NotFound",
-      "対象ページが見つからないため Delete Page を実行できませんでした。",
+      "Cannot run Delete Page because the target page was not found.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効です。Configure API Token を確認してください。",
+      "GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+      "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "ページ削除 API が未対応のため Delete Page を実行できませんでした。",
+      "Cannot run Delete Page because the page deletion API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Delete Page を実行できませんでした。",
+      "Cannot run Delete Page because the connection to GROWI failed.",
     ],
   ] as const)("maps %s delete failure to message", async (reason, message) => {
     const deps = createDeps();
@@ -735,7 +735,7 @@ describe("createDeletePageCommand", () => {
     await createDeletePageCommand(deps)();
 
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "Delete Page は成功しましたが、一部ページタブを閉じられませんでした。手動で閉じてください。",
+      "Delete Page succeeded, but some page tabs could not be closed. Close them manually.",
     );
   });
 });
@@ -819,7 +819,7 @@ describe("createRenamePageCommand", () => {
 
     expect(deps.renamePage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "未保存の変更があるため Rename Page を実行できません。先に保存してください。",
+      "Cannot run Rename Page because there are unsaved changes. Save first.",
     );
   });
 
@@ -842,35 +842,35 @@ describe("createRenamePageCommand", () => {
 
     expect(deps.renamePage).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Rename Page には先頭 / 付きのページパスを入力してください。",
+      "Enter a page path starting with / for Rename Page.",
     );
   });
 
   it.each([
-    ["AlreadyExists", "同じ path のページが既に存在します。"],
+    ["AlreadyExists", "A page with the same path already exists."],
     [
       "ParentNotFound",
-      "指定した親ページが見つからないため Rename Page を実行できませんでした。",
+      "Cannot run Rename Page because the specified parent page was not found.",
     ],
     [
       "NotFound",
-      "対象ページが見つからないため Rename Page を実行できませんでした。",
+      "Cannot run Rename Page because the target page was not found.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効です。Configure API Token を確認してください。",
+      "GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+      "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "ページ名変更 API が未対応のため Rename Page を実行できませんでした。",
+      "Cannot run Rename Page because the page rename API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Rename Page を実行できませんでした。",
+      "Cannot run Rename Page because the connection to GROWI failed.",
     ],
   ] as const)("maps %s rename failure to message", async (reason, message) => {
     const deps = createDeps();
@@ -972,7 +972,7 @@ describe("createRenamePageCommand", () => {
     await createRenamePageCommand(deps)();
 
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "Rename Page は成功しましたが、未保存変更のあるページは自動で開き直しませんでした。新しい path を開き直してください。",
+      "Rename Page succeeded, but pages with unsaved changes were not reopened automatically. Open the new path manually.",
     );
   });
 });

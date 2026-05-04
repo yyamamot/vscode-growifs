@@ -57,7 +57,9 @@
   "commands": [
     {
       "id": "growi.addPrefix",
-      "args": ["/team/dev"]
+      "args": [
+        "/team/dev"
+      ]
     },
     {
       "id": "growi.openPage",
@@ -74,7 +76,9 @@
     },
     {
       "id": "growi.openPage",
-      "args": ["/team/dev/docs"]
+      "args": [
+        "/team/dev/docs"
+      ]
     },
     {
       "id": "growi.showBookmarks",
@@ -116,7 +120,7 @@
     "requiredQuickPickItems": [
       {
         "name": "openPage",
-        "placeholder": "登録済み Prefix 配下からページを絞り込んで選択してください。",
+        "placeholder": "Filter and select a page under a registered prefix.",
         "value": "sp",
         "item": {
           "label": "spec",
@@ -128,13 +132,13 @@
         "name": "openPage",
         "value": "sp",
         "item": {
-          "label": "URL / path を直接入力",
+          "label": "Enter URL / path directly",
           "action": "directInput"
         }
       },
       {
         "name": "bookmarks",
-        "placeholder": "ブックマークからページを選択してください。",
+        "placeholder": "Select a page from bookmarks.",
         "item": {
           "label": "spec",
           "description": "/team/dev/spec",
@@ -185,7 +189,7 @@
         "name": "openPage",
         "value": "sp",
         "item": {
-          "label": "URL / path を直接入力"
+          "label": "Enter URL / path directly"
         },
         "action": "directInput"
       }
@@ -196,6 +200,7 @@
       "growi.addCurrentPageBookmark",
       "growi.openPage",
       "growi.showBookmarks"
-    ]
+    ],
+    "forbiddenJapaneseText": true
   }
 }

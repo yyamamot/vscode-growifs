@@ -102,7 +102,7 @@ describe("createCompareLocalMirrorWithGrowiCommand", () => {
     await createCompareLocalMirrorWithGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "Compare Local Mirror with GROWI は growi: ページでのみ実行できます。",
+      "Compare Local Mirror with GROWI can only run on growi: pages.",
     );
     expect(deps.openChanges).not.toHaveBeenCalled();
   });
@@ -117,7 +117,7 @@ describe("createCompareLocalMirrorWithGrowiCommand", () => {
     await createCompareLocalMirrorWithGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル file: workspace/folder が開かれていないため Compare Local Mirror with GROWI を実行できません。先に file: workspace/folder を開いてください。",
+      "Cannot run Compare Local Mirror with GROWI because no local file: workspace/folder is open. Open a file: workspace/folder first.",
     );
   });
 
@@ -132,7 +132,7 @@ describe("createCompareLocalMirrorWithGrowiCommand", () => {
     await createCompareLocalMirrorWithGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      ".growi-mirror.json の GROWI metadata を読み取れないため Compare Local Mirror with GROWI を実行できません。再度 Sync Local Mirror を実行してください。",
+      "Cannot run Compare Local Mirror with GROWI because .growi-mirror.json GROWI metadata could not be read. Run Sync Local Mirror again.",
     );
     expect(deps.openChanges).not.toHaveBeenCalled();
   });
@@ -159,7 +159,7 @@ describe("createCompareLocalMirrorWithGrowiCommand", () => {
     await createCompareLocalMirrorWithGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "mirror の GROWI base URL が現在設定と一致しないため Compare Local Mirror with GROWI を実行できません。接続先を確認してください。",
+      "Cannot run Compare Local Mirror with GROWI because the mirror GROWI base URL does not match the current setting. Check the target server.",
     );
     expect(deps.openChanges).not.toHaveBeenCalled();
   });
@@ -317,15 +317,15 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       1,
-      "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。",
+      "Sync Local Mirror for Current Page can only run on growi: pages.",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       2,
-      "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。",
+      "Sync Local Mirror for Current Page can only run on growi: pages.",
     );
     expect(deps.showErrorMessage).toHaveBeenNthCalledWith(
       3,
-      "Sync Local Mirror for Current Page は growi: ページでのみ実行できます。",
+      "Sync Local Mirror for Current Page can only run on growi: pages.",
     );
   });
 
@@ -346,7 +346,7 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存または End Edit を実行してください。",
+      "Cannot run Sync Local Mirror for Current Page because there are unsaved changes. Save or run End Edit first.",
     );
   });
 
@@ -360,7 +360,7 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル file: workspace/folder が開かれていないため Sync Local Mirror for Current Page を実行できません。先に file: workspace/folder を開いてください。",
+      "Cannot run Sync Local Mirror for Current Page because no local file: workspace/folder is open. Open a file: workspace/folder first.",
     );
   });
 
@@ -414,7 +414,7 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
       ],
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページをローカルに同期しました。",
+      "Synced the current page to local files.",
     );
   });
 
@@ -478,7 +478,7 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
       ]),
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "既存 prefix mirror 内の現在ページをローカルに同期しました。",
+      "Synced the current page in the existing prefix mirror to local files.",
     );
   });
 
@@ -647,7 +647,7 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.writeLocalFile).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "既存 prefix mirror で対象ページが衝突により skip されているため Sync Local Mirror for Current Page を実行できません。prefix mirror を見直してください。",
+      "Cannot run Sync Local Mirror for Current Page because the target page is skipped due to a conflict in the existing prefix mirror. Review the prefix mirror.",
     );
   });
 
@@ -676,7 +676,7 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Page を実行できません。先に保存してください。",
+      "Cannot run Sync Local Mirror for Current Page because the existing prefix mirror has unsaved changes. Save first.",
     );
   });
 
@@ -734,31 +734,31 @@ describe("createLocalMirrorForCurrentPageCommand", () => {
   it.each([
     [
       "BaseUrlNotConfigured",
-      "GROWI base URL が未設定です。先に Configure Base URL を実行してください。",
+      "GROWI base URL is not configured. Run Configure Base URL first.",
     ],
     [
       "ApiTokenNotConfigured",
-      "GROWI API token が未設定です。先に Configure API Token を実行してください。",
+      "GROWI API token is not configured. Run Configure API Token first.",
     ],
     [
       "InvalidApiToken",
-      "GROWI API token が無効です。Configure API Token を確認してください。",
+      "GROWI API token is invalid. Check Configure API Token.",
     ],
     [
       "PermissionDenied",
-      "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。",
+      "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.",
     ],
     [
       "ApiNotSupported",
-      "本文取得 API が未対応のため Sync Local Mirror for Current Page を実行できませんでした。",
+      "Cannot run Sync Local Mirror for Current Page because the body fetch API is not supported.",
     ],
     [
       "ConnectionFailed",
-      "GROWI への接続に失敗したため Sync Local Mirror for Current Page を実行できませんでした。",
+      "Cannot run Sync Local Mirror for Current Page because the connection to GROWI failed.",
     ],
     [
       "NotFound",
-      "対象ページが見つからないため Sync Local Mirror for Current Page を実行できませんでした。",
+      "Cannot run Sync Local Mirror for Current Page because the target page was not found.",
     ],
   ] as const)("maps snapshot failure to message: %s", async (reason, message) => {
     const deps = createDeps();
@@ -857,7 +857,7 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
       ],
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "Upload Local Mirror to GROWI を完了しました。\nUploaded: /team/dev/spec",
+      "Completed Upload Local Mirror to GROWI.\nUploaded: /team/dev/spec",
     );
   });
 
@@ -871,7 +871,7 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
     await createUploadLocalMirrorToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "ローカル file: workspace/folder が開かれていないため Upload Local Mirror to GROWI を実行できません。先に file: workspace/folder を開いてください。",
+      "Cannot run Upload Local Mirror to GROWI because no local file: workspace/folder is open. Open a file: workspace/folder first.",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
@@ -887,7 +887,7 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
     await createUploadLocalMirrorToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "対象の local mirror が見つからないため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。",
+      "Cannot run Upload Local Mirror to GROWI because the target local mirror was not found. Run Sync Local Mirror first.",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
@@ -903,7 +903,7 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
     await createUploadLocalMirrorToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      ".growi-mirror.json の GROWI metadata を読み取れませんでした。再度 Sync Local Mirror を実行してください。",
+      "Could not read .growi-mirror.json GROWI metadata. Run Sync Local Mirror again.",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
@@ -929,7 +929,7 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
     await createUploadLocalMirrorToGrowiCommand(deps)();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "mirror の GROWI base URL が現在設定と一致しません。接続先を確認してください。",
+      "The mirror GROWI base URL does not match the current setting. Check the target server.",
     );
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
   });
@@ -979,7 +979,7 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
     await createUploadLocalMirrorToGrowiCommand(deps)();
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "Upload Local Mirror to GROWI を完了しました。\nConflict: /team/dev/spec",
+      "Completed Upload Local Mirror to GROWI.\nConflict: /team/dev/spec",
     );
     expect(deps.writePage).not.toHaveBeenCalled();
   });
@@ -1033,10 +1033,10 @@ describe("createUploadLocalMirrorToGrowiCommand", () => {
 
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
       [
-        "Upload Local Mirror to GROWI を完了しました。",
+        "Completed Upload Local Mirror to GROWI.",
         "Uploaded: /team/dev/spec",
-        "GROWI への mirror upload は成功しましたが manifest の更新に一部失敗しました。次回 upload 前に再度 Sync Local Mirror を実行してください。",
-        "/team/dev/spec: GROWI への upload は成功しましたが、表示中の growi: ページ再読込に失敗しました。Refresh Current Page を実行してください。",
+        "Mirror upload to GROWI succeeded, but some manifest updates failed. Run Sync Local Mirror again before the next upload.",
+        "/team/dev/spec: Upload to GROWI succeeded, but the displayed growi: page could not be reloaded. Run Refresh Current Page.",
       ].join("\n"),
     );
   });
@@ -1113,7 +1113,7 @@ describe("bundle commands", () => {
       `${createMirrorRootPath("/team/dev/spec")}/${rootRelativeFilePath}`,
     );
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "現在ページ配下をローカルに同期しました。",
+      "Synced the current page subtree to local files.",
     );
   });
 
@@ -1229,7 +1229,7 @@ describe("bundle commands", () => {
       ]),
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "既存 prefix mirror 内の現在ページ配下をローカルに同期しました。",
+      "Synced the current page subtree in the existing prefix mirror to local files.",
     );
   });
 
@@ -1265,7 +1265,7 @@ describe("bundle commands", () => {
 
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "既存 prefix mirror に未保存の変更があるため Sync Local Mirror for Current Prefix を実行できません。先に保存してください。",
+      "Cannot run Sync Local Mirror for Current Prefix because the existing prefix mirror has unsaved changes. Save first.",
     );
   });
 
@@ -1341,8 +1341,8 @@ describe("bundle commands", () => {
     ]);
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
       [
-        "現在ページ配下をローカルに同期しました。",
-        "Local Mirror では一部ページを保存しませんでした。",
+        "Synced the current page subtree to local files.",
+        "Some pages were not saved in Local Mirror.",
         "ReservedFileNameCollision: /sample/test/__test__ -> test/__test__.md",
       ].join("\n"),
     );
@@ -1369,7 +1369,7 @@ describe("bundle commands", () => {
       limit: 50,
     });
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "active page 配下が 50 pages を超えるため Sync Local Mirror for Current Prefix を実行できません。",
+      "Cannot run Sync Local Mirror for Current Prefix because the active page subtree exceeds 50 pages.",
     );
   });
 
@@ -1392,7 +1392,7 @@ describe("bundle commands", () => {
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.writeLocalFile).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "active page 配下が 3 pages を超えるため Sync Local Mirror for Current Prefix を実行できません。",
+      "Cannot run Sync Local Mirror for Current Prefix because the active page subtree exceeds 3 pages.",
     );
   });
 
@@ -1412,7 +1412,7 @@ describe("bundle commands", () => {
     expect(deps.bootstrapEditSession).not.toHaveBeenCalled();
     expect(deps.writeLocalFile).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "active page 配下が 50 pages を超えるため Sync Local Mirror for Current Prefix を実行できません。",
+      "Cannot run Sync Local Mirror for Current Prefix because the active page subtree exceeds 50 pages.",
     );
   });
 
@@ -1575,7 +1575,7 @@ describe("bundle commands", () => {
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
       [
-        "Compare Local Mirror with GROWI では一部ページを changes editor に含めませんでした。",
+        "Some pages were not included in the changes editor for Compare Local Mirror with GROWI.",
         "MissingLocal: /team/dev/spec/missing",
       ].join("\n"),
     );
@@ -1722,7 +1722,7 @@ describe("bundle commands", () => {
     expect(deps.openChanges).not.toHaveBeenCalled();
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "Compare Local Mirror with GROWI で changes editor の対象はありませんでした。",
+      "No changes editor targets were found for Compare Local Mirror with GROWI.",
     );
     expect(deps.clearMirrorCompareSourceControlState).toHaveBeenCalledTimes(1);
     expect(deps.clearMirrorCompareTreeSnapshotState).toHaveBeenCalledTimes(1);
@@ -1769,7 +1769,7 @@ describe("bundle commands", () => {
     ).resolves.toBeUndefined();
 
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "mirror の差分ビューを開けませんでした。",
+      "Could not open the mirror diff view.",
     );
     expect(deps.clearMirrorCompareSourceControlState).toHaveBeenCalledTimes(1);
     expect(deps.clearMirrorCompareTreeSnapshotState).toHaveBeenCalledTimes(1);
@@ -1990,7 +1990,7 @@ describe("bundle commands", () => {
     expect(results).toBeUndefined();
     expect(deps.openChanges).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "対象の local mirror が見つからないため Compare Local Mirror with GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。",
+      "Cannot run Compare Local Mirror with GROWI because the target local mirror was not found. Run Sync Local Mirror first.",
     );
   });
 
@@ -2045,7 +2045,7 @@ describe("bundle commands", () => {
 
     expect(results).toBeUndefined();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "既存 prefix mirror で対象ページまたは配下が衝突により skip されているため Compare Local Mirror with GROWI を実行できません。prefix mirror を見直してください。",
+      "Cannot run Compare Local Mirror with GROWI because the target page or its subtree is skipped due to a conflict in the existing prefix mirror. Review the prefix mirror.",
     );
   });
 
@@ -2201,7 +2201,7 @@ describe("bundle commands", () => {
     });
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
       [
-        "Upload Local Mirror to GROWI を完了しました。",
+        "Completed Upload Local Mirror to GROWI.",
         "Uploaded: /team/dev/spec/changed",
         "Unchanged: /team/dev/spec/unchanged",
         "Conflict: /team/dev/spec/conflict",
@@ -2378,7 +2378,7 @@ describe("bundle commands", () => {
     );
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
       [
-        "Upload Local Mirror to GROWI を完了しました。",
+        "Completed Upload Local Mirror to GROWI.",
         "Uploaded: /sample/hello",
       ].join("\n"),
     );
@@ -2446,7 +2446,7 @@ describe("bundle commands", () => {
     );
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
       [
-        "GROWI側の変更をローカルに取り込みました。",
+        "Took GROWI changes into local files.",
         "TakenRemote: /sample/hello",
       ].join("\n"),
     );
@@ -2576,7 +2576,7 @@ describe("bundle commands", () => {
     expect(deps.writePage).not.toHaveBeenCalled();
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
       [
-        "ローカルの変更では一部選択項目を対象外として skip しました。",
+        "Some selected items were skipped for Local Changes.",
         "Conflict: /sample/conflict",
       ].join("\n"),
     );
@@ -2618,7 +2618,7 @@ describe("bundle commands", () => {
     expect(deps.writeLocalFile).not.toHaveBeenCalled();
     expect(deps.deleteLocalPath).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
-      "対象の local mirror が見つからないため Upload Local Mirror to GROWI を実行できませんでした。先に Sync Local Mirror を実行してください。",
+      "Cannot run Upload Local Mirror to GROWI because the target local mirror was not found. Run Sync Local Mirror first.",
     );
   });
 });

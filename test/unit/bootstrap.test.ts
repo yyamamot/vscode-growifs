@@ -237,19 +237,19 @@ import { PREFIX_REGISTRY_STATE_KEY } from "../../src/vscode/prefixRegistry";
 import { GROWI_REVISION_SCHEME } from "../../src/vscode/revisionModel";
 
 const API_NOT_SUPPORTED_MESSAGE =
-  "編集開始 API が未対応のため Start Edit を実行できません。";
+  "Cannot run Start Edit because the edit start API is not supported.";
 const BASE_URL_NOT_CONFIGURED_MESSAGE =
-  "GROWI base URL が未設定です。先に Configure Base URL を実行してください。";
+  "GROWI base URL is not configured. Run Configure Base URL first.";
 const API_TOKEN_NOT_CONFIGURED_MESSAGE =
-  "GROWI API token が未設定です。先に Configure API Token を実行してください。";
+  "GROWI API token is not configured. Run Configure API Token first.";
 const INVALID_API_TOKEN_MESSAGE =
-  "GROWI API token が無効です。Configure API Token を確認してください。";
+  "GROWI API token is invalid. Check Configure API Token.";
 const PERMISSION_DENIED_MESSAGE =
-  "GROWI へのアクセス権が不足しているか、接続先が認証を拒否しました。権限設定と API Token を確認してください。";
+  "GROWI access is insufficient or the server rejected authentication. Check permissions and the API token.";
 const CONNECTION_FAILED_MESSAGE =
-  "GROWI への接続に失敗したため Start Edit を実行できませんでした。";
+  "Cannot run Start Edit because the connection to GROWI failed.";
 const NOT_FOUND_MESSAGE =
-  "対象ページが見つからないため Start Edit を実行できませんでした。";
+  "Cannot run Start Edit because the target page was not found.";
 
 function createContext(options?: {
   baseUrl?: string;
@@ -649,7 +649,7 @@ describe("bootstrap extension entrypoint", () => {
         }
       | undefined;
 
-    expect(statusBarItem?.text).toBe("$(lock) 閲覧中");
+    expect(statusBarItem?.text).toBe("$(lock) Read-only");
     expect(statusBarItem?.command).toBe(GROWI_COMMANDS.startEdit);
     expect(statusBarItem?.show).toHaveBeenCalled();
   });
@@ -697,18 +697,18 @@ describe("bootstrap extension entrypoint", () => {
       show: ReturnType<typeof vi.fn>;
     };
     expect(quickPick.placeholder).toBe(
-      "Tree item action を選択してください: /team/dev/spec",
+      "Select a tree item action: /team/dev/spec",
     );
     expect(quickPick.items.map((item) => item.label)).toEqual([
-      "ブラウザで表示",
-      "ページを更新",
-      "ページ詳細を開く",
-      "ここに作成",
-      "ページ名を変更",
-      "ブックマークに追加",
-      "このページをローカルに同期",
-      "このページの差分を確認",
-      "ページを削除",
+      "Open in Browser",
+      "Refresh Page",
+      "Open Page Details",
+      "Create Here",
+      "Rename Page",
+      "Add Bookmark",
+      "Sync This Page Locally",
+      "Compare This Page with GROWI",
+      "Delete Page",
     ]);
     expect(quickPick.show).toHaveBeenCalled();
   });
@@ -832,7 +832,7 @@ describe("bootstrap extension entrypoint", () => {
     expect(stalePage).toBeDefined();
     expect(stalePage?.description).toBe("remote newer");
     expect(stalePage?.tooltip).toBe(
-      "GROWI 側が新しい状態です。Refresh Current Page で再読込してください。",
+      "GROWI has a newer version. Reload with Refresh Current Page.",
     );
     expect((stalePage?.iconPath as { id?: string } | undefined)?.id).toBe(
       "warning",
@@ -1030,9 +1030,9 @@ describe("bootstrap extension entrypoint", () => {
     const conflictPage = (await treeProvider.getChildren(root as never)).find(
       (item) => item.uri.path === "/team/dev/spec.md",
     );
-    expect(conflictPage?.description).toBe("競合");
+    expect(conflictPage?.description).toBe("Conflicts");
     expect(conflictPage?.tooltip).toBe(
-      "ローカル側と GROWI 側の両方に変更があります。Compare Local Mirror with GROWI で差分を確認してください。",
+      "Both local and GROWI have changes. Check diffs with Compare Local Mirror with GROWI.",
     );
     expect((conflictPage?.iconPath as { id?: string } | undefined)?.id).toBe(
       "warning",
@@ -1331,7 +1331,7 @@ describe("bootstrap extension entrypoint", () => {
       vscode.workspace.updateWorkspaceFolders,
     );
     const showWarningMessageMock = vi.mocked(vscode.window.showWarningMessage);
-    showWarningMessageMock.mockResolvedValue("削除する" as never);
+    showWarningMessageMock.mockResolvedValue("Delete" as never);
     const { context } = createContext({
       prefixes: ["/team/dev", "/team/ops"],
     });
@@ -1459,7 +1459,7 @@ describe("bootstrap extension entrypoint", () => {
 
     expect(writeFileMock).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Page を完了できませんでした。",
+      "Could not complete Sync Local Mirror for Current Page because local mirror sync failed.",
     );
   });
 
@@ -1524,7 +1524,7 @@ describe("bootstrap extension entrypoint", () => {
 
       expect(writeFileMock).not.toHaveBeenCalled();
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-        "ローカルミラーの同期に失敗したため Sync Local Mirror for Current Page を完了できませんでした。",
+        "Could not complete Sync Local Mirror for Current Page because local mirror sync failed.",
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -1634,7 +1634,7 @@ describe("bootstrap extension entrypoint", () => {
       | undefined;
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(statusBarItem?.text).toBe("$(unlock) 編集中");
+    expect(statusBarItem?.text).toBe("$(unlock) Editing");
     expect(statusBarItem?.command).toBe(GROWI_COMMANDS.endEdit);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "https://growi.example.com/_api/v3/page?path=%2Fteam%2Fdev%2Fspec",
@@ -1924,39 +1924,39 @@ describe("bootstrap extension entrypoint", () => {
 
     expect(showQuickPickMock).toHaveBeenCalledWith(
       [
-        { label: "ページを更新", command: GROWI_COMMANDS.refreshCurrentPage },
-        { label: "ページ名を変更", command: GROWI_COMMANDS.renamePage },
-        { label: "ページを削除", command: GROWI_COMMANDS.deletePage },
-        { label: "被リンクを表示", command: GROWI_COMMANDS.showBacklinks },
+        { label: "Refresh Page", command: GROWI_COMMANDS.refreshCurrentPage },
+        { label: "Rename Page", command: GROWI_COMMANDS.renamePage },
+        { label: "Delete Page", command: GROWI_COMMANDS.deletePage },
+        { label: "Show Backlinks", command: GROWI_COMMANDS.showBacklinks },
         {
-          label: "ページ情報を表示",
+          label: "Show Page Info",
           command: GROWI_COMMANDS.showCurrentPageInfo,
         },
         {
-          label: "添付一覧を表示",
+          label: "Show Attachments",
           command: GROWI_COMMANDS.showCurrentPageAttachments,
         },
         {
-          label: "ブックマークに追加",
+          label: "Add Bookmark",
           command: GROWI_COMMANDS.addCurrentPageBookmark,
         },
         {
-          label: "履歴差分を表示",
+          label: "Show Revision Diff",
           command: GROWI_COMMANDS.showRevisionHistoryDiff,
         },
         {
-          label: "現在ページをローカルに同期",
-          description: "__<page>__.md と .growi-mirror.json を作成または更新",
+          label: "Sync Current Page Locally",
+          description: "Create or update __<page>__.md and .growi-mirror.json",
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "現在ページ配下をローカルに同期",
-          description: "prefix mirror を作成または更新",
+          label: "Sync Current Page Subtree Locally",
+          description: "Create or update the prefix mirror",
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPrefix,
         },
       ],
       {
-        placeHolder: "現在ページに対して実行する操作を選択してください。",
+        placeHolder: "Select an action for the current page.",
       },
     );
     expect(executeCommandMock).toHaveBeenLastCalledWith(
@@ -1975,8 +1975,8 @@ describe("bootstrap extension entrypoint", () => {
     activate(context);
 
     showQuickPickMock.mockResolvedValueOnce({
-      label: "SCMで確認してGROWIに反映",
-      description: "比較結果をSCMで確認してから反映",
+      label: "Review in SCM and apply to GROWI",
+      description: "Review comparison results in SCM before applying",
       command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
     } as never);
 
@@ -1985,23 +1985,23 @@ describe("bootstrap extension entrypoint", () => {
     expect(showQuickPickMock).toHaveBeenCalledWith(
       [
         {
-          label: "現在ページをローカルに同期",
-          description: "mirror が無ければ作成、あれば更新",
+          label: "Sync Current Page Locally",
+          description: "Create the mirror if missing, otherwise update it",
           command: GROWI_COMMANDS.createLocalMirrorForCurrentPage,
         },
         {
-          label: "GROWIとの差分を確認",
-          description: "mirror manifest を使用",
+          label: "Compare with GROWI",
+          description: "Use mirror manifest",
           command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
         {
-          label: "SCMで確認してGROWIに反映",
-          description: "比較結果をSCMで確認してから反映",
+          label: "Review in SCM and apply to GROWI",
+          description: "Review comparison results in SCM before applying",
           command: GROWI_COMMANDS.compareLocalMirrorWithGrowi,
         },
       ],
       {
-        placeHolder: "ローカルミラーに対して実行する操作を選択してください。",
+        placeHolder: "Select an action for the local mirror.",
       },
     );
     expect(executeCommandMock).toHaveBeenLastCalledWith(
